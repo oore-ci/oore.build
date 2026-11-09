@@ -577,6 +577,15 @@ pub(crate) async fn record_upload(
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store publish settings"))?;
     let config = uploaded_config(config, reported);
+    let store_notes: Option<String> =
+        sqlx::query_scalar("SELECT store_notes FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_optional(deps.pool)
+            .await?
+            .flatten();
+    let workflow_groups =
+        crate::signing_identities::job_testflight_groups(deps.pool, build_id).await?;
+    let config = build_overrides(config, store_notes.as_deref(), workflow_groups);
     let ipa = load_uploaded_ipa(deps.pool, build_id).await?;
     let track = settings_track(&config);
     let config_json = serde_json::to_string(&config)?;
@@ -681,6 +690,33 @@ fn uploaded_config(
     config.testflight_groups = groups;
     config.submit_for_review = false;
     config.phased_release = false;
+    config
+}
+
+/// What the build itself asked for: release notes written when it was
+/// started replace the first locale's notes (or add `en-US`), and the
+/// workflow settings' TestFlight groups replace the groups of a TestFlight
+/// upload.
+fn build_overrides(
+    mut config: AppStorePublishConfig,
+    store_notes: Option<&str>,
+    workflow_groups: Option<Vec<String>>,
+) -> AppStorePublishConfig {
+    if let Some(notes) = store_notes.map(str::trim).filter(|notes| !notes.is_empty()) {
+        let whats_new: String = notes.chars().take(MAX_WHATS_NEW_CHARS).collect();
+        match config.release_notes.first_mut() {
+            Some(first) => first.whats_new = whats_new,
+            None => config.release_notes.push(AppStoreReleaseNote {
+                locale: "en-US".to_string(),
+                whats_new,
+            }),
+        }
+    }
+    if let Some(groups) = workflow_groups
+        && config.destination == AppStoreDestination::Testflight
+    {
+        config.testflight_groups = groups;
+    }
     config
 }
 
@@ -2254,6 +2290,44 @@ impl ReleaseStoreClient for StoreRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_and_groups_chosen_for_the_build_win() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::Testflight,
+            testflight_groups: vec!["Everyone".into()],
+            release_notes: vec![
+                AppStoreReleaseNote {
+                    locale: "en-GB".into(),
+                    whats_new: "Saved".into(),
+                },
+                AppStoreReleaseNote {
+                    locale: "de-DE".into(),
+                    whats_new: "Gespeichert".into(),
+                },
+            ],
+            ..AppStorePublishConfig::default()
+        };
+        let config = build_overrides(
+            saved.clone(),
+            Some("  Faster sync  "),
+            Some(vec!["QA".into()]),
+        );
+        assert_eq!(config.release_notes[0].whats_new, "Faster sync");
+        assert_eq!(config.release_notes[1].whats_new, "Gespeichert");
+        assert_eq!(config.testflight_groups, vec!["QA"]);
+
+        let untouched = build_overrides(saved.clone(), Some("  "), None);
+        assert_eq!(untouched, saved);
+
+        let store = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            ..AppStorePublishConfig::default()
+        };
+        let config = build_overrides(store, Some("New"), Some(vec!["QA".into()]));
+        assert_eq!(config.release_notes[0].locale, "en-US");
+        assert!(config.testflight_groups.is_empty());
+    }
     use crate::app_store_connect_keys::tests::{insert_shared_key, insert_signing, signing_pool};
 
     #[tokio::test]

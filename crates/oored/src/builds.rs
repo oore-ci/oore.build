@@ -116,6 +116,7 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
             )
             .map(|(id, build_number)| BuildReference { id, build_number }),
         changelog: row.get("changelog"),
+        store_notes: row.try_get("store_notes").ok().flatten(),
         source_build_id: row.get("source_build_id"),
         retry_steps: crate::step_retry::retry_steps_from_snapshot(&config_snapshot),
         approval,
@@ -1197,6 +1198,29 @@ fn changelog_markdown(commits: Vec<crate::integrations::CommitSummary>) -> Strin
 
 // ── Handlers ────────────────────────────────────────────────────
 
+/// Release notes written for a build's store uploads. Saved after the
+/// insert: the runner reads them only when it reaches the publish step.
+async fn save_store_notes(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    notes: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    sqlx::query("UPDATE builds SET store_notes = ?1 WHERE id = ?2")
+        .bind(notes)
+        .bind(build_id)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to save build release notes");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to save the release notes",
+            )
+        })?;
+    Ok(())
+}
+
 /// `GET /v1/projects/{project_id}/builds/changelog-preview` — draft release notes.
 pub async fn preview_build_changelog(
     State(state): State<Arc<AppState>>,
@@ -1417,6 +1441,17 @@ pub async fn create_build(
             "Changelog must be 4,000 characters or fewer",
         ));
     }
+    let store_notes = normalize_optional(req.store_notes);
+    if store_notes
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 4_000)
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Release notes must be 4,000 characters or fewer",
+        ));
+    }
 
     // Verify project exists and has source linkage.
     let project_row =
@@ -1615,6 +1650,9 @@ pub async fn create_build(
     }
 
     let build_number = fetch_build_number(&pool, &build_id).await?;
+    if let Some(notes) = &store_notes {
+        save_store_notes(&pool, &build_id, notes).await?;
+    }
 
     // Insert initial build event
     sqlx::query(
@@ -1690,6 +1728,7 @@ pub async fn create_build(
         commit_sha,
         branch,
         changelog,
+        store_notes,
         source_build_id: None,
         retry_steps: None,
         approval: pending_approval(approval_required, now),
@@ -2231,8 +2270,8 @@ pub(crate) async fn queue_rerun(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_requested_at, \
-         step_results \
+         trigger_ref, commit_sha, branch, changelog, store_notes, config_snapshot, \
+         approval_requested_at, step_results \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -2431,6 +2470,7 @@ pub(crate) async fn queue_rerun(
     let commit_sha: Option<String> = source_row.get("commit_sha");
     let trigger_ref: Option<String> = source_row.get("trigger_ref");
     let changelog: Option<String> = source_row.get("changelog");
+    let store_notes: Option<String> = source_row.get("store_notes");
 
     let now = now_unix();
     let new_build_id = Uuid::new_v4().to_string();
@@ -2477,6 +2517,9 @@ pub(crate) async fn queue_rerun(
     }
 
     let build_number = fetch_build_number(pool, &new_build_id).await?;
+    if let Some(notes) = &store_notes {
+        save_store_notes(pool, &new_build_id, notes).await?;
+    }
 
     // Insert initial build event
     let reason = initial_event_reason(
@@ -2571,6 +2614,7 @@ pub(crate) async fn queue_rerun(
         commit_sha,
         branch,
         changelog,
+        store_notes,
         source_build_id: Some(build_id),
         retry_steps,
         approval: pending_approval(approval_required, now),
@@ -3060,6 +3104,7 @@ pub async fn trigger_build_from_webhook(
                     commit_sha: commit_sha.map(String::from),
                     branch: branch.map(String::from),
                     changelog: None,
+                    store_notes: None,
                     source_build_id: None,
                     retry_steps: None,
                     approval: pending_approval(approval_required, now),

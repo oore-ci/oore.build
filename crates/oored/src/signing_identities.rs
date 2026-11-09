@@ -598,6 +598,11 @@ fn settings_from_row(row: &sqlx::sqlite::SqliteRow) -> PipelineWorkflowSettings 
         approval_required: row
             .get::<Option<i64>, _>("approval_required")
             .map(|v| v != 0),
+        testflight_groups: row
+            .try_get::<Option<String>, _>("testflight_groups")
+            .ok()
+            .flatten()
+            .and_then(|json| serde_json::from_str(&json).ok()),
         updated_at: Some(row.get("updated_at")),
     }
 }
@@ -676,6 +681,31 @@ async fn check_identity(
     }
 }
 
+/// TestFlight group names as stored: trimmed, without blanks or repeats.
+/// An empty list is the same as none.
+fn clean_testflight_groups(groups: Option<&[String]>) -> Result<Option<Vec<String>>, ApiFailure> {
+    let Some(groups) = groups else {
+        return Ok(None);
+    };
+    let mut cleaned: Vec<String> = Vec::new();
+    for group in groups {
+        let group = group.trim();
+        if group.is_empty() || cleaned.iter().any(|seen| seen == group) {
+            continue;
+        }
+        if group.chars().count() > 100 || group.contains(", ") {
+            return Err(invalid(format!(
+                "TestFlight group '{group}' must be at most 100 characters and contain no \", \""
+            )));
+        }
+        cleaned.push(group.to_string());
+    }
+    if cleaned.len() > 20 {
+        return Err(invalid("at most 20 TestFlight groups are allowed"));
+    }
+    Ok(Some(cleaned).filter(|groups| !groups.is_empty()))
+}
+
 /// `PUT /v1/pipelines/{pipeline_id}/workflow-settings/{workflow}`
 pub async fn update_pipeline_workflow_settings(
     State(state): State<Arc<AppState>>,
@@ -719,10 +749,12 @@ pub async fn update_pipeline_workflow_settings(
     )
     .await?;
 
+    let testflight_groups = clean_testflight_groups(req.testflight_groups.as_deref())?;
     let empty = req.android_identity_id.is_none()
         && req.ios_identity_id.is_none()
         && req.publish_enabled.is_none()
-        && req.approval_required.is_none();
+        && req.approval_required.is_none()
+        && testflight_groups.is_none();
     if empty {
         sqlx::query(
             "DELETE FROM pipeline_workflow_settings WHERE pipeline_id = ?1 AND workflow = ?2",
@@ -739,13 +771,14 @@ pub async fn update_pipeline_workflow_settings(
     }
     sqlx::query(
         "INSERT INTO pipeline_workflow_settings \
-         (pipeline_id, workflow, android_identity_id, ios_identity_id, publish_enabled, approval_required, updated_by, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+         (pipeline_id, workflow, android_identity_id, ios_identity_id, publish_enabled, approval_required, updated_by, updated_at, testflight_groups) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9) \
          ON CONFLICT(pipeline_id, workflow) DO UPDATE SET \
            android_identity_id = excluded.android_identity_id, \
            ios_identity_id = excluded.ios_identity_id, \
            publish_enabled = excluded.publish_enabled, \
            approval_required = excluded.approval_required, \
+           testflight_groups = excluded.testflight_groups, \
            updated_by = excluded.updated_by, \
            updated_at = excluded.updated_at",
     )
@@ -757,6 +790,11 @@ pub async fn update_pipeline_workflow_settings(
     .bind(req.approval_required.map(i64::from))
     .bind(&auth.0.user_id)
     .bind(now_unix())
+    .bind(
+        testflight_groups
+            .as_ref()
+            .map(|groups| serde_json::to_string(groups).unwrap_or_default()),
+    )
     .execute(&state.db)
     .await
     .map_err(|e| store_error("Failed to save workflow settings", e))?;
@@ -778,6 +816,8 @@ pub(crate) struct WorkflowBinding {
     pub publish_disabled: bool,
     /// Replaces the pipeline's approval policy.
     pub approval_required: Option<bool>,
+    /// Replaces the TestFlight groups of an upload to TestFlight.
+    pub testflight_groups: Option<Vec<String>>,
 }
 
 impl WorkflowBinding {
@@ -794,6 +834,9 @@ impl WorkflowBinding {
         }
         if self.publish_disabled {
             snapshot["publish_disabled"] = serde_json::json!(true);
+        }
+        if let Some(groups) = &self.testflight_groups {
+            snapshot["testflight_groups"] = serde_json::json!(groups);
         }
     }
 }
@@ -863,6 +906,7 @@ pub(crate) async fn resolve_workflow_binding(
     let mut binding = WorkflowBinding {
         publish_disabled: settings.publish_enabled == Some(false),
         approval_required: settings.approval_required,
+        testflight_groups: settings.testflight_groups.clone(),
         ..WorkflowBinding::default()
     };
     for (platform, kind, picked, named) in [
@@ -1059,9 +1103,41 @@ pub(crate) async fn job_publish_disabled(
     Ok(disabled.unwrap_or(0) != 0)
 }
 
+/// TestFlight groups the build's workflow settings chose, if any.
+pub(crate) async fn job_testflight_groups(
+    pool: &SqlitePool,
+    job_id: &str,
+) -> sqlx::Result<Option<Vec<String>>> {
+    let groups: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT json_extract(config_snapshot, '$.testflight_groups') FROM builds WHERE id = ?1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(groups
+        .flatten()
+        .and_then(|json| serde_json::from_str::<Vec<String>>(&json).ok())
+        .filter(|groups| !groups.is_empty()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn testflight_groups_are_cleaned() {
+        let groups = |list: &[&str]| list.iter().map(|g| g.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            clean_testflight_groups(Some(&groups(&[" QA ", "", "QA", "Beta"]))).unwrap(),
+            Some(groups(&["QA", "Beta"]))
+        );
+        assert_eq!(
+            clean_testflight_groups(Some(&groups(&[" "]))).unwrap(),
+            None
+        );
+        assert_eq!(clean_testflight_groups(None).unwrap(), None);
+        assert!(clean_testflight_groups(Some(&groups(&["A, B"]))).is_err());
+    }
 
     async fn pool() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -1247,6 +1323,7 @@ mod tests {
             ios_identity_id: Some("i-store".into()),
             publish_disabled: true,
             approval_required: None,
+            testflight_groups: Some(vec!["QA".into()]),
         }
         .write_to(&mut snapshot);
         sqlx::query(
@@ -1266,5 +1343,9 @@ mod tests {
         assert_eq!(bundle.export_method, IosExportMethod::AppStore);
         assert_eq!(bundle.mode, IosSigningMode::Manual);
         assert!(job_publish_disabled(&pool, "b1").await.unwrap());
+        assert_eq!(
+            job_testflight_groups(&pool, "b1").await.unwrap(),
+            Some(vec!["QA".to_string()])
+        );
     }
 }

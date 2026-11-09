@@ -1,11 +1,13 @@
-//! `oore build run` and `oore pipeline workflows`: start a build of a
-//! pipeline, naming its workflow, and list the workflows it can name.
+//! `oore build run`, `oore pipeline workflows` and `oore pipeline
+//! readiness`: start a build of a pipeline, naming its workflow, list the
+//! workflows it can name, and check what would stop its next store upload.
 
 use anyhow::Context;
 use clap::Args;
 use oore_contract::{
     BuildPlatform, CreateBuildRequest, CreateBuildResponse, PipelineDetailResponse,
-    PipelineFileState, PipelineWorkflowSummary, PipelineWorkflowsResponse,
+    PipelineFileState, PipelineWorkflowSummary, PipelineWorkflowsResponse, ReadinessLevel,
+    ReleaseStore, StoreReadinessResponse,
 };
 
 use crate::{
@@ -47,6 +49,11 @@ pub(crate) struct BuildRunArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     platforms: Vec<String>,
 
+    /// What's new in this release, sent to Google Play and the App Store
+    /// instead of the pipeline's release notes.
+    #[arg(long, value_name = "TEXT")]
+    notes: Option<String>,
+
     #[command(flatten)]
     connection: ApiConnectionArgs,
 
@@ -64,6 +71,19 @@ pub(crate) struct PipelineWorkflowsArgs {
     /// default branch.
     #[arg(long = "ref", value_name = "REF")]
     reference: Option<String>,
+
+    #[command(flatten)]
+    connection: ApiConnectionArgs,
+
+    /// Print the daemon's response as JSON.
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct PipelineReadinessArgs {
+    /// Pipeline whose next store upload to check.
+    pipeline_id: String,
 
     #[command(flatten)]
     connection: ApiConnectionArgs,
@@ -174,6 +194,7 @@ fn create_build_request(args: &BuildRunArgs) -> anyhow::Result<CreateBuildReques
         branch,
         commit_sha: trimmed(args.commit.as_deref()),
         changelog: None,
+        store_notes: trimmed(args.notes.as_deref()),
         workflow: trimmed(args.workflow.as_deref()),
     })
 }
@@ -370,9 +391,132 @@ pub(crate) async fn handle_pipeline_workflows(args: PipelineWorkflowsArgs) -> an
     Ok(())
 }
 
+pub(crate) async fn handle_pipeline_readiness(args: PipelineReadinessArgs) -> anyhow::Result<()> {
+    let api = Api::connect(&args.connection)?;
+    let response: StoreReadinessResponse = api
+        .send(
+            api.client.get(format!(
+                "{}/v1/pipelines/{}/publish/readiness",
+                api.daemon_url,
+                args.pipeline_id.trim()
+            )),
+            "readiness check",
+        )
+        .await?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&response)?);
+    } else {
+        print!("{}", render_readiness(&response));
+    }
+    // Scripts can stop before a long build when something blocks the upload.
+    if response
+        .items
+        .iter()
+        .any(|item| item.level == ReadinessLevel::Block)
+    {
+        std::process::exit(2);
+    }
+    Ok(())
+}
+
+/// The checklist `oore pipeline readiness` prints, problems first.
+fn render_readiness(response: &StoreReadinessResponse) -> String {
+    if response.items.is_empty() {
+        return "Nothing to check: this pipeline has no store uploads turned on.\n".to_string();
+    }
+    let mut items: Vec<_> = response.items.iter().collect();
+    let rank = |level: ReadinessLevel| match level {
+        ReadinessLevel::Block => 0,
+        ReadinessLevel::Warn => 1,
+        ReadinessLevel::Ok => 2,
+    };
+    items.sort_by_key(|item| rank(item.level));
+    let problems = items
+        .iter()
+        .filter(|item| item.level != ReadinessLevel::Ok)
+        .count();
+    let mut out = if problems == 0 {
+        "Ready to submit.\n\n".to_string()
+    } else {
+        format!(
+            "{problems} {} before the next store upload.\n\n",
+            if problems == 1 {
+                "thing to fix"
+            } else {
+                "things to fix"
+            }
+        )
+    };
+    for item in items {
+        let mark = match item.level {
+            ReadinessLevel::Block => "✗",
+            ReadinessLevel::Warn => "!",
+            ReadinessLevel::Ok => "✓",
+        };
+        let store = match item.store {
+            ReleaseStore::GooglePlay => "Google Play",
+            ReleaseStore::AppStore => "App Store",
+        };
+        let remembered = if item.remembered {
+            " (from the store's last refusal)"
+        } else {
+            ""
+        };
+        out.push_str(&format!("{mark} {store}: {}{remembered}\n", item.title));
+        if let Some(detail) = item
+            .detail
+            .as_deref()
+            .filter(|_| item.level != ReadinessLevel::Ok)
+        {
+            out.push_str(&format!("    {detail}\n"));
+        }
+        if let Some(url) = item
+            .console_url
+            .as_deref()
+            .filter(|_| item.level != ReadinessLevel::Ok)
+        {
+            out.push_str(&format!("    Fix it: {url}\n"));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn readiness_lists_problems_first() {
+        use oore_contract::{PublishPreflight, StoreReadinessItem};
+        let item = |code: &str, level, title: &str| StoreReadinessItem {
+            store: ReleaseStore::AppStore,
+            code: code.into(),
+            level,
+            title: title.into(),
+            detail: Some("Answer them in App Store Connect.".into()),
+            console_url: Some("https://appstoreconnect.apple.com/apps/1".into()),
+            remembered: false,
+        };
+        let response = StoreReadinessResponse {
+            pipeline_id: "pl1".into(),
+            items: vec![
+                item("api_key", ReadinessLevel::Ok, "API key works"),
+                item(
+                    "age_rating",
+                    ReadinessLevel::Block,
+                    "Age rating questions are unanswered",
+                ),
+            ],
+            preflight: PublishPreflight::Auto,
+            checked_at: 0,
+        };
+        let text = render_readiness(&response);
+        assert!(text.starts_with("1 thing to fix"));
+        let blocking = text.find("✗ App Store: Age rating").unwrap();
+        let ok = text.find("✓ App Store: API key works").unwrap();
+        assert!(blocking < ok);
+        assert!(text.contains("Fix it: https://appstoreconnect.apple.com/apps/1"));
+    }
 
     fn run_args(argv: &[&str]) -> BuildRunArgs {
         #[derive(clap::Parser)]

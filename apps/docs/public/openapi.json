@@ -15958,6 +15958,13 @@
               "$ref": "#/components/schemas/StepResult"
             }
           },
+          "store_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release notes written for this build's store uploads."
+          },
           "superseded_by": {
             "oneOf": [
               {
@@ -17275,6 +17282,13 @@
             },
             "description": "Optional one-run platform selection. Omitted builds every platform configured by the pipeline."
           },
+          "store_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What's new in this release, as testers and store users read it. It\nreplaces the pipeline's Google Play and App Store release notes for\nthe build's uploads (Play's notes language, App Store's first\nlocale). Omitted uses the pipeline's notes."
+          },
           "trigger_ref": {
             "type": [
               "string",
@@ -17369,6 +17383,13 @@
               "null"
             ],
             "description": "Webhook: HMAC secret for signing payloads. Slack: bot token with\n`users:read.email`, used to mention the triggering user. Optional."
+          },
+          "slack_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slack channel ID for one updating message per release (Slack only).\nNeeds a bot token with `chat:write` that is in the channel."
           },
           "slack_mentions": {
             "type": "array",
@@ -20089,6 +20110,13 @@
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
+          "slack_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slack channel ID, such as `C0123ABCD`, the bot token posts release\nupdates to (Slack only). With it, each release gets one message that\nOore edits as the release moves, with details in its thread."
+          },
           "slack_mentions": {
             "type": "array",
             "items": {
@@ -21002,6 +21030,16 @@
               "null"
             ],
             "description": "`false` stops every store upload for the workflow. Unset follows\nthe file and the pipeline's Publish settings."
+          },
+          "testflight_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "TestFlight groups the workflow's builds go to, replacing the file's\nand the pipeline's groups. Only used when the upload goes to\nTestFlight."
           },
           "updated_at": {
             "type": [
@@ -22080,6 +22118,14 @@
           "track": {
             "type": "string",
             "description": "Play track, or TestFlight group / `app_store`."
+          },
+          "typical_review_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long store review usually takes for this app on this store, in\nseconds: the average of its last five finished reviews (App Store\nand TestFlight counted apart). Only on releases in review, and absent\nuntil the app has finished two reviews."
           },
           "updated_at": {
             "type": "integer",
@@ -25336,6 +25382,13 @@
             ],
             "description": "New HMAC secret (webhook) or bot token (slack). Omit to keep existing;\npass empty string to clear."
           },
+          "slack_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New Slack channel ID for release updates. Omit to keep existing; pass\nan empty string to clear."
+          },
           "slack_mentions": {
             "type": [
               "array",
@@ -25584,6 +25637,15 @@
               "boolean",
               "null"
             ]
+          },
+          "testflight_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },

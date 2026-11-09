@@ -867,6 +867,9 @@ enum PipelineSubcommand {
     Migrate(PipelineMigrateArgs),
     /// List the workflows a build of a pipeline can name, read from its file.
     Workflows(build_commands::PipelineWorkflowsArgs),
+    /// Check what would stop the pipeline's next store upload. Exits 2 when
+    /// something blocks it.
+    Readiness(build_commands::PipelineReadinessArgs),
 }
 
 #[derive(Debug, Args)]
@@ -13329,6 +13332,11 @@ fn main() -> anyhow::Result<()> {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(build_commands::handle_pipeline_workflows(args))?;
+            }
+            PipelineSubcommand::Readiness(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_pipeline_readiness(args))?;
             }
         },
         Commands::Build(build) => match build.command {
