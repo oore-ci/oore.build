@@ -319,6 +319,7 @@ const playConfigSchema = z.object({
   release_notes: z.enum(['none', 'changelog', 'repo_files']),
   release_notes_locale: z.string(),
   release_notes_dir: z.string().nullish(),
+  listing_dir: z.string().nullish(),
   upload_mapping: z.boolean(),
   in_app_update_priority: z.number().int().min(0).max(5).nullish(),
 })

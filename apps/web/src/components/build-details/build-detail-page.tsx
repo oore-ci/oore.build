@@ -115,6 +115,8 @@ import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
 import { useLiveEventsStore } from '@/stores/live-events-store'
 import { Row } from '@/components/layout/row'
 import { SplitRow } from '@/components/layout/split-row'
+import { useBuildFailureHint } from '@/hooks/use-build-trends'
+import { CompareWithLastGood, lastGoodBuild } from './compare-last-good'
 import { Text } from '@/components/layout/text'
 import { splitRowVariants, textVariants } from '@/lib/recipes'
 import { analyzerTabCount } from '@/lib/analyzer-format'
@@ -323,7 +325,9 @@ export function BuildDetailPage({
     },
     {
       enabled:
-        !!data?.build.step_results?.length || data?.build.status === 'running',
+        !!data?.build.step_results?.length ||
+        data?.build.status === 'running' ||
+        data?.build.status === 'failed',
     },
   )
   const medians = useMemo(
@@ -338,6 +342,11 @@ export function BuildDetailPage({
     )
     return findFailureLine(stepGroups, allVisibleLogs)
   }, [buildStatus, mergedLogs, stepResults])
+  const failureHintQuery = useBuildFailureHint(
+    buildId,
+    buildStatus === 'failed' || buildStatus === 'timed_out',
+  )
+  const failureHint = failureHintQuery.data?.hint ?? null
   const runningStepName = useMemo(
     () => (buildStatus === 'running' ? currentStepName(mergedLogs) : null),
     [buildStatus, mergedLogs],
@@ -616,6 +625,10 @@ export function BuildDetailPage({
       ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
       : []
   const showTests = () => setActiveTab('tests')
+  const lastGood =
+    build.status === 'failed' || build.status === 'timed_out'
+      ? lastGoodBuild(build, pipelineHistoryQuery.data?.builds ?? [])
+      : null
   const nextStep =
     build.status === 'failed' || build.status === 'timed_out' ? (
       firstRetryLabel ? (
@@ -908,7 +921,26 @@ export function BuildDetailPage({
         <BuildStateAlert
           summary={stateSummary}
           failureLine={failureLine}
-          nextStep={nextStep}
+          hint={failureHint}
+          nextStep={
+            lastGood && nextStep ? (
+              <>
+                {nextStep} <CompareWithLastGood build={build} good={lastGood} />
+              </>
+            ) : (
+              nextStep
+            )
+          }
+          onShowHintLine={(hint) => {
+            setActiveTab('logs')
+            if (hint.step) {
+              setLogFocus({
+                step: hint.step,
+                sequence: hint.sequence,
+                key: Date.now(),
+              })
+            }
+          }}
           details={approvalDetails}
           onShowFailureLine={() => {
             if (!failureLine) return

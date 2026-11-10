@@ -91,6 +91,7 @@ const formSchema = z
     earliest_release_date: z.string(),
     cancel_previous_submission: z.boolean(),
     release_notes_dir: z.string().trim(),
+    listing_dir: z.string().trim(),
     preflight: z.enum(['auto', 'block', 'warn', 'off']),
   })
   .superRefine((values, ctx) => {
@@ -112,6 +113,16 @@ const formSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['release_notes_dir'],
+        message: 'Use a path inside the repository, such as fastlane/metadata.',
+      })
+    }
+    if (
+      values.listing_dir.startsWith('/') ||
+      values.listing_dir.split('/').includes('..')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['listing_dir'],
         message: 'Use a path inside the repository, such as fastlane/metadata.',
       })
     }
@@ -188,6 +199,7 @@ function toFormValues(config: AppStorePublishConfig): FormValues {
     earliest_release_date: toLocalDateTime(config.earliest_release_date),
     cancel_previous_submission: config.cancel_previous_submission ?? false,
     release_notes_dir: config.release_notes_dir ?? '',
+    listing_dir: config.listing_dir ?? '',
     preflight: config.preflight ?? 'auto',
   }
 }
@@ -229,6 +241,7 @@ function toConfig(values: FormValues): AppStorePublishConfig {
         : null,
     cancel_previous_submission: appStore && values.cancel_previous_submission,
     release_notes_dir: values.release_notes_dir || null,
+    listing_dir: values.listing_dir || null,
     preflight: values.preflight,
   }
 }
@@ -591,6 +604,30 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
               Optional. A directory with one file per locale, such as en-US.txt,
               or fastlane’s en-US/release_notes.txt. When a build has it, its
               notes replace the ones above.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="listing_dir"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Store listing from the repository</FormLabel>
+            <FormControl>
+              <Input
+                className="font-mono"
+                placeholder="fastlane/metadata"
+                spellCheck={false}
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Optional. fastlane’s layout: en-US/description.txt, keywords.txt,
+              promotional_text.txt, marketing_url.txt and support_url.txt. Each
+              version Oore submits gets them; files you leave out stay as they
+              are in App Store Connect. Screenshots are not uploaded.
             </FormDescription>
             <FormMessage />
           </FormItem>

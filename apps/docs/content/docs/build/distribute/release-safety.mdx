@@ -1,0 +1,76 @@
+---
+title: 'Freeze, fix and record releases'
+status: implemented
+description: 'Hold every store release during a freeze, ship a hotfix, recover from a halted rollout, record a build you uploaded yourself, and see releases on a calendar.'
+---
+
+An app's **Releases** tab shows where each version is on every store track.
+It also has the tools for the moments around a release: a freeze when nothing
+should change, a hotfix when something must, and a record of uploads made by
+hand.
+
+## What you need
+
+- App maintainer, instance admin, or instance owner access to freeze an app,
+  lift its freeze, or record a release. Freezing every app takes instance
+  admin or owner access.
+- Developer access or higher to start a hotfix build.
+
+## Freeze releases
+
+Choose **Freeze releases** on the Releases tab and write why, such as "Sale
+weekend". An instance admin or owner can tick **Freeze every app**. Everyone
+who opens the app sees the reason, and while the freeze holds:
+
+- builds still run and testers can still install them;
+- the runner skips store uploads and says so in the build log;
+- promotions, approvals and **Raise**, **Resume**, **Complete**, **Release
+  now** and **Resubmit** are refused with the reason;
+- scheduled rollout steps wait, and continue after the freeze is lifted;
+- **Pause** and **Halt** still work, so a bad release can always be stopped.
+
+Choose **Lift freeze** to end it. The API is `PUT /v1/release-freezes` and
+`DELETE /v1/release-freezes/{freeze_id}`.
+
+## Ship a hotfix
+
+On a release that is rolling, paused, halted or out, choose **Ship a
+hotfix**. Make a branch from the commit the release was built from, push the
+fix to it, and enter the branch. Oore builds it with the same pipeline and
+workflow, so it gets a higher version code and the same publish settings.
+Release it from its build page when it finishes.
+
+## When a rollout is halted
+
+A halted release stops reaching new users, but a store cannot take an
+update back off a phone: the people who already have the version keep it.
+The release page says how many that is and offers the ways back:
+
+- **Resume** when the problem turned out to be elsewhere.
+- **Ship a hotfix** with the fix.
+- **Build the previous version again**: Oore runs the build of the version
+  that was out before, which gets a new, higher version code, so the store
+  takes it as an update.
+
+## Record a build you uploaded yourself
+
+When a build was uploaded in Play Console or App Store Connect by hand,
+choose **I uploaded a build myself**, pick the build and the store, and, for
+Google Play, the track. Oore records it as out to everyone on that track, so
+the app's releases stay complete. Nothing is sent to the store.
+
+## Release calendar
+
+The **Calendar** under the versions shows each release on the day it
+started, a month at a time. Select one to open its page.
+
+## Verify the result
+
+- With a freeze on, start a build of a pipeline that publishes: its log
+  says store uploads are frozen and nothing reaches the store.
+- After a record, the version shows under **Where each version is**.
+
+## Next step
+
+- [Promote builds between environments](/build/distribute/environments)
+- [Publish to Google Play](/build/distribute/google-play)

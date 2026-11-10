@@ -150,6 +150,7 @@ const formSchema = z
     release_notes: z.enum(['none', 'changelog', 'repo_files']),
     release_notes_locale: z.string().trim(),
     release_notes_dir: z.string().trim(),
+    listing_dir: z.string().trim(),
     package_name: z.string().trim(),
     upload_mapping: z.boolean(),
     in_app_update_priority: PRIORITY_VALUES,
@@ -192,6 +193,17 @@ const formSchema = z
         path: ['release_notes_dir'],
         message:
           'Enter the repository directory that holds <locale>.txt files.',
+      })
+    }
+    if (
+      values.listing_dir.startsWith('/') ||
+      values.listing_dir.split('/').includes('..')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['listing_dir'],
+        message:
+          'Use a path inside the repository, such as fastlane/metadata/android.',
       })
     }
     if (
@@ -246,6 +258,7 @@ function toFormValues(
     release_notes: config?.release_notes ?? 'changelog',
     release_notes_locale: config?.release_notes_locale ?? 'en-US',
     release_notes_dir: config?.release_notes_dir ?? '',
+    listing_dir: config?.listing_dir ?? '',
     package_name: config?.package_name ?? '',
     upload_mapping: config?.upload_mapping ?? true,
     in_app_update_priority:
@@ -267,6 +280,7 @@ function toConfig(values: FormValues): GooglePlayPublishConfig {
     release_notes_locale: values.release_notes_locale || 'en-US',
     release_notes_dir:
       values.release_notes === 'repo_files' ? values.release_notes_dir : null,
+    listing_dir: values.listing_dir || null,
     package_name: values.package_name || null,
     upload_mapping: values.upload_mapping,
     in_app_update_priority:
@@ -720,6 +734,30 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
 function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
   return (
     <Stack gap={4}>
+      <FormField
+        control={form.control}
+        name="listing_dir"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Store listing from the repository</FormLabel>
+            <FormControl>
+              <Input
+                className="font-mono"
+                placeholder="fastlane/metadata/android"
+                spellCheck={false}
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Optional. fastlane’s layout: en-US/title.txt,
+              short_description.txt, full_description.txt and video.txt. Sent
+              with every upload; files you leave out stay as they are in Play
+              Console. Screenshots are not uploaded.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
       <FormField
         control={form.control}
         name="package_name"

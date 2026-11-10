@@ -301,6 +301,7 @@ const appStoreConfigSchema = z.object({
   release_type: z.enum(['after_approval', 'manual', 'scheduled']).optional(),
   earliest_release_date: z.string().nullish(),
   release_notes_dir: z.string().nullish(),
+  listing_dir: z.string().nullish(),
   cancel_previous_submission: z.boolean().optional(),
   preflight: z.enum(['auto', 'block', 'warn', 'off']).optional(),
 })

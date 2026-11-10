@@ -22,6 +22,7 @@ import { secretHandlersList } from './secrets'
 import { storeCredentialHandlers } from './store-credentials'
 import { signingHandlers } from './signing'
 import { personalHandlers } from './personal'
+import { releaseFreezeHandlers } from './release-freezes'
 import { testerHandlers } from './testers'
 
 export const allHandlers = [
@@ -48,4 +49,5 @@ export const allHandlers = [
   ...signingHandlers,
   ...personalHandlers,
   ...testerHandlers,
+  ...releaseFreezeHandlers,
 ]
