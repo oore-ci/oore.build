@@ -93,6 +93,15 @@ const NOTIFICATION_EVENT_GROUPS = [
     events: [{ value: 'qa_feedback', label: 'Tester feedback' }],
   },
   {
+    label: 'Signing',
+    events: [
+      {
+        value: 'signing_expiring',
+        label: 'Certificate or profile expiring',
+      },
+    ],
+  },
+  {
     label: 'Runners',
     events: [{ value: 'runner_offline', label: 'Runner offline' }],
   },

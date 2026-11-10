@@ -58,6 +58,7 @@ pub mod sample_app;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
+pub mod signing_expiry;
 pub mod signing_identities;
 pub mod step_retry;
 pub mod storage;

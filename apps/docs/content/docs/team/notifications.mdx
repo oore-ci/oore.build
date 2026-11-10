@@ -35,24 +35,32 @@ The test message says whether mentions work for the email you signed in with, so
 
 ## Events
 
-| Event                   | Sent when                                          |
-| ----------------------- | -------------------------------------------------- |
-| Build approval needed   | A build waits for a maintainer's approval          |
-| Build succeeded         | A build succeeds                                   |
-| Build failed            | A build fails. The message links to the build logs |
-| Build canceled          | A build is canceled                                |
-| Build timed out         | A build exceeds its timeout                        |
-| Build expired in queue  | A queued build expires                             |
-| Release uploaded        | A release is uploaded to a store track             |
-| Release approval needed | A release waits for approval                       |
-| Rollout increased       | A staged rollout moves to a higher percentage      |
-| Rollout halted          | A staged rollout is halted                         |
-| Rollout complete        | A rollout reaches 100%                             |
-| Release failed          | A release fails                                    |
-| Tester feedback         | A tester sends feedback from the QA portal         |
-| Runner offline          | A runner stops reporting (all-projects channels)   |
+| Event                           | Sent when                                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Build approval needed           | A build waits for a maintainer's approval                                                                  |
+| Build succeeded                 | A build succeeds                                                                                           |
+| Build failed                    | A build fails. The message links to the build logs                                                         |
+| Build canceled                  | A build is canceled                                                                                        |
+| Build timed out                 | A build exceeds its timeout                                                                                |
+| Build expired in queue          | A queued build expires                                                                                     |
+| Release uploaded                | A release is uploaded to a store track                                                                     |
+| Release approval needed         | A release waits for approval                                                                               |
+| Rollout increased               | A staged rollout moves to a higher percentage                                                              |
+| Rollout halted                  | A staged rollout is halted                                                                                 |
+| Rollout complete                | A rollout reaches 100%                                                                                     |
+| Release failed                  | A release fails                                                                                            |
+| Tester feedback                 | A tester sends feedback from the QA portal                                                                 |
+| Certificate or profile expiring | An iOS distribution certificate or provisioning profile is 30 days or 7 days from expiring, or has expired |
+| Runner offline                  | A runner stops reporting (all-projects channels)                                                           |
 
 **All events** also sends events added in later releases.
+
+Expiry reminders cover the certificates and profiles in pipeline signing
+settings and in the app's signing library. Each file sends one reminder at 30
+days, one at 7 days and one when it expires, and the message links to where
+it is replaced. A file replaced with a newer one starts its reminders again.
+App Store Connect API keys and Google Play service account keys carry no
+expiry date Oore can read, so they send no reminder.
 
 Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes. The delivery shows as pending until then. Each channel's page shows its **Delivery history**.
 
