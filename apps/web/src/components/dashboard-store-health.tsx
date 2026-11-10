@@ -83,6 +83,15 @@ function formatVital(value: number | null | undefined, unit: string): string {
 type AppLevel = ReleaseHealth | 'unreadable'
 
 /** The worst vital decides; an app Oore can't read counts as a problem. */
+/** How many apps are past or close to a store threshold, for Home's one line. */
+export function storeHealthProblems(apps: ReadonlyArray<StoreAppVitals>) {
+  const levels = apps.map(appLevel)
+  return {
+    breached: levels.filter((level) => level === 'breached').length,
+    warning: levels.filter((level) => level === 'warning').length,
+  }
+}
+
 function appLevel(app: StoreAppVitals): AppLevel {
   const levels = app.vitals.map((vital) =>
     healthFromThreshold(vital.value, vital.threshold),

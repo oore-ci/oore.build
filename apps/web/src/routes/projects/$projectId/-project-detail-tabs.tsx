@@ -4,6 +4,8 @@ import { useNavigate, useSearch } from '@tanstack/react-router'
 
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
 import { useBuilds } from '@/hooks/use-builds'
+import { useLiveEventsStore } from '@/stores/live-events-store'
+import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import { DataTableSelectFilter } from '@/components/data-table'
 import type { SortDirection } from '@/components/data-table-features'
@@ -53,6 +55,7 @@ export function ProjectBuildsTab({
   const pageSize = search.pageSize ?? 20
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
+  const liveEvents = useLiveEventsStore((s) => s.connected)
   const buildsQuery = useBuilds(
     {
       project_id: projectId,
@@ -64,7 +67,7 @@ export function ProjectBuildsTab({
       limit: pageSize,
       offset: page > 1 ? (page - 1) * pageSize : undefined,
     },
-    { refetchInterval: 15_000 },
+    { refetchInterval: liveEvents ? LIVE_FALLBACK_POLL_MS : 15_000 },
   )
   const builds = buildsQuery.data?.builds ?? []
   const total = buildsQuery.data?.total ?? 0

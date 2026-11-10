@@ -21,6 +21,9 @@ export function isDemoMutationAllowed(
   if (isLocalDemoHost(hostname)) return true
   return (
     path.startsWith('/v1/auth/') ||
+    // Personal choices: pins and notification settings change nothing shared.
+    path.endsWith('/favorite') ||
+    path === '/v1/users/me/notification-preferences' ||
     path === '/v1/artifacts/query' ||
     // Dry runs: they plan or generate, and store nothing.
     path === '/v1/pipelines/plan' ||

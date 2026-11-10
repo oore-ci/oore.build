@@ -71,14 +71,9 @@ function RolloutHealth({
       <TooltipTrigger
         render={
           storeAnchor ? (
-            <a
-              href={`#${storeAnchor}`}
-              onClick={(event) => {
-                const target = document.getElementById(storeAnchor)
-                if (!target) return
-                event.preventDefault()
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }}
+            <Link
+              to="/insights"
+              hash={storeAnchor}
               aria-label={`Rollout health ${RELEASE_HEALTH_LABEL[release.health]}. Open store health for ${releaseAppName(release)}`}
               className={cn(focusRingVariants(), 'rounded-2xl')}
             />

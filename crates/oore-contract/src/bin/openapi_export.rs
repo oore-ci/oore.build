@@ -119,6 +119,13 @@ use utoipa::{
         operations::delete_project,
         operations::discover_repository_workflows,
         operations::detect_project_app,
+        operations::add_project_favorite,
+        operations::remove_project_favorite,
+        operations::get_notification_preferences,
+        operations::update_notification_preferences,
+        operations::get_inbox,
+        operations::get_weekly_digest,
+        operations::send_weekly_digest,
         operations::list_repository_config_files,
         operations::refresh_repository_config_files,
         // ── Project Members ──
@@ -391,6 +398,18 @@ use utoipa::{
         oore_contract::ProjectSetupProgress,
         oore_contract::ProjectAppDetection,
         oore_contract::ListProjectsResponse,
+        oore_contract::PersonalBuildEvents,
+        oore_contract::NotificationPreferences,
+        oore_contract::NotificationPreferencesResponse,
+        oore_contract::InboxItemKind,
+        oore_contract::InboxItem,
+        oore_contract::InboxResponse,
+        oore_contract::DigestPipeline,
+        oore_contract::DigestRelease,
+        oore_contract::DigestApp,
+        oore_contract::DigestExpiry,
+        oore_contract::WeeklyDigest,
+        oore_contract::BuildQueueEstimate,
         oore_contract::RepositoryWorkflowExecutionPreview,
         oore_contract::RepositoryWorkflowPreview,
         oore_contract::DiscoverRepositoryWorkflowsResponse,
@@ -1822,7 +1841,7 @@ mod operations {
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
             ("search" = Option<String>, Query, description = "Filter by name (case-insensitive partial match)"),
             ("integration_id" = Option<String>, Query, description = "Filter by linked integration"),
-            ("sort" = Option<String>, Query, description = "Sort by created_at, updated_at, or name"),
+            ("sort" = Option<String>, Query, description = "Sort by activity (pinned apps, then newest build), created_at, updated_at, or name"),
             ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
         ),
         security(("bearer_auth" = [])),
@@ -1974,6 +1993,73 @@ mod operations {
         )
     )]
     pub(super) fn detect_project_app() {}
+
+    /// Pin an app
+    ///
+    /// Pins the app for the signed-in person: it sorts first in the app
+    /// list, and its store releases reach their notifications.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/favorite", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Pinned"),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) fn add_project_favorite() {}
+
+    /// Unpin an app
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/favorite", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses((status = 204, description = "Unpinned"))
+    )]
+    pub(super) fn remove_project_favorite() {}
+
+    /// Get my notification preferences
+    #[utoipa::path(get, path = "/v1/users/me/notification-preferences", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "Notification preferences", body = NotificationPreferencesResponse))
+    )]
+    pub(super) fn get_notification_preferences() {}
+
+    /// Update my notification preferences
+    #[utoipa::path(put, path = "/v1/users/me/notification-preferences", tag = "Users",
+        request_body = NotificationPreferences,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Saved preferences", body = NotificationPreferencesResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn update_notification_preferences() {}
+
+    /// Get my inbox
+    ///
+    /// Approvals I can give, my failed builds and release changes of apps I
+    /// pinned, from the last 7 days.
+    #[utoipa::path(get, path = "/v1/users/me/inbox", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "Inbox", body = InboxResponse))
+    )]
+    pub(super) fn get_inbox() {}
+
+    /// Get my weekly digest
+    #[utoipa::path(get, path = "/v1/users/me/digest", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "The last 7 days of my apps", body = WeeklyDigest))
+    )]
+    pub(super) fn get_weekly_digest() {}
+
+    /// Email my weekly digest now
+    #[utoipa::path(post, path = "/v1/users/me/digest/send", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 202, description = "Queued"),
+            (status = 409, description = "No email channel to send through", body = ApiError),
+        )
+    )]
+    pub(super) fn send_weekly_digest() {}
 
     /// List config files found in the repository
     ///
@@ -2714,6 +2800,7 @@ mod operations {
             ("workflow" = Option<String>, Query, description = "Filter by exact .oore.yaml version 2 workflow name"),
             ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
             ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
+            ("mine" = Option<bool>, Query, description = "Only builds you started or builds of apps you pinned."),
             ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),
             ("created_before" = Option<i64>, Query, description = "Only builds created before this Unix time in seconds. Must be later than created_after."),
             ("q" = Option<String>, Query, description = "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters."),

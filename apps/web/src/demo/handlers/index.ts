@@ -21,6 +21,7 @@ import { apiTokenHandlers } from './api-tokens'
 import { secretHandlersList } from './secrets'
 import { storeCredentialHandlers } from './store-credentials'
 import { signingHandlers } from './signing'
+import { personalHandlers } from './personal'
 
 export const allHandlers = [
   ...demoReadOnlyGuardHandlers,
@@ -44,4 +45,5 @@ export const allHandlers = [
   ...secretHandlersList,
   ...storeCredentialHandlers,
   ...signingHandlers,
+  ...personalHandlers,
 ]

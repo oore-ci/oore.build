@@ -7,6 +7,9 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import {
   ComputerIcon,
   FolderAddIcon,
+  Notification03Icon,
+  Rocket01Icon,
+  WorkflowSquare03Icon,
   Moon02Icon,
   PlayIcon,
   Refresh01Icon,
@@ -26,6 +29,8 @@ import {
 } from '@/components/ui/command'
 import { WORKSPACE_ITEMS } from '@/components/nav-main'
 import { useBuilds } from '@/hooks/use-builds'
+import { useReleases } from '@/hooks/use-releases'
+import { releaseAppName, releaseStateLabel } from '@/lib/releases'
 import { useProject, useProjects } from '@/hooks/use-projects'
 import { useRerunAndOpen } from '@/hooks/use-rerun-and-open'
 import { settingsGroupsForRole } from '@/components/settings/settings-navigation'
@@ -52,6 +57,7 @@ const EMPTY_BUILDS: Array<Build> = []
 const PROJECT_LIMIT = 50
 const RECENT_BUILD_LIMIT = 20
 const OPEN_BUILD_LIMIT = 5
+const RECENT_RELEASE_LIMIT = 10
 
 const NAV_KEYWORDS = new Map([
   ['/', 'home overview dashboard'],
@@ -168,6 +174,10 @@ export default function CommandPalette({
     { enabled: open && !isQaViewer, refetchInterval: false },
   )
   const builds = buildsData?.builds ?? EMPTY_BUILDS
+  const { data: releasesData } = useReleases(
+    { limit: RECENT_RELEASE_LIMIT },
+    { enabled: open && !isQaViewer },
+  )
 
   const buildNumber = parseBuildNumberQuery(search)
   const { data: numberMatches } = useBuilds(
@@ -281,6 +291,17 @@ export default function CommandPalette({
           },
         ]
       : []),
+    ...(isQaViewer
+      ? []
+      : [
+          {
+            id: 'action-notifications',
+            label: 'Notification settings',
+            icon: Notification03Icon,
+            action: () => go('/account/notifications'),
+            keywords: ['inbox email browser digest alerts notify me'],
+          },
+        ]),
     ...(canWriteProjects
       ? [
           {
@@ -334,6 +355,44 @@ export default function CommandPalette({
             }
           })
       : []
+
+  // Pipelines that built recently, to open rather than run.
+  const pipelineItems: Array<PaletteItem> = isQaViewer
+    ? []
+    : builds
+        .filter(
+          (build, index) =>
+            builds.findIndex(
+              (other) => other.pipeline_id === build.pipeline_id,
+            ) === index,
+        )
+        .map((build) => ({
+          id: `pipeline-${build.pipeline_id}`,
+          label: build.context?.pipeline_name ?? 'Pipeline',
+          icon: WorkflowSquare03Icon,
+          hint: build.context?.project_name ?? undefined,
+          action: () =>
+            go(`/projects/${build.project_id}/pipelines/${build.pipeline_id}`),
+          keywords: [
+            'pipeline open settings',
+            build.context?.project_name ?? '',
+          ],
+        }))
+
+  const releaseItems: Array<PaletteItem> = (releasesData?.releases ?? []).map(
+    (release) => ({
+      id: `release-${release.id}`,
+      label: `${releaseAppName(release)} ${release.version_name ?? ''}`.trim(),
+      icon: Rocket01Icon,
+      hint: `${release.store === 'app_store' ? 'App Store' : 'Google Play'} · ${releaseStateLabel(release)}`,
+      action: () => go(`/releases/${release.id}`),
+      keywords: [
+        'release store rollout',
+        release.store === 'app_store' ? 'app store ios' : 'google play android',
+        release.track,
+      ],
+    }),
+  )
 
   function setThemeAndClose(theme: string) {
     setTheme(theme)
@@ -441,6 +500,8 @@ export default function CommandPalette({
       { heading: 'Run pipeline', items: runItems },
       { heading: 'Recent builds', items: buildItems },
       { heading: 'Apps', items: projectItems },
+      { heading: 'Pipelines', items: pipelineItems },
+      { heading: 'Releases', items: releaseItems },
       { heading: 'Settings', items: settingsItems },
       { heading: 'Theme', items: themeItems },
     ].map((section) => ({

@@ -1931,6 +1931,15 @@
             }
           },
           {
+            "name": "mine",
+            "in": "query",
+            "description": "Only builds you started or builds of apps you pinned.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "created_after",
             "in": "query",
             "description": "Only builds created at or after this Unix time in seconds",
@@ -6136,7 +6145,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort by created_at, updated_at, or name",
+            "description": "Sort by activity (pinned apps, then newest build), created_at, updated_at, or name",
             "required": false,
             "schema": {
               "type": "string"
@@ -7013,6 +7022,75 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/favorite": {
+      "put": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Pin an app",
+        "description": "Pins the app for the signed-in person: it sorts first in the app\nlist, and its store releases reach their notifications.",
+        "operationId": "add_project_favorite",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Pinned"
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Unpin an app",
+        "operationId": "remove_project_favorite",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unpinned"
           }
         },
         "security": [
@@ -14512,6 +14590,158 @@
         ]
       }
     },
+    "/v1/users/me/digest": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get my weekly digest",
+        "operationId": "get_weekly_digest",
+        "responses": {
+          "200": {
+            "description": "The last 7 days of my apps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyDigest"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/digest/send": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Email my weekly digest now",
+        "operationId": "send_weekly_digest",
+        "responses": {
+          "202": {
+            "description": "Queued"
+          },
+          "409": {
+            "description": "No email channel to send through",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/inbox": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get my inbox",
+        "description": "Approvals I can give, my failed builds and release changes of apps I\npinned, from the last 7 days.",
+        "operationId": "get_inbox",
+        "responses": {
+          "200": {
+            "description": "Inbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/notification-preferences": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get my notification preferences",
+        "operationId": "get_notification_preferences",
+        "responses": {
+          "200": {
+            "description": "Notification preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update my notification preferences",
+        "operationId": "update_notification_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users/{user_id}": {
       "delete": {
         "tags": [
@@ -16413,6 +16643,17 @@
               "$ref": "#/components/schemas/BuildEvent"
             }
           },
+          "queue": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildQueueEstimate",
+                "description": "Where a queued build stands: builds ahead of it and a rough wait."
+              }
+            ]
+          },
           "retryable_steps": {
             "type": "array",
             "items": {
@@ -16745,6 +16986,34 @@
           "ios",
           "macos"
         ]
+      },
+      "BuildQueueEstimate": {
+        "type": "object",
+        "description": "A queued build's place in line, from the builds queued before it and\neach pipeline's median build time.",
+        "required": [
+          "ahead",
+          "running"
+        ],
+        "properties": {
+          "ahead": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued builds that a runner takes first."
+          },
+          "estimated_wait_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rough seconds until a runner takes this build; absent with no history."
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Builds running now."
+          }
+        }
       },
       "BuildQueueSnapshot": {
         "type": "object",
@@ -17952,6 +18221,112 @@
           }
         }
       },
+      "DigestApp": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "name",
+          "builds",
+          "succeeded",
+          "failed",
+          "releases"
+        ],
+        "properties": {
+          "builds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestRelease"
+            }
+          },
+          "slowest_pipeline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DigestPipeline"
+              }
+            ]
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DigestExpiry": {
+        "type": "object",
+        "required": [
+          "name",
+          "project_name",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          }
+        }
+      },
+      "DigestPipeline": {
+        "type": "object",
+        "required": [
+          "name",
+          "median_seconds"
+        ],
+        "properties": {
+          "median_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "DigestRelease": {
+        "type": "object",
+        "required": [
+          "version",
+          "store",
+          "track",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "store": {
+            "type": "string"
+          },
+          "track": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
       "DiscoverRepositoryWorkflowsResponse": {
         "type": "object",
         "required": [
@@ -19095,6 +19470,78 @@
           },
           "track": {
             "type": "string"
+          }
+        }
+      },
+      "InboxItem": {
+        "type": "object",
+        "description": "Something for this person: an approval they can give, a build of theirs\nthat failed, or a change to a release of an app they pinned.",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "detail",
+          "project_id",
+          "project_name",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InboxItemKind"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "InboxItemKind": {
+        "type": "string",
+        "enum": [
+          "approval",
+          "failed_build",
+          "release"
+        ]
+      },
+      "InboxResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InboxItem"
+            },
+            "description": "Newest first, from the last 7 days."
           }
         }
       },
@@ -20349,6 +20796,65 @@
           "failed"
         ]
       },
+      "NotificationPreferences": {
+        "type": "object",
+        "description": "One person's notification choices. Instance channels are unaffected.",
+        "required": [
+          "my_builds",
+          "approvals",
+          "followed_releases",
+          "email",
+          "browser",
+          "weekly_digest"
+        ],
+        "properties": {
+          "approvals": {
+            "type": "boolean",
+            "description": "Builds waiting for an approval this person can give."
+          },
+          "browser": {
+            "type": "boolean",
+            "description": "Show these as browser notifications while Oore is open."
+          },
+          "email": {
+            "type": "boolean",
+            "description": "Send these by email, using the instance's email channel server."
+          },
+          "followed_releases": {
+            "type": "boolean",
+            "description": "Store release changes of the apps this person pinned."
+          },
+          "my_builds": {
+            "$ref": "#/components/schemas/PersonalBuildEvents",
+            "description": "Builds this person started."
+          },
+          "weekly_digest": {
+            "type": "boolean",
+            "description": "A weekly summary email on Monday morning (UTC)."
+          }
+        }
+      },
+      "NotificationPreferencesResponse": {
+        "type": "object",
+        "required": [
+          "preferences",
+          "email_available",
+          "email_address"
+        ],
+        "properties": {
+          "email_address": {
+            "type": "string",
+            "description": "Where personal email goes."
+          },
+          "email_available": {
+            "type": "boolean",
+            "description": "An enabled email channel exists, so Oore can send personal email."
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/NotificationPreferences"
+          }
+        }
+      },
       "OidcCallbackResponse": {
         "type": "object",
         "required": [
@@ -20526,6 +21032,15 @@
         "enum": [
           "open",
           "resolved"
+        ]
+      },
+      "PersonalBuildEvents": {
+        "type": "string",
+        "description": "Which of their own builds a person hears about.",
+        "enum": [
+          "off",
+          "failed",
+          "all"
         ]
       },
       "Pipeline": {
@@ -21446,7 +21961,9 @@
           "created_at",
           "updated_at",
           "current_user_role",
-          "auto_add_pipelines"
+          "auto_add_pipelines",
+          "is_favorite",
+          "platforms"
         ],
         "properties": {
           "auto_add_pipelines": {
@@ -21478,8 +21995,34 @@
           "id": {
             "type": "string"
           },
+          "is_favorite": {
+            "type": "boolean",
+            "description": "The signed-in person pinned this app; pinned apps sort first."
+          },
+          "last_build_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the app's newest build started, for sorting by activity."
+          },
+          "live_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Version of the newest store release that is rolling out or complete."
+          },
           "name": {
             "type": "string"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms its pipelines build."
           },
           "repository_avatar_url": {
             "type": [
@@ -26508,6 +27051,39 @@
           },
           "ok": {
             "type": "boolean"
+          }
+        }
+      },
+      "WeeklyDigest": {
+        "type": "object",
+        "description": "What the weekly digest says for this person: their apps' last 7 days.",
+        "required": [
+          "period_start",
+          "period_end",
+          "apps",
+          "expiring"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestApp"
+            }
+          },
+          "expiring": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestExpiry"
+            },
+            "description": "Signing certificates and profiles that expire in the next 30 days."
+          },
+          "period_end": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "period_start": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       }

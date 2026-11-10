@@ -1927,6 +1927,22 @@ pub struct BuildDetailResponse {
     /// can run again without rebuilding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retryable_steps: Vec<String>,
+    /// Where a queued build stands: builds ahead of it and a rough wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<BuildQueueEstimate>,
+}
+
+/// A queued build's place in line, from the builds queued before it and
+/// each pipeline's median build time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildQueueEstimate {
+    /// Queued builds that a runner takes first.
+    pub ahead: i64,
+    /// Builds running now.
+    pub running: i64,
+    /// Rough seconds until a runner takes this build; absent with no history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_wait_seconds: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3257,6 +3273,143 @@ pub struct Project {
     #[serde(default)]
     #[schema(required = true)]
     pub auto_add_pipelines: bool,
+    /// The signed-in person pinned this app; pinned apps sort first.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub is_favorite: bool,
+    /// When the app's newest build started, for sorting by activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_build_at: Option<i64>,
+    /// Platforms its pipelines build.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub platforms: Vec<BuildPlatform>,
+    /// Version of the newest store release that is rolling out or complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_version: Option<String>,
+}
+
+/// Which of their own builds a person hears about.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonalBuildEvents {
+    Off,
+    #[default]
+    Failed,
+    All,
+}
+
+/// One person's notification choices. Instance channels are unaffected.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct NotificationPreferences {
+    /// Builds this person started.
+    pub my_builds: PersonalBuildEvents,
+    /// Builds waiting for an approval this person can give.
+    pub approvals: bool,
+    /// Store release changes of the apps this person pinned.
+    pub followed_releases: bool,
+    /// Send these by email, using the instance's email channel server.
+    pub email: bool,
+    /// Show these as browser notifications while Oore is open.
+    pub browser: bool,
+    /// A weekly summary email on Monday morning (UTC).
+    pub weekly_digest: bool,
+}
+
+impl Default for NotificationPreferences {
+    fn default() -> Self {
+        Self {
+            my_builds: PersonalBuildEvents::Failed,
+            approvals: true,
+            followed_releases: true,
+            email: false,
+            browser: true,
+            weekly_digest: false,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct NotificationPreferencesResponse {
+    pub preferences: NotificationPreferences,
+    /// An enabled email channel exists, so Oore can send personal email.
+    pub email_available: bool,
+    /// Where personal email goes.
+    pub email_address: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InboxItemKind {
+    Approval,
+    FailedBuild,
+    Release,
+}
+
+/// Something for this person: an approval they can give, a build of theirs
+/// that failed, or a change to a release of an app they pinned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InboxItem {
+    pub id: String,
+    pub kind: InboxItemKind,
+    pub title: String,
+    pub detail: String,
+    pub project_id: String,
+    pub project_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
+    pub at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct InboxResponse {
+    /// Newest first, from the last 7 days.
+    pub items: Vec<InboxItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestPipeline {
+    pub name: String,
+    pub median_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestRelease {
+    pub version: String,
+    pub store: String,
+    pub track: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestApp {
+    pub project_id: String,
+    pub name: String,
+    pub builds: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slowest_pipeline: Option<DigestPipeline>,
+    pub releases: Vec<DigestRelease>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestExpiry {
+    pub name: String,
+    pub project_name: String,
+    pub expires_at: i64,
+}
+
+/// What the weekly digest says for this person: their apps' last 7 days.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WeeklyDigest {
+    pub period_start: i64,
+    pub period_end: i64,
+    pub apps: Vec<DigestApp>,
+    /// Signing certificates and profiles that expire in the next 30 days.
+    pub expiring: Vec<DigestExpiry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

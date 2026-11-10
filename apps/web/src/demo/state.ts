@@ -86,7 +86,15 @@ import {
   ago,
 } from './seed'
 
-export type DemoProject = Omit<Project, 'current_user_role'>
+/** A stored demo app; per-person and derived fields are added when listed. */
+export type DemoProject = Omit<
+  Project,
+  | 'current_user_role'
+  | 'is_favorite'
+  | 'last_build_at'
+  | 'live_version'
+  | 'platforms'
+>
 
 export type DemoScenario =
   | 'operating'
@@ -116,6 +124,8 @@ interface DemoState {
   personas: Array<DemoPersona>
   users: Array<User>
   projects: Array<DemoProject>
+  /** Apps each user pinned, by user id. */
+  favoriteProjects: Partial<Record<string, Array<string>>>
   projectRoles: Partial<Record<string, Record<string, ProjectRole>>>
   pipelines: Array<Pipeline>
   /** Files on each project's default branch. */
@@ -696,6 +706,7 @@ export function createDemoState(
     personas,
     users,
     projects,
+    favoriteProjects: { [USER_IDS.owner]: [PROJECT_IDS.flutterShop] },
     projectRoles: makeProjectRoles(personas),
     pipelines,
     repositoryWorkflows: {
@@ -945,6 +956,7 @@ export function createDemoState(
 
   if (scenario === 'empty' || scenario === 'setup') {
     state.projects = []
+    state.favoriteProjects = {}
     state.projectRoles = {}
     state.pipelines = []
     state.repositoryWorkflows = {}

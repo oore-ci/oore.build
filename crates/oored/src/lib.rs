@@ -31,6 +31,7 @@ pub mod notification_dispatch;
 pub mod observability;
 pub mod oidc;
 pub mod operator;
+pub mod personal;
 pub mod pipeline_ios_signing;
 pub mod pipeline_publish;
 pub mod pipeline_schedules;
@@ -39,6 +40,7 @@ pub mod pipelines;
 pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
+pub mod queue_estimate;
 pub mod rbac;
 pub mod release_store;
 pub mod releases;
@@ -2474,6 +2476,7 @@ pub async fn build_router_with_recovery(
             pool.clone(),
             shared_state.encryption_key.to_vec(),
         );
+        personal::start_personal_mailer(pool.clone(), shared_state.encryption_key.to_vec());
         notification_dispatch::start_notification_dispatcher(
             pool,
             sched,
@@ -2584,6 +2587,17 @@ pub async fn build_router_with_recovery(
         .route("/v1/auth/logout", post(auth::logout))
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
+        .route(
+            "/v1/users/me/notification-preferences",
+            get(personal::get_preferences).put(personal::update_preferences),
+        )
+        .route("/v1/users/me/inbox", get(personal::get_inbox))
+        .route("/v1/users/me/digest", get(personal::get_digest))
+        .route("/v1/users/me/digest/send", post(personal::send_digest_now))
+        .route(
+            "/v1/projects/{project_id}/favorite",
+            put(personal::add_favorite).delete(personal::remove_favorite),
+        )
         .route(
             "/v1/system/update",
             get(runtime_updates::get_status).post(runtime_updates::start_update),

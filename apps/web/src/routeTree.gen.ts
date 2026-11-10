@@ -11,10 +11,12 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BuildsRouteRouteImport } from './routes/builds/route'
+import { Route as InsightsRouteImport } from './routes/insights'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as ProjectsRouteRouteImport } from './routes/projects/route'
 import { Route as SettingsRouteRouteImport } from './routes/settings/route'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as AccountNotificationsRouteImport } from './routes/account/notifications'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as BuildsIndexRouteImport } from './routes/builds/index'
 import { Route as BuildsBuildIdRouteImport } from './routes/builds/$buildId'
@@ -66,6 +68,11 @@ const BuildsRouteRoute = BuildsRouteRouteImport.update({
   path: '/builds',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InsightsRoute = InsightsRouteImport.update({
+  id: '/insights',
+  path: '/insights',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
   path: '/login',
@@ -84,6 +91,11 @@ const SettingsRouteRoute = SettingsRouteRouteImport.update({
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
+  id: '/account/notifications',
+  path: '/account/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthCallbackRoute = AuthCallbackRouteImport.update({
@@ -324,11 +336,13 @@ export interface FileRoutesByFullPath {
   '/builds': typeof BuildsRouteRouteWithChildren
   '/projects': typeof ProjectsRouteRouteWithChildren
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/insights': typeof InsightsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/settings/sources': typeof SettingsSourcesRouteRouteWithChildren
+  '/account/notifications': typeof AccountNotificationsRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/releases/$releaseId': typeof ReleasesReleaseIdRoute
@@ -369,7 +383,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/insights': typeof InsightsRoute
   '/login': typeof LoginRoute
+  '/account/notifications': typeof AccountNotificationsRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/releases/$releaseId': typeof ReleasesReleaseIdRoute
@@ -413,11 +429,13 @@ export interface FileRoutesById {
   '/builds': typeof BuildsRouteRouteWithChildren
   '/projects': typeof ProjectsRouteRouteWithChildren
   '/settings': typeof SettingsRouteRouteWithChildren
+  '/insights': typeof InsightsRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRouteWithChildren
   '/projects/$projectId': typeof ProjectsProjectIdRouteRouteWithChildren
   '/settings/notifications': typeof SettingsNotificationsRouteRouteWithChildren
   '/settings/sources': typeof SettingsSourcesRouteRouteWithChildren
+  '/account/notifications': typeof AccountNotificationsRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/builds/$buildId': typeof BuildsBuildIdRoute
   '/releases/$releaseId': typeof ReleasesReleaseIdRoute
@@ -463,11 +481,13 @@ export interface FileRouteTypes {
     | '/builds'
     | '/projects'
     | '/settings'
+    | '/insights'
     | '/login'
     | '/setup'
     | '/projects/$projectId'
     | '/settings/notifications'
     | '/settings/sources'
+    | '/account/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
     | '/releases/$releaseId'
@@ -508,7 +528,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/insights'
     | '/login'
+    | '/account/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
     | '/releases/$releaseId'
@@ -551,11 +573,13 @@ export interface FileRouteTypes {
     | '/builds'
     | '/projects'
     | '/settings'
+    | '/insights'
     | '/login'
     | '/setup'
     | '/projects/$projectId'
     | '/settings/notifications'
     | '/settings/sources'
+    | '/account/notifications'
     | '/auth/callback'
     | '/builds/$buildId'
     | '/releases/$releaseId'
@@ -600,8 +624,10 @@ export interface RootRouteChildren {
   BuildsRouteRoute: typeof BuildsRouteRouteWithChildren
   ProjectsRouteRoute: typeof ProjectsRouteRouteWithChildren
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
+  InsightsRoute: typeof InsightsRoute
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRouteWithChildren
+  AccountNotificationsRoute: typeof AccountNotificationsRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   ReleasesReleaseIdRoute: typeof ReleasesReleaseIdRoute
 }
@@ -620,6 +646,13 @@ declare module '@tanstack/react-router' {
       path: '/builds'
       fullPath: '/builds'
       preLoaderRoute: typeof BuildsRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/insights': {
+      id: '/insights'
+      path: '/insights'
+      fullPath: '/insights'
+      preLoaderRoute: typeof InsightsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -648,6 +681,13 @@ declare module '@tanstack/react-router' {
       path: '/setup'
       fullPath: '/setup'
       preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account/notifications': {
+      id: '/account/notifications'
+      path: '/account/notifications'
+      fullPath: '/account/notifications'
+      preLoaderRoute: typeof AccountNotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/callback': {
@@ -1100,8 +1140,10 @@ const rootRouteChildren: RootRouteChildren = {
   BuildsRouteRoute: BuildsRouteRouteWithChildren,
   ProjectsRouteRoute: ProjectsRouteRouteWithChildren,
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
+  InsightsRoute: InsightsRoute,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRouteWithChildren,
+  AccountNotificationsRoute: AccountNotificationsRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   ReleasesReleaseIdRoute: ReleasesReleaseIdRoute,
 }
