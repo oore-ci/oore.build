@@ -45,6 +45,7 @@ pub mod project_rbac;
 pub mod projects;
 pub mod queue_estimate;
 pub mod rbac;
+pub mod rehearsals;
 pub mod release_freezes;
 pub mod release_store;
 pub mod releases;
@@ -2987,6 +2988,10 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
         .route(
+            "/v1/builds/{build_id}/rehearsal",
+            get(rehearsals::get_build_rehearsal),
+        )
+        .route(
             "/v1/builds/{build_id}/failure-hint",
             get(build_failure_hint::get_build_failure_hint),
         )
@@ -3128,6 +3133,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",
             post(pipeline_publish::report_job_publish_result),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal",
+            post(rehearsals::report_job_rehearsal),
         )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/test-results",

@@ -1,10 +1,14 @@
-import { useState } from 'react'
-import { Link } from '@tanstack/react-router'
+import { lazy, Suspense, useState } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import type { Release } from '@oore/client/models'
 
 import { ReleaseActions } from '@/components/releases/release-actions'
+
+const TriggerBuildDrawer = lazy(
+  () => import('@/components/trigger-build-drawer'),
+)
 import { ReleaseCalendar } from '@/components/releases/release-calendar'
 import { ReleaseFreezeControl } from '@/components/releases/release-freeze'
 import { RecordReleaseButton } from '@/components/releases/record-release-dialog'
@@ -232,10 +236,15 @@ function VersionRow({ group }: { group: VersionGroup }) {
 export function ProjectReleasesTab({
   projectId,
   canManage = false,
+  canRehearse = false,
 }: {
   projectId: string
   canManage?: boolean
+  /** The person can run builds here and the app has a pipeline. */
+  canRehearse?: boolean
 }) {
+  const navigate = useNavigate()
+  const [rehearseOpen, setRehearseOpen] = useState(false)
   const releasesQuery = useReleases({ project_id: projectId, limit: 200 })
   const latestBuildQuery = useBuilds({
     project_id: projectId,
@@ -257,9 +266,33 @@ export function ProjectReleasesTab({
     <TabsContent value="releases">
       <Stack gap={4} className="pt-2">
         <Row gap={2} className="flex-wrap justify-end empty:hidden">
+          {canRehearse ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRehearseOpen(true)}
+            >
+              Rehearse a release
+            </Button>
+          ) : null}
           <ReleaseFreezeControl projectId={projectId} canManage={canManage} />
           {canManage ? <RecordReleaseButton projectId={projectId} /> : null}
         </Row>
+        {rehearseOpen ? (
+          <Suspense fallback={null}>
+            <TriggerBuildDrawer
+              open
+              onOpenChange={setRehearseOpen}
+              fixedProjectId={projectId}
+              rehearsal
+              title="Rehearse a release"
+              description="Try the release first: see what each store would say, without submitting anything."
+              onBuildCreated={(buildId) =>
+                void navigate({ to: '/builds/$buildId', params: { buildId } })
+              }
+            />
+          </Suspense>
+        ) : null}
         {releasesQuery.error ? (
           <Alert variant="destructive">
             <AlertDescription className="flex items-center justify-between gap-3">

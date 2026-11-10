@@ -35,19 +35,14 @@ export function PromoteReleaseButton({
   const source = promotionSource(environments, release)
   if (!source || !canOperate) return null
   const target = nextEnvironment(environments, source)
-  const reachable = environments.some(
-    (environment) =>
-      environment.id !== source.id &&
-      environment.promotable &&
-      environment.store === source.store &&
-      (canManage || environment.approval_required),
-  )
-  if (!reachable) return null
+  // Only offer a step forward: from the last environment (production) the
+  // dialog would default to the first one, which nobody means to do here.
+  if (!target || !(canManage || target.approval_required)) return null
 
   return (
     <>
       <Button variant="outline" size={size} onClick={() => setOpen(true)}>
-        {target ? `Promote to ${target.name}` : 'Promote'}
+        Promote to {target.name}
       </Button>
       {open ? (
         <PromoteDialog

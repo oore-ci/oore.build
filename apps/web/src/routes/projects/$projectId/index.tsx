@@ -681,6 +681,7 @@ function ProjectDetailPage() {
             <ProjectReleasesTab
               projectId={projectId}
               canManage={canManageReleases || isInstanceAdmin}
+              canRehearse={canRunBuild}
             />
           </Suspense>
         ) : null}

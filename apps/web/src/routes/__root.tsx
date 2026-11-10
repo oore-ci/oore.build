@@ -19,6 +19,7 @@ import {
 } from '@/components/root-route-boundaries'
 import SiteHeader from '@/components/site-header'
 import { Stack } from '@/components/layout/stack'
+import { isDemoMode } from '@/lib/demo-mode'
 
 export const Route = createRootRoute({
   beforeLoad: () => {
@@ -53,7 +54,8 @@ function RootLayout() {
   const showQaChrome = showAppChrome && authUser.role === 'qa_viewer'
 
   useSessionMonitor()
-  useLiveEvents(showAppChrome)
+  // The demo has no daemon to stream from; its data only changes on mutations.
+  useLiveEvents(showAppChrome && !isDemoMode)
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -7,7 +7,7 @@ use oore_contract::{
     ApiError, GooglePlayCredentialsTestRequest, GooglePlayCredentialsTestResponse,
     GooglePlayPublishConfig, GooglePlayReleaseNotesSource, OkResponse,
     PipelineGooglePlayPublishResponse, PublishStore, ReleaseState, ReleaseStore, RunnerPublishPlan,
-    RunnerPublishResult, validate_google_play_publish_config,
+    RunnerPublishResult, RunnerRehearsalPlan, validate_google_play_publish_config,
 };
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
@@ -534,12 +534,32 @@ pub async fn get_job_publish_plan(
         .await;
     }
 
-    let project_id: Option<String> =
-        sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+    let (project_id, snapshot): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT project_id, config_snapshot FROM builds WHERE id = ?1")
             .bind(&job_id)
             .fetch_optional(&state.db)
             .await
-            .map_err(|e| store_error("Failed to load publish settings", e))?;
+            .map_err(|e| store_error("Failed to load publish settings", e))?
+            .unwrap_or_default();
+    let rehearsal = snapshot
+        .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(&snapshot).ok())
+        .is_some_and(|snapshot| crate::builds::snapshot_rehearsal(&snapshot));
+    if rehearsal {
+        // Checked, not uploaded. The top level stays off so a runner that
+        // predates rehearsals uploads nothing.
+        return Ok(Json(RunnerPublishPlan {
+            changelog,
+            google_play: None,
+            app_store: None,
+            disabled: true,
+            frozen: None,
+            rehearsal: Some(RunnerRehearsalPlan {
+                disabled,
+                google_play,
+                app_store,
+            }),
+        }));
+    }
     let frozen = match project_id {
         Some(project_id) => crate::release_freezes::active_freeze(&state.db, &project_id)
             .await
@@ -554,6 +574,7 @@ pub async fn get_job_publish_plan(
         app_store: app_store.filter(|_| !held),
         disabled,
         frozen,
+        rehearsal: None,
     }))
 }
 

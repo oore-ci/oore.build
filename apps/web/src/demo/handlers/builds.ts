@@ -30,6 +30,7 @@ const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
     platforms: z.array(z.enum(['android', 'ios', 'macos'])).nullish(),
     trigger_ref: z.string().nullish(),
     workflow: z.string().nullish(),
+    rehearsal: z.boolean().nullish(),
   }),
 )
 const DEMO_TRIGGER_TYPES = new Set(['manual', 'api', 'schedule'])
@@ -486,7 +487,8 @@ export const buildHandlers = [
       changelog: body.changelog,
       store_notes: body.store_notes,
       workflow: planned.workflow,
-      config_snapshot: {},
+      config_snapshot: body.rehearsal ? { rehearsal: true } : {},
+      rehearsal: body.rehearsal ?? undefined,
       queued_at: ago(0),
       created_at: ago(0),
       updated_at: ago(0),
@@ -721,7 +723,14 @@ export const buildHandlers = [
     )
   }),
 
-  // Stream token — return 503 to trigger polling fallback in useLogStream
+  // The demo has no live log stream; 503 sends useLogStream to polling.
+  demoApi.streamBuildLogs(() =>
+    HttpResponse.json(
+      { error: 'Demo mode: live streaming unavailable', code: 'demo_mode' },
+      { status: 503 },
+    ),
+  ),
+
   demoApi.createStreamToken(async () => {
     await delay(100)
     return HttpResponse.json(

@@ -12,6 +12,7 @@ import { requireDemoProjectPermission } from '../authorization'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { BUILD_IDS, PIPELINE_IDS, PROJECT_IDS, ago } from '../seed'
 import { demoState } from '../state'
+import { demoRehearsals } from '../data/rehearsals'
 
 const DAY = 86_400
 
@@ -222,6 +223,18 @@ export const releaseFreezeHandlers = [
     return HttpResponse.json({
       hint: FAILURE_HINTS.get(String(params.build_id)) ?? null,
     })
+  }),
+
+  demoApi.getBuildRehearsal(async ({ params }) => {
+    await delay(150)
+    const buildId = String(params.build_id)
+    return HttpResponse.json(
+      demoRehearsals.get(buildId) ?? {
+        build_id: buildId,
+        checks: [],
+        stores: [],
+      },
+    )
   }),
 
   demoApi.getBuildTrends(async ({ request }) => {

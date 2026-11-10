@@ -121,6 +121,7 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         retry_steps: crate::step_retry::retry_steps_from_snapshot(&config_snapshot),
         approval,
         workflow: snapshot_workflow(&config_snapshot),
+        rehearsal: snapshot_rehearsal(&config_snapshot),
         config_snapshot,
         runner_id: row.get("runner_id"),
         context,
@@ -441,6 +442,14 @@ fn set_snapshot_workflow_name(snapshot: &mut serde_json::Value, workflow: Option
     if let Some(workflow) = workflow {
         snapshot["workflow"] = serde_json::json!(workflow);
     }
+}
+
+/// Whether a build is a release rehearsal, as its snapshot records it.
+pub(crate) fn snapshot_rehearsal(snapshot: &serde_json::Value) -> bool {
+    snapshot
+        .get("rehearsal")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// The workflow a build plans, as its snapshot records it.
@@ -1461,6 +1470,7 @@ pub async fn create_build(
             "Changelog must be 4,000 characters or fewer",
         ));
     }
+    let rehearsal = req.rehearsal.unwrap_or(false);
     let store_notes = normalize_optional(req.store_notes);
     if store_notes
         .as_ref()
@@ -1637,6 +1647,9 @@ pub async fn create_build(
     }
     set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
     binding.write_to(&mut config_snapshot);
+    if rehearsal {
+        config_snapshot["rehearsal"] = serde_json::json!(true);
+    }
 
     let snapshot_str = config_snapshot.to_string();
     let inserted = insert_build_with_retry(
@@ -1753,6 +1766,7 @@ pub async fn create_build(
         retry_steps: None,
         approval: pending_approval(approval_required, now),
         workflow: snapshot_workflow(&config_snapshot),
+        rehearsal,
         config_snapshot,
         runner_id: None,
         context: None,
@@ -2703,6 +2717,7 @@ pub(crate) async fn queue_rerun(
         retry_steps,
         approval: pending_approval(approval_required, now),
         workflow: snapshot_workflow(&config_snapshot),
+        rehearsal: snapshot_rehearsal(&config_snapshot),
         config_snapshot,
         runner_id: None,
         context: None,
@@ -3193,6 +3208,7 @@ pub async fn trigger_build_from_webhook(
                     retry_steps: None,
                     approval: pending_approval(approval_required, now),
                     workflow: snapshot_workflow(&config_snapshot),
+                    rehearsal: false,
                     config_snapshot,
                     runner_id: None,
                     context: None,

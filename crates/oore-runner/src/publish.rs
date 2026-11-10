@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use oore_contract::{
     GooglePlayPublishConfig, GooglePlayReleaseNotesSource, PublishPreflight, PublishStore,
-    RunnerPublishResult,
+    ReadinessLevel, RehearsalCheck, RunnerPublishResult,
 };
 use oore_google_play::{
     CommitOutcome, Listing, LocalizedText, MAX_FULL_DESCRIPTION_CHARS, MAX_RELEASE_NOTES_CHARS,
@@ -472,6 +472,232 @@ pub(crate) async fn publish_to_google_play(
         release_notes: None,
         listing: None,
     })
+}
+
+fn rehearsal_check(
+    code: &str,
+    level: ReadinessLevel,
+    title: String,
+    detail: Option<String>,
+) -> RehearsalCheck {
+    RehearsalCheck {
+        code: code.to_string(),
+        level,
+        title,
+        detail,
+    }
+}
+
+/// Checks a Google Play release without making it, for a release rehearsal:
+/// the same bundle, version code, notes and track as the real upload, staged
+/// in an edit that Play validates and Oore then discards. Never commits.
+/// Stops at the first check that fails, since later ones depend on it.
+pub(crate) async fn rehearse_google_play(
+    http: &reqwest::Client,
+    workspace: &Path,
+    secrets: &BTreeMap<String, String>,
+    changelog: Option<&str>,
+    config: &GooglePlayPublishConfig,
+) -> Vec<RehearsalCheck> {
+    let mut checks = Vec::new();
+    let block = |code: &str, title: &str, error: anyhow::Error| {
+        rehearsal_check(
+            code,
+            ReadinessLevel::Block,
+            title.to_string(),
+            Some(format!("{error:#}")),
+        )
+    };
+    let Some(service_account) = secrets.get(&config.service_account_secret) else {
+        checks.push(rehearsal_check(
+            "play_service_account",
+            ReadinessLevel::Block,
+            "The Google Play service account secret is missing".to_string(),
+            Some(format!(
+                "Add the secret '{}' with the service account JSON to the pipeline, its app or the instance.",
+                config.service_account_secret
+            )),
+        ));
+        return checks;
+    };
+    let bundle = match find_bundle(workspace) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            checks.push(block("play_bundle", "No App Bundle to upload", error));
+            return checks;
+        }
+    };
+    let manifest = match read_aab_manifest(&bundle) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            checks.push(block(
+                "play_bundle",
+                "The App Bundle could not be read",
+                error,
+            ));
+            return checks;
+        }
+    };
+    if let Some(expected) = &config.package_name
+        && expected != &manifest.package_name
+    {
+        checks.push(rehearsal_check(
+            "play_package",
+            ReadinessLevel::Block,
+            "The App Bundle is for another app".to_string(),
+            Some(format!(
+                "The bundle is {}, but publishing is set up for {expected}.",
+                manifest.package_name
+            )),
+        ));
+        return checks;
+    }
+    let version = format!(
+        "{} ({})",
+        manifest.version_name.as_deref().unwrap_or("no versionName"),
+        manifest.version_code
+    );
+    let track = play_track_name(&config.track);
+    let notes = match release_notes(workspace, config, changelog) {
+        Ok(notes) => notes,
+        Err(error) => {
+            checks.push(block(
+                "play_release_notes",
+                "The release notes could not be read",
+                error,
+            ));
+            return checks;
+        }
+    };
+    if notes.is_empty() && config.release_notes != GooglePlayReleaseNotesSource::None {
+        checks.push(rehearsal_check(
+            "play_release_notes",
+            ReadinessLevel::Warn,
+            "No release notes".to_string(),
+            Some("Users see no \"What's new\" text. Write notes when you start the build, or add them to the repository.".to_string()),
+        ));
+    }
+    let listings = match &config.listing_dir {
+        Some(dir) => match read_play_listing_dir(workspace, dir) {
+            Ok(listings) => listings,
+            Err(error) => {
+                checks.push(block(
+                    "play_listing",
+                    "The store listing files could not be read",
+                    error,
+                ));
+                return checks;
+            }
+        },
+        None => Vec::new(),
+    };
+    let token = match access_token(http, service_account).await {
+        Ok(token) => token,
+        Err(error) => {
+            checks.push(block(
+                "play_access",
+                "Oore could not sign in to Google Play",
+                error,
+            ));
+            return checks;
+        }
+    };
+    let store_codes =
+        match fetch_play_version_codes(http, &token, &manifest.package_name, &track).await {
+            Ok(codes) => codes,
+            Err(error) => {
+                checks.push(block(
+                    "play_access",
+                    "Google Play did not let Oore read the app",
+                    error,
+                ));
+                return checks;
+            }
+        };
+    match ensure_play_version_code(manifest.version_code, &store_codes, &track) {
+        Ok(()) => checks.push(rehearsal_check(
+            "play_version_code",
+            ReadinessLevel::Ok,
+            format!(
+                "Version code {} is free on Google Play",
+                manifest.version_code
+            ),
+            store_codes
+                .track_highest
+                .map(|highest| format!("The highest on {track} is {highest}.")),
+        )),
+        Err(error) => {
+            checks.push(block(
+                "play_version_code",
+                "The version code is already used",
+                error,
+            ));
+            return checks;
+        }
+    }
+    let edits = match PlayEdits::insert(http, &token, &manifest.package_name).await {
+        Ok(edits) => edits,
+        Err(error) => {
+            checks.push(block(
+                "play_access",
+                "Google Play did not open an edit",
+                error,
+            ));
+            return checks;
+        }
+    };
+    let (status, user_fraction) = release_status(config);
+    let staged = async {
+        let version_code = edits
+            .upload_bundle(&bundle)
+            .await
+            .context("Google Play refused the App Bundle")?;
+        for listing in &listings {
+            edits
+                .update_listing(listing)
+                .await
+                .context("Google Play refused the store listing")?;
+        }
+        edits
+            .update_track(
+                &track,
+                &TrackRelease {
+                    name: None,
+                    version_codes: vec![version_code],
+                    status,
+                    user_fraction,
+                    release_notes: notes.clone(),
+                    in_app_update_priority: config.in_app_update_priority,
+                },
+            )
+            .await
+            .context("Google Play refused the release on the track")?;
+        edits
+            .validate()
+            .await
+            .context("Google Play's check of the release failed")
+    }
+    .await;
+    // The edit is never committed; discarding it drops the staged bundle.
+    let _ = edits.delete().await;
+    checks.push(match staged {
+        Ok(()) => rehearsal_check(
+            "play_validate",
+            ReadinessLevel::Ok,
+            format!("Google Play accepts {version} on {track}"),
+            Some(
+                "Staged and checked by Google Play, then discarded. Nothing was committed."
+                    .to_string(),
+            ),
+        ),
+        Err(error) => rehearsal_check(
+            "play_validate",
+            ReadinessLevel::Block,
+            format!("Google Play would refuse {version} on {track}"),
+            Some(format!("{error:#}")),
+        ),
+    });
+    checks
 }
 
 #[cfg(test)]
