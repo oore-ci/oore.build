@@ -47,6 +47,10 @@ const MAX_CONCURRENT_SENDS: usize = 8;
 const SLACK_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
 /// Each Slack Web API call of a release thread; three fit in the lease.
 const SLACK_API_TIMEOUT: Duration = Duration::from_secs(15);
+/// How often certificates and profiles are checked for expiry reminders.
+const SIGNING_EXPIRY_SCAN_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const SIGNING_CATEGORY: &str = "signing";
+const SIGNING_EXPIRING_EVENT: &str = "signing_expiring";
 
 fn notification_addresses_allowed(host: &str, addresses: &[std::net::SocketAddr]) -> bool {
     !addresses.is_empty()
@@ -219,6 +223,22 @@ pub fn start_notification_dispatcher(
         }
     });
 
+    // Certificate and profile expiry reminders.
+    let expiry_pool = pool.clone();
+    let expiry_key = encryption_key.clone();
+    tokio::spawn(async move {
+        loop {
+            match notify_signing_expiry(&expiry_pool, now_unix()).await {
+                Ok(deliveries) if !deliveries.is_empty() => {
+                    deliver(expiry_pool.clone(), expiry_key.clone(), deliveries).await;
+                }
+                Ok(_) => {}
+                Err(e) => error!(error = %e, "signing expiry scan failed"),
+            }
+            tokio::time::sleep(SIGNING_EXPIRY_SCAN_INTERVAL).await;
+        }
+    });
+
     // Runner event dispatcher
     let runner_pool = pool.clone();
     let runner_key = encryption_key.clone();
@@ -387,6 +407,125 @@ pub async fn dispatch_build_feedback(
         tokio::spawn(deliver(pool.clone(), encryption_key.into(), deliveries));
     }
     Ok(())
+}
+
+/// Record a reminder for each certificate or profile that reached 30 days,
+/// 7 days or expiry since the last scan. Returns the deliveries to send.
+pub(crate) async fn notify_signing_expiry(
+    pool: &SqlitePool,
+    now: i64,
+) -> anyhow::Result<Vec<String>> {
+    let mut deliveries = Vec::new();
+    for (expiry, band) in crate::signing_expiry::due_reminders(pool, now).await? {
+        let notification = Notification {
+            event_type: SIGNING_EXPIRING_EVENT.to_string(),
+            category: SIGNING_CATEGORY.to_string(),
+            project_id: Some(expiry.project_id.clone()),
+            build_id: None,
+            runner_id: None,
+            release_id: None,
+            actor_email: None,
+            actor_login: None,
+            payload: serde_json::json!({
+                "event": "signing.expiring",
+                "project_id": expiry.project_id,
+                "project_name": expiry.project_name,
+                "signing": {
+                    "key": expiry.key,
+                    "what": expiry.what,
+                    "holder": expiry.holder,
+                    "expires_at": expiry.expires_at,
+                    "band": band.as_str(),
+                    "when": crate::signing_expiry::when(expiry.expires_at, now),
+                    "path": expiry.path,
+                },
+                "timestamp": now,
+            }),
+        };
+        deliveries.extend(enqueue(pool, &notification).await?);
+    }
+    Ok(deliveries)
+}
+
+/// "FlutterShop: distribution certificate expires in 6 days".
+fn signing_summary(payload: &serde_json::Value, bold: &str, escape: fn(&str) -> String) -> String {
+    let signing = &payload["signing"];
+    let what = signing["what"].as_str().unwrap_or("Signing file");
+    let mut what_lower = what.to_string();
+    if let Some(first) = what_lower.get_mut(0..1) {
+        first.make_ascii_lowercase();
+    }
+    let emoji = if signing["band"] == "expired" {
+        ":no_entry:"
+    } else {
+        ":hourglass_flowing_sand:"
+    };
+    format!(
+        "{emoji} {bold}{}{bold}: {} {} ({})",
+        escape(payload["project_name"].as_str().unwrap_or("An app")),
+        escape(&what_lower),
+        escape(signing["when"].as_str().unwrap_or("expires soon")),
+        escape(signing["holder"].as_str().unwrap_or("")),
+    )
+}
+
+const SIGNING_ADVICE: &str = "Replace it before then, or iOS builds that sign with it fail.";
+const SIGNING_EXPIRED_ADVICE: &str = "iOS builds that sign with it fail until it is replaced.";
+
+fn signing_advice(payload: &serde_json::Value) -> &'static str {
+    if payload["signing"]["band"] == "expired" {
+        SIGNING_EXPIRED_ADVICE
+    } else {
+        SIGNING_ADVICE
+    }
+}
+
+fn signing_mattermost_payload(
+    payload: &serde_json::Value,
+    link: Option<&str>,
+) -> serde_json::Value {
+    let mut text = format!(
+        "{}\n{}",
+        signing_summary(payload, "**", |value| value.to_string()),
+        signing_advice(payload)
+    );
+    if let Some(link) = link {
+        text.push_str(&format!(" [Replace it]({link})"));
+    }
+    serde_json::json!({
+        "text": text,
+        "username": "Oore CI",
+        "icon_url": "https://static.oore.build/logo-avatar-192.png",
+    })
+}
+
+fn signing_email_html(payload: &serde_json::Value, link: Option<&str>) -> (String, String) {
+    let subject = signing_summary(payload, "", |value| value.to_string())
+        .split_once(' ')
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or_default();
+    let summary = html_escape(&subject);
+    let advice = signing_advice(payload);
+    let button = link
+        .map(|link| {
+            format!(
+                r#"<p><a href="{}" style="display: inline-block; background: #111827; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">Replace it</a></p>"#,
+                html_escape(link)
+            )
+        })
+        .unwrap_or_default();
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
+<div style="padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px;">
+  <p><strong>{summary}</strong></p>
+  <p>{advice}</p>
+  {button}
+</div>
+<p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
+</body></html>"#
+    );
+    (subject, html)
 }
 
 /// Record notifications for builds that finished since the last scan.
@@ -744,6 +883,7 @@ async fn send(
                 || match notification.category.as_str() {
                     "runner" => runner_email_html(payload),
                     "release" => release_email_html(payload),
+                    SIGNING_CATEGORY => signing_email_html(payload, link),
                     FEEDBACK_CATEGORY => feedback_email_html(payload, link),
                     _ => build_email_html(payload),
                 },
@@ -765,6 +905,7 @@ async fn send(
             let body = match notification.category.as_str() {
                 "runner" => runner_mattermost_payload(payload),
                 "release" => release_mattermost_payload(payload),
+                SIGNING_CATEGORY => signing_mattermost_payload(payload, link),
                 FEEDBACK_CATEGORY => feedback_mattermost_payload(payload),
                 _ => build_mattermost_payload(payload),
             };
@@ -802,6 +943,11 @@ fn event_filter_matches(filter_json: Option<&str>, event_type: &str) -> bool {
 /// no public URL is configured.
 fn notification_link(public_url: Option<&str>, notification: &Notification) -> Option<String> {
     let base = public_url?.trim_end_matches('/');
+    if notification.category == SIGNING_CATEGORY {
+        return notification.payload["signing"]["path"]
+            .as_str()
+            .map(|path| format!("{base}{path}"));
+    }
     if let Some(release_id) = &notification.release_id {
         return Some(format!("{base}/releases/{release_id}"));
     }
@@ -1204,6 +1350,11 @@ fn slack_message(
     let mut body = None;
     let (mut headline, context, button) = match category {
         "runner" => (runner_summary(payload, "*"), Vec::new(), None),
+        SIGNING_CATEGORY => (
+            signing_summary(payload, "*", slack_escape),
+            vec![signing_advice(payload).to_string()],
+            Some("Replace it"),
+        ),
         FEEDBACK_CATEGORY => {
             let feedback = &payload["feedback"];
             body = feedback["message"]
@@ -2315,6 +2466,52 @@ mod tests {
             Some(r#"["failed"]"#),
             "rollout_halted"
         ));
+    }
+
+    #[test]
+    fn signing_reminders_name_the_file_and_link_to_where_it_is_replaced() {
+        let payload = serde_json::json!({
+            "project_name": "Shop <iOS>",
+            "signing": {
+                "what": "Distribution certificate",
+                "holder": "Release",
+                "band": "week",
+                "when": "expires in 6 days",
+                "path": "/projects/p1/pipelines/pl1/edit?signing=ios",
+            },
+        });
+        let mut notification = notification(None, None);
+        notification.category = SIGNING_CATEGORY.to_string();
+        notification.payload = payload.clone();
+        let link = notification_link(Some("https://oore.example.com/"), &notification);
+        assert_eq!(
+            link.as_deref(),
+            Some("https://oore.example.com/projects/p1/pipelines/pl1/edit?signing=ios")
+        );
+
+        let slack = slack_message(SIGNING_CATEGORY, &payload, link.as_deref(), None);
+        let text = slack["blocks"][0]["text"]["text"].as_str().unwrap();
+        assert_eq!(
+            text,
+            ":hourglass_flowing_sand: *Shop &lt;iOS&gt;*: distribution certificate expires in 6 days (Release)"
+        );
+        assert!(slack.to_string().contains("Replace it"));
+
+        let (subject, html) = signing_email_html(&payload, link.as_deref());
+        assert_eq!(
+            subject,
+            "Shop <iOS>: distribution certificate expires in 6 days (Release)"
+        );
+        assert!(html.contains("Shop &lt;iOS&gt;"));
+        assert!(html.contains("edit?signing=ios"));
+
+        let mattermost = signing_mattermost_payload(&payload, link.as_deref());
+        assert!(
+            mattermost["text"]
+                .as_str()
+                .unwrap()
+                .contains("[Replace it](https://")
+        );
     }
 
     #[test]
