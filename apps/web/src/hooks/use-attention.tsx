@@ -7,6 +7,7 @@ import type {
   ListBuildsResponse,
   ListRunnersResponse,
   OperatorIncident,
+  RecentFeedback,
   RunnerPolicyBlockReason,
 } from '@oore/client/models'
 import {
@@ -29,6 +30,7 @@ import {
   type TestflightExpiry,
 } from '@/lib/testflight-expiry'
 import { useReleases } from '@/hooks/use-releases'
+import { useRecentFeedback } from '@/hooks/use-testers'
 import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
@@ -254,6 +256,33 @@ function testflightItems(
   })
 }
 
+/** One item per build testers wrote about in the last two days. */
+export function feedbackItems(
+  recent: Array<RecentFeedback>,
+): Array<AttentionItem> {
+  const byBuild = new Map<string, Array<RecentFeedback>>()
+  for (const item of recent) {
+    const id = item.feedback.build_id
+    byBuild.set(id, [...(byBuild.get(id) ?? []), item])
+  }
+  return [...byBuild.entries()].map(([buildId, notes]) => {
+    const newest = notes.reduce((a, b) =>
+      b.feedback.created_at > a.feedback.created_at ? b : a,
+    )
+    const count =
+      notes.length === 1 ? 'A tester wrote' : `${notes.length} tester notes`
+    const message = newest.feedback.message.trim()
+    return {
+      key: `feedback-${buildId}`,
+      revision: newest.feedback.id,
+      severity: 'warning',
+      title: `${newest.project_name} #${newest.build_number}: ${count}`,
+      description: `${message.length > 90 ? `${message.slice(0, 89)}…` : message} · ${relativeTime(newest.feedback.created_at)}`,
+      link: <Link to="/builds/$buildId" params={{ buildId }} />,
+    } satisfies AttentionItem
+  })
+}
+
 /**
  * Everything that needs someone now, from one source for Home's Needs
  * attention and the header bell, so the two never disagree.
@@ -286,6 +315,7 @@ export function useAttention() {
       select: (data) => testflightExpiries(data.releases, nowSeconds),
     },
   )
+  const feedbackQuery = useRecentFeedback()
   const projectNames = new Map(
     projects.map((project) => [project.id, project.name]),
   )
@@ -314,6 +344,7 @@ export function useAttention() {
       nowSeconds,
     ),
     ...testflightItems(releasesQuery.data ?? [], nowSeconds),
+    ...feedbackItems(feedbackQuery.data?.feedback ?? []),
   ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 
   const queries = [insightsQuery, blockedQuery, runnersQuery, incidentsQuery]

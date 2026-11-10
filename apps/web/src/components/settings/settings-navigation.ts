@@ -9,6 +9,7 @@ import {
   Notification03Icon,
   Settings01Icon,
   Store01Icon,
+  UserGroupIcon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 
@@ -99,6 +100,13 @@ const SETTINGS_GROUPS = [
         description: 'Build and system notification channels.',
         to: '/settings/notifications',
         icon: Notification03Icon,
+        roles: ADMIN_ROLES,
+      },
+      {
+        title: 'Tester groups',
+        description: 'People a build can be sent to in one step.',
+        to: '/settings/testers',
+        icon: UserGroupIcon,
         roles: ADMIN_ROLES,
       },
     ],

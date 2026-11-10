@@ -287,7 +287,7 @@ fn build_manifest(webhook_url: &str, callback_url: &str, setup_url: &str) -> ser
         "default_permissions": {
             "contents": "read",
             "metadata": "read",
-            "pull_requests": "read",
+            "pull_requests": "write",
             "statuses": "write",
             "checks": "write"
         },
@@ -1451,6 +1451,57 @@ pub(crate) async fn upsert_check_run(
         anyhow::bail!("GitHub returned {} creating a check run", response.status());
     }
     Ok(response.json::<CheckRunResponse>().await?.id.to_string())
+}
+
+/// Create or update an issue comment on a pull request. Returns its id.
+pub(crate) async fn upsert_pr_comment(
+    client: &reqwest::Client,
+    api_base_url: &str,
+    token: &str,
+    full_name: &str,
+    pr_number: i64,
+    existing_id: Option<&str>,
+    body: &str,
+) -> anyhow::Result<String> {
+    #[derive(Deserialize)]
+    struct CommentResponse {
+        id: u64,
+    }
+    let send = |request: reqwest::RequestBuilder| {
+        request
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", "oore-ci")
+            .json(&serde_json::json!({ "body": body }))
+            .send()
+    };
+    if let Some(existing_id) = existing_id {
+        let response = send(client.patch(format!(
+            "{api_base_url}/repos/{full_name}/issues/comments/{existing_id}"
+        )))
+        .await?;
+        if response.status().is_success() {
+            return Ok(response.json::<CommentResponse>().await?.id.to_string());
+        }
+        if response.status() != reqwest::StatusCode::NOT_FOUND {
+            anyhow::bail!("GitHub returned {} updating a comment", response.status());
+        }
+    }
+    let response = send(client.post(format!(
+        "{api_base_url}/repos/{full_name}/issues/{pr_number}/comments"
+    )))
+    .await?;
+    if response.status() == reqwest::StatusCode::FORBIDDEN {
+        return Err(crate::commit_checks::Refused(
+            "GitHub refused the pull request comment; the app installation needs write access to pull requests",
+        )
+        .into());
+    }
+    if !response.status().is_success() {
+        anyhow::bail!("GitHub returned {} creating a comment", response.status());
+    }
+    Ok(response.json::<CommentResponse>().await?.id.to_string())
 }
 
 /// Fetch every GitHub App installation page before using the result for cleanup.

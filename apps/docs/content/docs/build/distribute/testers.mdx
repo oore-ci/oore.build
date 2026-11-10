@@ -78,9 +78,16 @@ testers:
    and **App Store Connect API key** as your TestFlight pipeline.
 3. Under **Build > Artifacts**, set the pattern to `build/ios/ipa/*.ipa`.
 4. Select **Create pipeline**.
-5. Open the pipeline's **Edit** page. Under **Registered iOS devices**, enter
-   each tester's **Device name** and **UDID**, and select **Register device**.
-   Oore registers the device with Apple and syncs the profiles.
+5. Register the testers' iPhones. Each tester can do it themselves: on an
+   iPhone, they open any iOS install page of the pipeline, select **Register
+   this iPhone**, then **Download the profile**, and install it from
+   **Settings > Profile Downloaded**. The profile sends the iPhone's UDID to
+   Oore, which registers it with Apple and syncs the profiles. The install
+   page says when the iPhone is registered. This needs the HTTPS External
+   Access address and the App Store Connect API key from step 2.
+   Alternatively, open the pipeline's **Edit** page, and under **Registered
+   iOS devices** enter each tester's **Device name** and **UDID**, then
+   select **Register device**.
 6. Run a build of the `iOS ad hoc` pipeline.
 
 Register a device before the build that should install on it. A device
@@ -111,6 +118,49 @@ in, and sees the build only if they can access the app.
 Each install starts a delivery session that lasts up to one hour.
 [How artifact delivery works](/concepts/artifact-delivery) explains the limits.
 
+## Send a build to a group of testers
+
+Group the people who test your apps once, then send any successful build to
+the whole group from its page:
+
+1. An instance owner or admin opens **Settings > Tester groups**, selects
+   **New group**, names it, ticks its members and selects **Save**.
+2. On a build's **Summary**, in **Testers**, select **Send to testers**.
+3. Choose the **Group**, add **What to test** if it helps, and select
+   **Send**.
+
+Each member gets an email with their own install link, through the instance
+email channel, and a notification on any device where they turned those on.
+A member who cannot open the app is listed as **No access to this app** and
+gets nothing. Sending needs the same access as making a share link.
+
+**Testers** then shows each send with **N of M installed**. Select it to see
+who installed, and when. The line below counts every install of the build,
+from install pages, share links and latest-build links.
+
+## Give testers one link for every build
+
+A latest-build link always installs the newest successful build of a
+pipeline, so testers can bookmark it, or you can print its QR code, instead
+of sending a new link for each build.
+
+1. Open the pipeline. In **Latest-build links**, select **New link**.
+2. Choose the platform, and a branch if only that branch's builds should be
+   offered.
+3. Select **Make link**, then **Copy link**. Oore shows the link only once.
+
+Anyone who has the link can install the build, without signing in. The list
+shows how often each link was opened. Select **Turn off** to stop a link
+from working.
+
+## Notify testers on their phone
+
+Testers can get a notification for each new build of their apps, even with
+Oore closed. They open **Account > Notifications** and turn on **New builds
+on this device**, on each device they use. On iPhone, they first add Oore to
+the Home Screen from Safari's Share menu, then open it from there. **Send a
+test** checks that it works.
+
 ## 5. Testers send feedback
 
 On **Your apps**, the tester selects **Feedback** on the latest release. They
@@ -118,7 +168,9 @@ describe **What happened?**, check the **Device**, **OS version** and **App
 version** that Oore filled in, add a screenshot if it helps, and select
 **Send feedback**.
 
-The note appears on the build's timeline, with its screenshot. To get notes in
+The note appears on the build's timeline, with its screenshot. The build's
+**Summary** starts with a line counting the notes, and for two days each
+build with new notes is listed under **Needs attention** on Home. To get notes in
 Slack, Mattermost or email as they arrive, add the **Tester feedback** event to
 a channel in [Set up notifications](/team/notifications).
 

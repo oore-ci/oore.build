@@ -1064,6 +1064,8 @@ export function BuildDetailPage({
             sizes={sizesQuery.data}
             tests={testSummary ?? undefined}
             analysis={analysisCounts ?? undefined}
+            retention={data?.retention}
+            canShare={canManageShareLinks}
             onOpenTab={setActiveTab}
           />
         </TabsContent>

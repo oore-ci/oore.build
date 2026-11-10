@@ -31,6 +31,10 @@ import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 import { useNotificationPermission } from '@/hooks/use-build-notification'
 import {
+  SendTestPushButton,
+  useBrowserPush,
+} from '@/components/browser-push-toggle'
+import {
   useNotificationPreferences,
   useSendWeeklyDigest,
   useUpdateNotificationPreferences,
@@ -141,6 +145,7 @@ function NotificationSettingsPage() {
   const digestQuery = useWeeklyDigest()
   const sendDigest = useSendWeeklyDigest()
   const browser = useNotificationPermission()
+  const push = useBrowserPush()
   const canAddChannel = useHasPermission('instance_settings:write')
   const data = preferencesQuery.data
 
@@ -248,6 +253,24 @@ function NotificationSettingsPage() {
                     save({ browser: value })
                   }}
                 />
+                <SettingsSurfaceSeparator />
+                <ToggleRow
+                  label="New builds on this device"
+                  description={
+                    push.supported
+                      ? 'A notification for each new build of your apps, even with Oore closed. On iPhone, add Oore to the Home Screen first.'
+                      : 'This browser cannot get notifications with Oore closed. On iPhone, add Oore to the Home Screen and open it from there.'
+                  }
+                  checked={push.subscribed}
+                  disabled={!push.supported || push.working}
+                  onChange={push.toggle}
+                />
+                {push.subscribed ? (
+                  <SendTestPushButton
+                    onClick={push.sendTest}
+                    pending={push.testing}
+                  />
+                ) : null}
                 <SettingsSurfaceSeparator />
                 <ToggleRow
                   label={`Email to ${data.email_address}`}

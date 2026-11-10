@@ -24,6 +24,8 @@ export function isDemoMutationAllowed(
     // Personal choices: pins and notification settings change nothing shared.
     path.endsWith('/favorite') ||
     path === '/v1/users/me/notification-preferences' ||
+    path.startsWith('/v1/device-registrations') ||
+    path.endsWith('/device-registrations') ||
     path === '/v1/artifacts/query' ||
     // Dry runs: they plan or generate, and store nothing.
     path === '/v1/pipelines/plan' ||

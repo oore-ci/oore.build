@@ -8,6 +8,7 @@ import type {
   Build,
   BuildEvent,
   BuildFeedback,
+  BuildRetention,
   BuildSizeReport,
   BuildTestSummary,
   Release,
@@ -15,6 +16,7 @@ import type {
 
 import ChangelogMarkdown from './changelog-markdown'
 import { EventTimeline } from './event-timeline'
+import { BuildTestersSection } from './build-testers-section'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,6 +37,7 @@ import {
   formatEnumLabel,
   formatFileSize,
   formatSizeChange,
+  relativeTime,
 } from '@/lib/format-utils'
 import {
   releaseDestinationLabel,
@@ -44,6 +47,9 @@ import {
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
+import { useKeepBuild } from '@/hooks/use-testers'
+import { getApiErrorMessage } from '@/lib/api-client/api-error'
+import { toast } from '@/lib/toast'
 
 function clock(epochSecs: number) {
   return new Date(epochSecs * 1000).toLocaleString(undefined, {
@@ -315,7 +321,72 @@ function ChecksSection({
   )
 }
 
-function DetailsSection({ build }: { build: Build }) {
+function day(epochSecs: number) {
+  return new Date(epochSecs * 1000).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+  })
+}
+
+/** Why retention keeps this build's files, or when it removes them. */
+export function retentionText(retention: BuildRetention) {
+  if (retention.kept) return 'Kept until someone stops keeping it'
+  if (retention.kept_by_release) return 'Kept while its release is live'
+  if (retention.kept_by_status) return 'Kept by the retention policy'
+  if (retention.expires_at) return `Removed around ${day(retention.expires_at)}`
+  return 'Removed when newer builds pass the retention limit'
+}
+
+function RetentionFact({
+  buildId,
+  retention,
+  canKeep,
+}: {
+  buildId: string
+  retention: BuildRetention
+  canKeep: boolean
+}) {
+  const keep = useKeepBuild(buildId)
+  return (
+    <Fact label="Files">
+      {retentionText(retention)}
+      {canKeep ? (
+        <>
+          {' '}
+          <Button
+            variant="link"
+            size="xs"
+            className="h-auto px-0 align-baseline"
+            disabled={keep.isPending}
+            onClick={() =>
+              keep.mutate(!retention.kept, {
+                onSuccess: () =>
+                  toast.success(
+                    retention.kept
+                      ? 'Retention applies to this build again'
+                      : 'This build is kept',
+                  ),
+                onError: (error) => toast.error(getApiErrorMessage(error, {})),
+              })
+            }
+          >
+            {retention.kept ? 'Stop keeping' : 'Keep'}
+          </Button>
+        </>
+      ) : null}
+    </Fact>
+  )
+}
+
+function DetailsSection({
+  build,
+  retention,
+  canKeep,
+}: {
+  build: Build
+  retention?: BuildRetention | null
+  canKeep: boolean
+}) {
   const sourceRef = buildSourceRef(build)
   const version = buildVersionLabel(build)
   const commitHref = build.commit_sha
@@ -377,6 +448,13 @@ function DetailsSection({ build }: { build: Build }) {
               </Link>
             </Fact>
           ) : null}
+          {retention && build.status !== 'expired' ? (
+            <RetentionFact
+              buildId={build.id}
+              retention={retention}
+              canKeep={canKeep}
+            />
+          ) : null}
           {build.superseded_by ? (
             <Fact label="Replaced by">
               <Link
@@ -394,6 +472,29 @@ function DetailsSection({ build }: { build: Build }) {
   )
 }
 
+/** Points at testers' notes, which otherwise sit at the end of Activity. */
+function FeedbackCallout({ feedback }: { feedback: Array<BuildFeedback> }) {
+  if (!feedback.length) return null
+  const latest = feedback.reduce((a, b) =>
+    b.created_at > a.created_at ? b : a,
+  )
+  return (
+    <a
+      href="#build-activity"
+      className="block rounded-lg border px-4 py-3 text-sm hover:bg-muted/50"
+    >
+      <span className="font-medium">
+        {feedback.length === 1
+          ? '1 note from a tester'
+          : `${feedback.length} notes from testers`}
+      </span>
+      <Text variant="caption" render={<span className="block truncate" />}>
+        Latest {relativeTime(latest.created_at)}: {latest.message}
+      </Text>
+    </a>
+  )
+}
+
 /**
  * A build at a glance: the apps it made with Install, where they were
  * sent, what changed, its checks, its details and its activity.
@@ -407,9 +508,13 @@ export function BuildOverviewPanel({
   sizes,
   tests,
   analysis,
+  retention,
+  canShare = false,
   onOpenTab,
 }: {
   build: Build
+  retention?: BuildRetention | null
+  canShare?: boolean
   events: Array<BuildEvent>
   feedback: Array<BuildFeedback>
   artifacts: Array<Artifact>
@@ -423,6 +528,7 @@ export function BuildOverviewPanel({
   return (
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
       <Stack gap={4}>
+        <FeedbackCallout feedback={feedback} />
         {finished ? (
           <AppsSection
             build={build}
@@ -451,10 +557,23 @@ export function BuildOverviewPanel({
             <p className="text-sm whitespace-pre-line">{build.store_notes}</p>
           </Section>
         ) : null}
-        <EventTimeline events={events} feedback={feedback} />
+        <div id="build-activity" className="scroll-mt-20">
+          <EventTimeline events={events} feedback={feedback} />
+        </div>
       </Stack>
       <Stack gap={4}>
-        <DetailsSection build={build} />
+        <DetailsSection
+          build={build}
+          retention={retention}
+          canKeep={canShare}
+        />
+        {finished ? (
+          <BuildTestersSection
+            buildId={build.id}
+            buildNumber={build.build_number}
+            canSend={canShare}
+          />
+        ) : null}
         <ChecksSection
           tests={tests}
           analysis={analysis}

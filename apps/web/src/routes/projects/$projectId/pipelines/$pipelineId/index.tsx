@@ -67,6 +67,7 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { LatestInstallLinksCard } from '@/components/latest-install-links-card'
 import { StoreReadinessChecklist } from '@/components/trigger-build-store-section'
 import {
   Empty,
@@ -371,18 +372,25 @@ function PipelineDetailPage() {
   const navigate = useNavigate()
   const { tab = 'overview', workflow: workflowFilter } = Route.useSearch()
   const { data, isLoading, error } = usePipeline(pipelineId)
-  const [canWriteGlobally, canTriggerBuildGlobally, canReadInstanceSettings] =
-    useHasPermissions([
-      'pipelines:write',
-      'builds:write',
-      'instance_settings:read',
-    ])
+  const [
+    canWriteGlobally,
+    canTriggerBuildGlobally,
+    canReadInstanceSettings,
+    canShareGlobally,
+  ] = useHasPermissions([
+    'pipelines:write',
+    'builds:write',
+    'instance_settings:read',
+    'artifacts:write',
+  ])
   const { data: projectData } = useProject(projectId)
   const projectRole = projectData?.project.current_user_role
   const instanceRole = useAuthStore((state) => state.user?.role)
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines:write')
   const canDelete = hasProjectPermission(projectRole, 'pipelines:delete')
+  const canShareBuilds =
+    canShareGlobally && hasProjectPermission(projectRole, 'artifacts:write')
   const canTriggerBuild =
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const signingQuery = usePipelineAndroidSigning(pipelineId, {
@@ -736,6 +744,13 @@ function PipelineDetailPage() {
             publishing={publishingSummary}
           />
           <PipelineStoreReadiness pipelineId={pipelineId} />
+          <LatestInstallLinksCard
+            pipelineId={pipelineId}
+            platforms={pipeline.execution_config.platforms.filter(
+              (platform) => platform !== 'macos',
+            )}
+            canWrite={canShareBuilds}
+          />
           {/* Recent builds */}
           <Card>
             <CardContent>

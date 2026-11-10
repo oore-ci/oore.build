@@ -2651,6 +2651,133 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/installs": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List installs of a build",
+        "description": "Who downloaded this build's files through an install page, share link\nor latest-build link.",
+        "operationId": "list_build_installs",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactInstallsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/keep": {
+      "put": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Keep a build's files",
+        "description": "Retention cleanup skips a kept build until it is unkept.",
+        "operationId": "keep_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Kept"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Stop keeping a build's files",
+        "operationId": "unkeep_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No longer kept"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/logs": {
       "get": {
         "tags": [
@@ -2992,6 +3119,129 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/shares": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List sends of a build to tester groups",
+        "operationId": "list_build_shares",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sends, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBuildSharesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Send a build to a tester group",
+        "description": "Emails each member an install link and sends a browser notification to\nmembers who turned them on. Members without access to the app are\nlisted with no_access and are not sent anything.",
+        "operationId": "send_build_to_group",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendBuildToGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildShare"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build has not succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/sizes": {
       "get": {
         "tags": [
@@ -3126,6 +3376,53 @@
         ]
       }
     },
+    "/v1/device-registrations/{registration_id}": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Get a device registration",
+        "operationId": "get_device_registration",
+        "parameters": [
+          {
+            "name": "registration_id",
+            "in": "path",
+            "description": "Registration ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistration"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -3182,6 +3479,45 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/feedback/recent": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List recent tester feedback",
+        "description": "Feedback on builds of apps I can see, newest first.",
+        "operationId": "list_recent_feedback",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "How far back, 1 to 30 days. Default 7.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feedback",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListRecentFeedbackResponse"
                 }
               }
             }
@@ -4530,6 +4866,46 @@
         ]
       }
     },
+    "/v1/latest-links/{link_id}": {
+      "delete": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Delete a latest-build install link",
+        "operationId": "delete_latest_install_link",
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "description": "Link ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/operator-incidents": {
       "get": {
         "tags": [
@@ -5051,6 +5427,84 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/device-registrations": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Start registering an iPhone or iPad",
+        "description": "Returns a profile url to open on the device. Installing the profile\nsends its UDID back and registers it on the pipeline's Apple team.",
+        "operationId": "create_device_registration",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeviceRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistration"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Pipeline cannot register devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Needs an HTTPS public URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/{pipeline_id}/ios-signing": {
       "get": {
         "tags": [
@@ -5245,6 +5699,119 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SyncPipelineIosSigningResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/{pipeline_id}/latest-links": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List latest-build install links of a pipeline",
+        "operationId": "list_latest_install_links",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLatestInstallLinksResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Create a latest-build install link",
+        "description": "A permanent link that always opens the newest successful build of the\npipeline for one platform, optionally on one branch. The url is only\nreturned here.",
+        "operationId": "create_latest_install_link",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLatestInstallLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestInstallLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -14400,6 +14967,231 @@
         ]
       }
     },
+    "/v1/tester-groups": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List tester groups",
+        "operationId": "list_tester_groups",
+        "responses": {
+          "200": {
+            "description": "Groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTesterGroupsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Create a tester group",
+        "operationId": "create_tester_group",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TesterGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TesterGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/tester-groups/{group_id}": {
+      "put": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Update a tester group",
+        "operationId": "update_tester_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TesterGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TesterGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Delete a tester group",
+        "operationId": "delete_tester_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Owner or admin only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users": {
       "get": {
         "tags": [
@@ -14927,6 +15719,140 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/config": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Get browser push settings",
+        "operationId": "get_web_push_config",
+        "parameters": [
+          {
+            "name": "endpoint",
+            "in": "query",
+            "description": "This browser's push endpoint, to report whether it is subscribed.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "VAPID public key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebPushConfig"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/subscriptions": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Subscribe this browser to push notifications",
+        "operationId": "subscribe_web_push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPushSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Subscribed"
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/test": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Send a test push notification to my browsers",
+        "operationId": "send_test_web_push",
+        "responses": {
+          "202": {
+            "description": "Sent"
+          },
+          "502": {
+            "description": "No browser accepted it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/unsubscribe": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Unsubscribe a browser from push notifications",
+        "operationId": "unsubscribe_web_push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPushUnsubscribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Unsubscribed"
           }
         },
         "security": [
@@ -15807,6 +16733,34 @@
           }
         }
       },
+      "ArtifactInstall": {
+        "type": "object",
+        "description": "Someone installing one of a build's artifacts.",
+        "required": [
+          "artifact_id",
+          "via",
+          "installed_at"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "installed_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "via": {
+            "type": "string",
+            "description": "How it was installed: `install_page`, `share_link` or `latest_link`."
+          }
+        }
+      },
       "ArtifactInstallLinkResponse": {
         "type": "object",
         "required": [
@@ -16654,6 +17608,17 @@
               }
             ]
           },
+          "retention": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildRetention",
+                "description": "How long retention keeps this finished build and why."
+              }
+            ]
+          },
           "retryable_steps": {
             "type": "array",
             "items": {
@@ -17078,6 +18043,119 @@
           "live",
           "failed"
         ]
+      },
+      "BuildRetention": {
+        "type": "object",
+        "description": "Why retention keeps a finished build, and until when.",
+        "required": [
+          "kept",
+          "kept_by_release",
+          "kept_by_status"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the age limit removes it, in unix seconds. Absent when it is\nkept or there is no age limit; count and size limits can remove it\nsooner."
+          },
+          "kept": {
+            "type": "boolean",
+            "description": "Someone chose to keep this build; retention never removes it."
+          },
+          "kept_by_release": {
+            "type": "boolean",
+            "description": "A release keeps it: one still in progress, or the version live on a\nstore track."
+          },
+          "kept_by_status": {
+            "type": "boolean",
+            "description": "Its outcome is one the retention policy keeps."
+          }
+        }
+      },
+      "BuildShare": {
+        "type": "object",
+        "description": "A build sent to a tester group, with who installed it since.",
+        "required": [
+          "id",
+          "build_id",
+          "group_id",
+          "group_name",
+          "sent_at",
+          "recipients"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "group_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildShareRecipient"
+            }
+          },
+          "sent_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sent_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BuildShareRecipient": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "no_access"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "installed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "First install of this build by this person."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "no_access": {
+            "type": "boolean",
+            "description": "The person cannot open this app, so the email could not include it."
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
       },
       "BuildSizeBaseline": {
         "type": "object",
@@ -17699,6 +18777,36 @@
           }
         }
       },
+      "CreateDeviceRegistrationRequest": {
+        "type": "object",
+        "properties": {
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A name for the device in Apple's list, such as `Asha's iPhone`."
+          }
+        }
+      },
+      "CreateLatestInstallLinkRequest": {
+        "type": "object",
+        "required": [
+          "platform"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only builds from this branch. Empty or absent means any branch."
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BuildPlatform"
+          }
+        }
+      },
       "CreateLocalGitIntegrationRequest": {
         "type": "object",
         "required": [
@@ -18220,6 +19328,64 @@
             "type": "boolean"
           }
         }
+      },
+      "DeviceRegistration": {
+        "type": "object",
+        "description": "Registering an iPhone for a pipeline's ad hoc builds from the install\npage: the phone installs a profile that reports its UDID.",
+        "required": [
+          "id",
+          "pipeline_id",
+          "state",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "profile_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Open this on the iPhone, in Safari."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DeviceRegistrationState"
+          }
+        }
+      },
+      "DeviceRegistrationState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "registered",
+          "failed",
+          "expired"
+        ]
       },
       "DigestApp": {
         "type": "object",
@@ -20015,6 +21181,70 @@
           "file"
         ]
       },
+      "LatestInstallLink": {
+        "type": "object",
+        "description": "A link that always installs the newest succeeded build of a pipeline,\noptionally only from one branch.",
+        "required": [
+          "id",
+          "project_id",
+          "pipeline_id",
+          "platform",
+          "prefix",
+          "created_at",
+          "use_count"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BuildPlatform"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The full link. Only returned when the link is created; later lists\nshow `prefix` only."
+          },
+          "use_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ListApiTokensResponse": {
         "type": "object",
         "required": [
@@ -20058,6 +21288,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ArtifactDownloadTokenSummary"
+            }
+          }
+        }
+      },
+      "ListArtifactInstallsResponse": {
+        "type": "object",
+        "required": [
+          "installs"
+        ],
+        "properties": {
+          "installs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactInstall"
             }
           }
         }
@@ -20139,6 +21383,20 @@
           }
         }
       },
+      "ListBuildSharesResponse": {
+        "type": "object",
+        "required": [
+          "shares"
+        ],
+        "properties": {
+          "shares": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildShare"
+            }
+          }
+        }
+      },
       "ListBuildsResponse": {
         "type": "object",
         "required": [
@@ -20193,6 +21451,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListLatestInstallLinksResponse": {
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatestInstallLink"
+            }
           }
         }
       },
@@ -20373,6 +21645,20 @@
           }
         }
       },
+      "ListRecentFeedbackResponse": {
+        "type": "object",
+        "required": [
+          "feedback"
+        ],
+        "properties": {
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentFeedback"
+            }
+          }
+        }
+      },
       "ListReleaseActivityResponse": {
         "type": "object",
         "required": [
@@ -20503,6 +21789,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListTesterGroupsResponse": {
+        "type": "object",
+        "required": [
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TesterGroup"
+            }
           }
         }
       },
@@ -22521,6 +23821,31 @@
           "version": {
             "type": "string",
             "description": "Installed release version from the install root's `VERSION` file."
+          }
+        }
+      },
+      "RecentFeedback": {
+        "type": "object",
+        "description": "Recent tester feedback across apps the caller can see.",
+        "required": [
+          "feedback",
+          "project_id",
+          "project_name",
+          "build_number"
+        ],
+        "properties": {
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "feedback": {
+            "$ref": "#/components/schemas/BuildFeedback"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
           }
         }
       },
@@ -24609,6 +25934,24 @@
           }
         }
       },
+      "SendBuildToGroupRequest": {
+        "type": "object",
+        "required": [
+          "group_id"
+        ],
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to test, up to 1000 characters. Shown in the email."
+          }
+        }
+      },
       "SetupCompleteResponse": {
         "type": "object",
         "required": [
@@ -25835,6 +27178,79 @@
           }
         }
       },
+      "TesterGroup": {
+        "type": "object",
+        "description": "A named set of people a build can be sent to, such as QA or design.",
+        "required": [
+          "id",
+          "name",
+          "members",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TesterGroupMember"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "TesterGroupMember": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "TesterGroupRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "member_user_ids"
+        ],
+        "properties": {
+          "member_user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters, unique on the instance."
+          }
+        }
+      },
       "TriggerConfig": {
         "type": "object",
         "required": [
@@ -27037,6 +28453,56 @@
           "environment"
         ]
       },
+      "WebPushConfig": {
+        "type": "object",
+        "description": "Web push for the installed tester portal.",
+        "required": [
+          "public_key",
+          "subscribed"
+        ],
+        "properties": {
+          "public_key": {
+            "type": "string",
+            "description": "VAPID public key, base64url, for `PushManager.subscribe`."
+          },
+          "subscribed": {
+            "type": "boolean",
+            "description": "Whether this browser endpoint is subscribed for the caller."
+          }
+        }
+      },
+      "WebPushSubscriptionRequest": {
+        "type": "object",
+        "required": [
+          "endpoint",
+          "p256dh",
+          "auth"
+        ],
+        "properties": {
+          "auth": {
+            "type": "string",
+            "description": "The subscription's `auth` secret, base64url."
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "p256dh": {
+            "type": "string",
+            "description": "The subscription's `p256dh` key, base64url."
+          }
+        }
+      },
+      "WebPushUnsubscribeRequest": {
+        "type": "object",
+        "required": [
+          "endpoint"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          }
+        }
+      },
       "WebhookResponse": {
         "type": "object",
         "required": [
@@ -27199,6 +28665,10 @@
     {
       "name": "System",
       "description": "Daemon runtime and metrics."
+    },
+    {
+      "name": "Testers",
+      "description": "Getting builds to testers: latest-build install links, tester groups, sends, installs, feedback, device registration and browser push."
     },
     {
       "name": "Scoped Download Tokens",

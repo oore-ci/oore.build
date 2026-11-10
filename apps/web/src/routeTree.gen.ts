@@ -35,6 +35,7 @@ import { Route as SettingsRunnersRouteImport } from './routes/settings/runners'
 import { Route as SettingsSecretsRouteImport } from './routes/settings/secrets'
 import { Route as SettingsSourcesRouteRouteImport } from './routes/settings/sources/route'
 import { Route as SettingsStoreCredentialsRouteImport } from './routes/settings/store-credentials'
+import { Route as SettingsTestersRouteImport } from './routes/settings/testers'
 import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as SetupIndexRouteImport } from './routes/setup/index'
 import { Route as SetupCompleteRouteImport } from './routes/setup/complete'
@@ -202,6 +203,13 @@ const SettingsStoreCredentialsRoute =
   } as any).lazy(() =>
     import('./routes/settings/store-credentials.lazy').then((d) => d.Route),
   )
+const SettingsTestersRoute = SettingsTestersRouteImport.update({
+  id: '/testers',
+  path: '/testers',
+  getParentRoute: () => SettingsRouteRoute,
+} as any).lazy(() =>
+  import('./routes/settings/testers.lazy').then((d) => d.Route),
+)
 const SettingsUsersRoute = SettingsUsersRouteImport.update({
   id: '/users',
   path: '/users',
@@ -355,6 +363,7 @@ export interface FileRoutesByFullPath {
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/secrets': typeof SettingsSecretsRoute
   '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
+  '/settings/testers': typeof SettingsTestersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -398,6 +407,7 @@ export interface FileRoutesByTo {
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/secrets': typeof SettingsSecretsRoute
   '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
+  '/settings/testers': typeof SettingsTestersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -448,6 +458,7 @@ export interface FileRoutesById {
   '/settings/runners': typeof SettingsRunnersRoute
   '/settings/secrets': typeof SettingsSecretsRoute
   '/settings/store-credentials': typeof SettingsStoreCredentialsRoute
+  '/settings/testers': typeof SettingsTestersRoute
   '/settings/users': typeof SettingsUsersRoute
   '/setup/complete': typeof SetupCompleteRoute
   '/setup/mode': typeof SetupModeRoute
@@ -500,6 +511,7 @@ export interface FileRouteTypes {
     | '/settings/runners'
     | '/settings/secrets'
     | '/settings/store-credentials'
+    | '/settings/testers'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -543,6 +555,7 @@ export interface FileRouteTypes {
     | '/settings/runners'
     | '/settings/secrets'
     | '/settings/store-credentials'
+    | '/settings/testers'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -592,6 +605,7 @@ export interface FileRouteTypes {
     | '/settings/runners'
     | '/settings/secrets'
     | '/settings/store-credentials'
+    | '/settings/testers'
     | '/settings/users'
     | '/setup/complete'
     | '/setup/mode'
@@ -814,6 +828,13 @@ declare module '@tanstack/react-router' {
       path: '/store-credentials'
       fullPath: '/settings/store-credentials'
       preLoaderRoute: typeof SettingsStoreCredentialsRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/testers': {
+      id: '/settings/testers'
+      path: '/testers'
+      fullPath: '/settings/testers'
+      preLoaderRoute: typeof SettingsTestersRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/users': {
@@ -1087,6 +1108,7 @@ interface SettingsRouteRouteChildren {
   SettingsRunnersRoute: typeof SettingsRunnersRoute
   SettingsSecretsRoute: typeof SettingsSecretsRoute
   SettingsStoreCredentialsRoute: typeof SettingsStoreCredentialsRoute
+  SettingsTestersRoute: typeof SettingsTestersRoute
   SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   SettingsIntegrationsSplatRoute: typeof SettingsIntegrationsSplatRoute
@@ -1105,6 +1127,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsRunnersRoute: SettingsRunnersRoute,
   SettingsSecretsRoute: SettingsSecretsRoute,
   SettingsStoreCredentialsRoute: SettingsStoreCredentialsRoute,
+  SettingsTestersRoute: SettingsTestersRoute,
   SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   SettingsIntegrationsSplatRoute: SettingsIntegrationsSplatRoute,

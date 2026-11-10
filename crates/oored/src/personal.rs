@@ -53,7 +53,7 @@ fn is_admin(role: &str) -> bool {
 
 /// Apps this person can see: every app for owners and admins, otherwise the
 /// ones they are a member of.
-async fn visible_projects(
+pub(crate) async fn visible_projects(
     pool: &SqlitePool,
     user_id: &str,
     role: &str,
@@ -673,7 +673,7 @@ pub async fn digest_for(
     })
 }
 
-fn html_escape(value: &str) -> String {
+pub(crate) fn html_escape(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
