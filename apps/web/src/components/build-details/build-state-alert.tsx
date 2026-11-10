@@ -11,6 +11,19 @@ import type { BuildStateSummary } from '@/lib/build-state-description'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
+/** Plain text with `code` spans, as failure hints write commands. */
+function WithCode({ text }: { text: string }) {
+  return text.split('`').map((part, index) =>
+    index % 2 ? (
+      <code key={index} className="font-mono text-xs text-foreground">
+        {part}
+      </code>
+    ) : (
+      part
+    ),
+  )
+}
+
 function LineChip({
   text,
   label,
@@ -80,8 +93,9 @@ export function BuildStateAlert({
             />
             <div>
               <span className="font-medium text-foreground">Likely cause:</span>{' '}
-              {hint.cause}
-              {hint.fix ? ` ${hint.fix}` : ''}
+              <WithCode text={hint.cause} />
+              {hint.fix ? ' ' : ''}
+              {hint.fix ? <WithCode text={hint.fix} /> : null}
             </div>
             {nextStep ? <div>{nextStep}</div> : null}
           </>

@@ -33,6 +33,8 @@ export const allHandlers = [
   ...userHandlers,
   ...projectHandlers,
   ...pipelineHandlers,
+  // Before builds: /v1/builds/trends would match /v1/builds/{build_id}.
+  ...releaseFreezeHandlers,
   ...buildHandlers,
   ...releaseHandlers,
   ...environmentHandlers,
@@ -49,5 +51,4 @@ export const allHandlers = [
   ...signingHandlers,
   ...personalHandlers,
   ...testerHandlers,
-  ...releaseFreezeHandlers,
 ]

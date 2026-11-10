@@ -91,15 +91,28 @@ function stepRows(good: Build, failed: Build): Array<Row> {
 function CompareTable({
   caption,
   rows,
+  good,
+  failed,
 }: {
   caption: string
   rows: Array<Row>
+  good: number
+  failed: number
 }) {
   return (
     <table className="w-full table-fixed text-sm">
       <caption className="pb-1 text-left text-xs font-medium text-muted-foreground">
         {caption}
       </caption>
+      <thead>
+        <tr className="text-left text-xs text-muted-foreground">
+          <th className="w-1/4 pb-1 font-normal">
+            <span className="sr-only">Field</span>
+          </th>
+          <th className="pb-1 font-normal">#{good}</th>
+          <th className="pb-1 font-normal">#{failed}</th>
+        </tr>
+      </thead>
       <tbody className="divide-y">
         {rows.map((row) => {
           const changed = row.good !== row.failed
@@ -159,13 +172,20 @@ export function CompareWithLastGood({
               is in bold.
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-[1fr_1.5fr_1.5fr] gap-3 text-xs font-medium text-muted-foreground">
-            <span />
-            <span>#{good.build_number}</span>
-            <span>#{build.build_number}</span>
-          </div>
-          <CompareTable caption="The build" rows={factRows(good, build)} />
-          <CompareTable caption="Steps" rows={stepRows(good, build)} />
+          <CompareTable
+            caption="The build"
+            rows={factRows(good, build)}
+            good={good.build_number}
+            failed={build.build_number}
+          />
+          {good.step_results?.length && build.step_results?.length ? (
+            <CompareTable
+              caption="Steps"
+              rows={stepRows(good, build)}
+              good={good.build_number}
+              failed={build.build_number}
+            />
+          ) : null}
           <Text variant="caption">
             <Link
               to="/builds/$buildId"
