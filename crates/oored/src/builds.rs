@@ -4064,8 +4064,7 @@ mod tests {
         let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
         insert_filter_builds(&pool).await;
         let mine = |user_id: &str, email: &str| {
-            let (mut conditions, mut binds) =
-                build_list_conditions(&list_params(), None).unwrap();
+            let (mut conditions, mut binds) = build_list_conditions(&list_params(), None).unwrap();
             push_mine_scope(user_id, email, &mut conditions, &mut binds);
             (conditions, binds)
         };
