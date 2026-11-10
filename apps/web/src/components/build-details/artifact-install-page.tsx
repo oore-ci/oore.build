@@ -1,6 +1,7 @@
 import { Suspense, lazy } from 'react'
 import { Stack } from '@/components/layout/stack'
 import { QrCode } from '@/components/qr-code'
+import { RegisterIphone } from './register-iphone'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -290,6 +291,9 @@ function QaReleaseDetail({
                     : 'Download the APK, allow installs from this browser if asked, then confirm installation.'}
                 </p>
               </div>
+              {isIos && device.startsWith('iphone') && !expired ? (
+                <RegisterIphone pipelineId={build.pipeline_id} />
+              ) : null}
               {device === 'other' && !expired ? (
                 <Stack gap={2} className="items-center text-center">
                   <QrCode
