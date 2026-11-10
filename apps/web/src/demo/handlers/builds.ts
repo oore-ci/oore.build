@@ -721,7 +721,14 @@ export const buildHandlers = [
     )
   }),
 
-  // Stream token — return 503 to trigger polling fallback in useLogStream
+  // The demo has no live log stream; 503 sends useLogStream to polling.
+  demoApi.streamBuildLogs(() =>
+    HttpResponse.json(
+      { error: 'Demo mode: live streaming unavailable', code: 'demo_mode' },
+      { status: 503 },
+    ),
+  ),
+
   demoApi.createStreamToken(async () => {
     await delay(100)
     return HttpResponse.json(

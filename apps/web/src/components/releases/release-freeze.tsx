@@ -162,6 +162,15 @@ function FreezeDialog({
   )
 }
 
+/**
+ * The freeze on a release's own page, so nobody tries a raise or promotion
+ * that the daemon will refuse. Lifting stays on the app's Releases tab.
+ */
+export function ReleaseFreezeNotice({ projectId }: { projectId: string }) {
+  const freeze = useActiveFreeze(projectId)
+  return freeze ? <ReleaseFreezeBanner freeze={freeze} canLift={false} /> : null
+}
+
 /** The app's freeze, with Freeze or Lift for people who manage releases. */
 export function ReleaseFreezeControl({
   projectId,

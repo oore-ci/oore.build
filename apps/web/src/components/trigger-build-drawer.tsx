@@ -655,7 +655,15 @@ export default function TriggerBuildDrawer({
     const next = defaultWorkflowChoice(workflowsData)
     if (next === current) return
     form.setValue('workflow', next, { shouldDirty: false })
-    form.setValue('platforms', [], { shouldDirty: false })
+    // Keep a preset pick (Resubmit picks the rejecting store's platform)
+    // when the new workflow still builds it; buildPlatforms() drops the rest.
+    const builds = choosableWorkflows(workflowsData).find(
+      (workflow) => workflow.name === next,
+    )?.platforms
+    const kept = (form.getValues('platforms') ?? []).filter(
+      (platform) => !builds?.length || builds.includes(platform),
+    )
+    form.setValue('platforms', kept, { shouldDirty: false })
   }, [form, open, workflowsData])
   const changelogPreviewQuery = useBuildChangelogPreview(
     projectId ?? '',
