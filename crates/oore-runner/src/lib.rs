@@ -10,6 +10,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod settings;
 pub mod store_version;
 
 use anyhow::Context;
