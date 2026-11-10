@@ -288,11 +288,13 @@ function TriggerBuildFooter({
   blocked,
   onSubmit,
   pending,
+  rehearsal,
 }: {
   queueOnly: boolean
   blocked: boolean
   onSubmit: () => void
   pending: boolean
+  rehearsal: boolean
 }) {
   return (
     <DrawerFooter>
@@ -303,6 +305,8 @@ function TriggerBuildFooter({
             <Spinner className="size-4" />
             Queuing...
           </>
+        ) : rehearsal ? (
+          'Rehearse'
         ) : queueOnly ? (
           'Queue build'
         ) : (
@@ -389,6 +393,11 @@ interface TriggerBuildDrawerProps {
   prefill?: Partial<TriggerBuildForm>
   title?: string
   description?: string
+  /**
+   * Rehearse a release: the build signs and checks every store submission
+   * with the store, and submits nothing.
+   */
+  rehearsal?: boolean
   onBuildCreated?: (buildId: string) => void
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -423,6 +432,7 @@ export default function TriggerBuildDrawer({
   prefill,
   title = 'Run build',
   description = 'Choose a pipeline and branch to build.',
+  rehearsal = false,
   onBuildCreated,
   open: controlledOpen,
   onOpenChange,
@@ -733,6 +743,7 @@ export default function TriggerBuildDrawer({
           store_notes: data.store_notes?.trim() || undefined,
           workflow,
           platforms: buildPlatforms(availablePlatforms, data.platforms),
+          rehearsal: rehearsal || undefined,
         },
       },
       {
@@ -750,7 +761,11 @@ export default function TriggerBuildDrawer({
               branch,
             })
           }
-          toast.success(`Build #${result.build.build_number} queued`)
+          toast.success(
+            rehearsal
+              ? `Rehearsal #${result.build.build_number} queued. Nothing is submitted.`
+              : `Build #${result.build.build_number} queued`,
+          )
           setOpen(false)
           onBuildCreated?.(result.build.id)
         },
@@ -822,6 +837,15 @@ export default function TriggerBuildDrawer({
             className="flex min-h-0 flex-1 flex-col"
           >
             <div className="flex-1 scroll-fade space-y-4 overflow-y-auto p-4">
+              {rehearsal ? (
+                <Alert>
+                  <AlertDescription>
+                    Builds and signs exactly as the release would, then asks
+                    Google Play and App Store Connect to check it. Nothing is
+                    submitted, released or sent to testers.
+                  </AlertDescription>
+                </Alert>
+              ) : null}
               <RecentRunChips
                 runs={recentRuns.filter(
                   (run) =>
@@ -1245,6 +1269,7 @@ export default function TriggerBuildDrawer({
 
             <TriggerBuildFooter
               queueOnly={queueOnly}
+              rehearsal={rehearsal}
               blocked={
                 noProjects ||
                 noPipelines ||

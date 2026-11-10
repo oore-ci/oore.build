@@ -65,9 +65,23 @@ fn write_private_key(
 }
 
 fn altool_upload_args(ipa: &Path, credentials: &RunnerAppStoreUploadCredentials) -> Vec<String> {
+    altool_args("--upload-app", ipa, credentials)
+}
+
+/// `--validate-app` runs App Store Connect's checks on the IPA without
+/// uploading it, so it uses no build number.
+fn altool_validate_args(ipa: &Path, credentials: &RunnerAppStoreUploadCredentials) -> Vec<String> {
+    altool_args("--validate-app", ipa, credentials)
+}
+
+fn altool_args(
+    action: &str,
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+) -> Vec<String> {
     vec![
         "altool".to_string(),
-        "--upload-app".to_string(),
+        action.to_string(),
         "--type".to_string(),
         "ios".to_string(),
         "--file".to_string(),
@@ -367,14 +381,7 @@ pub(crate) async fn upload_ipa(
     .await
 }
 
-async fn upload_ipa_with(
-    program: &Path,
-    ipa: &Path,
-    credentials: &RunnerAppStoreUploadCredentials,
-    key_dir: &Path,
-    limit: Duration,
-    retry_delay: Duration,
-) -> anyhow::Result<String> {
+fn check_credentials(credentials: &RunnerAppStoreUploadCredentials) -> anyhow::Result<()> {
     anyhow::ensure!(
         is_valid_key_id(&credentials.key_id),
         "App Store Connect API key ID is invalid"
@@ -387,6 +394,18 @@ async fn upload_ipa_with(
         !credentials.private_key_pem.trim().is_empty(),
         "App Store Connect API private key is empty"
     );
+    Ok(())
+}
+
+async fn upload_ipa_with(
+    program: &Path,
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+    key_dir: &Path,
+    limit: Duration,
+    retry_delay: Duration,
+) -> anyhow::Result<String> {
+    check_credentials(credentials)?;
     let _key = write_private_key(key_dir, credentials)?;
     // Whether an earlier attempt may have delivered the IPA before failing.
     let mut maybe_uploaded = false;
@@ -425,6 +444,68 @@ async fn upload_ipa_with(
         }
         anyhow::bail!(
             "App Store Connect upload failed: {}",
+            summarize_altool_failure(&stdout, &stderr)
+        );
+    }
+}
+
+/// Has App Store Connect validate the signed IPA without uploading it, for
+/// a release rehearsal. `Err` carries Apple's reasons.
+pub(crate) async fn validate_ipa(
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+    key_dir: &Path,
+) -> anyhow::Result<String> {
+    validate_ipa_with(
+        Path::new("xcrun"),
+        ipa,
+        credentials,
+        key_dir,
+        ALTOOL_TIMEOUT,
+        ALTOOL_RETRY_DELAY,
+    )
+    .await
+}
+
+async fn validate_ipa_with(
+    program: &Path,
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+    key_dir: &Path,
+    limit: Duration,
+    retry_delay: Duration,
+) -> anyhow::Result<String> {
+    check_credentials(credentials)?;
+    let _key = write_private_key(key_dir, credentials)?;
+    let mut attempt = 1;
+    loop {
+        let output = run_altool(
+            program,
+            altool_validate_args(ipa, credentials),
+            key_dir,
+            limit,
+        )
+        .await?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let result = altool_result(&stdout);
+        if output.status.success() && altool_product_errors(result.as_ref()).is_empty() {
+            return Ok(result
+                .as_ref()
+                .and_then(|value| value.get("success-message"))
+                .and_then(Value::as_str)
+                .unwrap_or("App Store Connect validated the IPA")
+                .to_string());
+        }
+        let combined = format!("{stdout}\n{stderr}");
+        // Validation sends nothing that counts, so it is always safe to retry.
+        if attempt == 1 && is_transient_altool_failure(&combined) {
+            attempt += 1;
+            tokio::time::sleep(retry_delay).await;
+            continue;
+        }
+        anyhow::bail!(
+            "App Store Connect validation failed: {}",
             summarize_altool_failure(&stdout, &stderr)
         );
     }
@@ -1055,6 +1136,41 @@ exit 1"#,
         .unwrap_err()
         .to_string();
         assert!(error.contains("Redundant Binary Upload"), "{error}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn validation_validates_and_reports_apples_reasons() {
+        let dir = test_dir("validate");
+        let program = fake_xcrun(
+            &dir,
+            r#"echo "$@" > args
+case "$*" in
+  *--upload-app*) echo 'uploaded'; exit 0 ;;
+esac
+echo '{"product-errors":[{"message":"Invalid Bundle. The bundle version must be higher than the previously uploaded version: 41."}]}'
+exit 1"#,
+        );
+        let error = validate_ipa_with(
+            &program,
+            Path::new("/tmp/Runner.ipa"),
+            &credentials(),
+            &dir.join("keys"),
+            Duration::from_secs(10),
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.starts_with("App Store Connect validation failed"),
+            "{error}"
+        );
+        assert!(error.contains("must be higher"), "{error}");
+        let args = fs::read_to_string(dir.join("args")).unwrap();
+        assert!(args.contains("--validate-app"), "{args}");
+        assert!(!args.contains("--upload-app"), "{args}");
+        assert!(!dir.join("keys").join("AuthKey_ABC123DEF4.p8").exists());
         let _ = fs::remove_dir_all(dir);
     }
 

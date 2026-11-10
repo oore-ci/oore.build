@@ -54,6 +54,11 @@ pub(crate) struct BuildRunArgs {
     #[arg(long, value_name = "TEXT")]
     notes: Option<String>,
 
+    /// Rehearse the release: build and sign as usual, then ask Google Play
+    /// and App Store Connect to check it. Nothing is submitted or released.
+    #[arg(long, default_value = "false")]
+    rehearsal: bool,
+
     #[command(flatten)]
     connection: ApiConnectionArgs,
 
@@ -196,6 +201,7 @@ fn create_build_request(args: &BuildRunArgs) -> anyhow::Result<CreateBuildReques
         changelog: None,
         store_notes: trimmed(args.notes.as_deref()),
         workflow: trimmed(args.workflow.as_deref()),
+        rehearsal: args.rehearsal.then_some(true),
     })
 }
 
@@ -229,8 +235,14 @@ pub(crate) async fn handle_build_run(args: BuildRunArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     let mut line = format!(
-        "Queued build #{} of {}",
-        build.build_number, detail.pipeline.name
+        "Queued {} #{} of {}",
+        if build.rehearsal {
+            "rehearsal"
+        } else {
+            "build"
+        },
+        build.build_number,
+        detail.pipeline.name
     );
     if let Some(workflow) = &build.workflow {
         line.push_str(&format!(", workflow {workflow}"));
@@ -240,6 +252,9 @@ pub(crate) async fn handle_build_run(args: BuildRunArgs) -> anyhow::Result<()> {
     }
     println!("{line}");
     println!("Build id: {}", build.id);
+    if build.rehearsal {
+        println!("Nothing is submitted. See what the stores said on the build page.");
+    }
     Ok(())
 }
 
@@ -559,6 +574,11 @@ mod tests {
         assert_eq!(request.platforms, None);
         let body = serde_json::to_value(&request).unwrap();
         assert!(body.get("workflow").is_none());
+        assert!(body.get("rehearsal").is_none());
+
+        let request =
+            create_build_request(&run_args(&["--pipeline", "pipe-1", "--rehearsal"])).unwrap();
+        assert_eq!(request.rehearsal, Some(true));
 
         let error = create_build_request(&run_args(&[
             "--pipeline",

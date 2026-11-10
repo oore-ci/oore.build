@@ -81,6 +81,10 @@ import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { StatusBadge } from '@/components/status-badge'
+import {
+  BuildRehearsalCard,
+  RehearsalBadge,
+} from '@/components/build-details/build-rehearsal'
 import PageHeader from '@/components/page-header'
 import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import PageLayout from '@/components/page-layout'
@@ -347,6 +351,10 @@ export function BuildDetailPage({
     buildStatus === 'failed' || buildStatus === 'timed_out',
   )
   const failureHint = failureHintQuery.data?.hint ?? null
+  // The rehearsal card already lists what to fix.
+  const failedAtRehearsal = (stepResults ?? []).some(
+    (step) => step.status === 'failed' && step.name.startsWith('rehearse-'),
+  )
   const runningStepName = useMemo(
     () => (buildStatus === 'running' ? currentStepName(mergedLogs) : null),
     [buildStatus, mergedLogs],
@@ -688,6 +696,9 @@ export function BuildDetailPage({
                 <StatusBadge kind="approval" value={build.approval.state} />
               ) : null}
               <WorkflowBadge workflow={build.workflow} className="h-6 px-2.5" />
+              {build.rehearsal ? (
+                <RehearsalBadge className="h-6 px-2.5" />
+              ) : null}
               <StoreWaitBadges
                 releases={releases}
                 onOpenRelease={() => setActiveTab('release')}
@@ -917,7 +928,11 @@ export function BuildDetailPage({
         </Alert>
       ) : null}
 
-      {stateSummary ? (
+      {build.rehearsal ? (
+        <BuildRehearsalCard build={build} canRelease={canTriggerBuild} />
+      ) : null}
+
+      {stateSummary && !failedAtRehearsal ? (
         <BuildStateAlert
           summary={stateSummary}
           failureLine={failureLine}

@@ -20,11 +20,12 @@ use oore_contract::{
     ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
     IosExportMethod, JobStatusResponse, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP,
     PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlanPublish, PlanRequest,
-    PlanStep, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
-    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
-    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
-    RunnerPublishResult, RunnerRetryArtifactsResponse, StepPhase, StepResult, TargetSizeBudget,
-    artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
+    PlanStep, PlatformBuildArgs, PlatformBuildCommands, PublishStore, RUNNER_PROTOCOL_VERSION,
+    ReadinessLevel, RehearsalCheck, RunnerAndroidSigningProfile, RunnerAndroidSigningResponse,
+    RunnerHeartbeatResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
+    RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, RunnerRehearsalReport,
+    RunnerRehearsalReportResponse, RunnerRetryArtifactsResponse, StepPhase, StepResult,
+    TargetSizeBudget, artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
     normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
     plan_execution_config, replace_secret_references, store_version_code,
     validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
@@ -6932,6 +6933,335 @@ async fn fail_publish_step(
     anyhow::anyhow!(error).context(format!("{step_name} failed"))
 }
 
+const REHEARSE_PLAY_STEP: &str = "rehearse-play";
+const REHEARSE_APP_STORE_STEP: &str = "rehearse-app-store";
+
+struct RehearsalInputs<'a> {
+    workspace: &'a Path,
+    signing_workspace: &'a Path,
+    secrets: &'a std::collections::BTreeMap<String, String>,
+    signed_ipa_path: Option<&'a Path>,
+    builds_android: bool,
+    builds_ios: bool,
+    plan: oore_contract::pipeline_config::EffectivePublish,
+}
+
+fn rehearsal_block(code: &str, title: &str, detail: String) -> RehearsalCheck {
+    RehearsalCheck {
+        code: code.to_string(),
+        level: ReadinessLevel::Block,
+        title: title.to_string(),
+        detail: Some(detail),
+    }
+}
+
+/// Checks the App Store Connect submission without making it: the local
+/// pre-flight checks, the repository's notes and listing files, then
+/// `altool --validate-app`, which uses no build number.
+async fn rehearse_app_store(
+    workspace: &Path,
+    signing_workspace: &Path,
+    signed_ipa_path: Option<&Path>,
+    plan: &oore_contract::RunnerAppStorePublishPlan,
+) -> Vec<RehearsalCheck> {
+    let Some(ipa) = signed_ipa_path else {
+        return vec![rehearsal_block(
+            "asc_ipa",
+            "No signed App Store IPA",
+            "App Store publishing is on, but this build produced no signed App Store IPA. Check the pipeline's iOS signing exports for the App Store.".to_string(),
+        )];
+    };
+    let mut checks: Vec<RehearsalCheck> = app_store_upload::preflight_findings(workspace)
+        .into_iter()
+        .map(|finding| rehearsal_block("app_icon", "The app icon has transparency", finding))
+        .collect();
+    if let Some(dir) = plan.config.release_notes_dir.as_deref()
+        && let Err(error) = app_store_upload::read_release_notes_dir(workspace, dir)
+    {
+        checks.push(rehearsal_block(
+            "asc_release_notes",
+            "The release notes files could not be read",
+            format!("{error:#}"),
+        ));
+    }
+    if let Some(dir) = plan.config.listing_dir.as_deref()
+        && let Err(error) = app_store_upload::read_listing_dir(workspace, dir)
+    {
+        checks.push(rehearsal_block(
+            "asc_listing",
+            "The store listing files could not be read",
+            format!("{error:#}"),
+        ));
+    }
+    let key_dir = signing_workspace.join(".oore").join("asc-keys");
+    checks.push(
+        match app_store_upload::validate_ipa(ipa, &plan.credentials, &key_dir).await {
+            Ok(message) => RehearsalCheck {
+                code: "asc_validate".to_string(),
+                level: ReadinessLevel::Ok,
+                title: "App Store Connect accepts the signed IPA".to_string(),
+                detail: Some(format!("{message}. Validated, not uploaded.")),
+            },
+            Err(error) => rehearsal_block(
+                "asc_validate",
+                "App Store Connect would refuse the IPA",
+                format!("{error:#}"),
+            ),
+        },
+    );
+    checks
+}
+
+async fn report_rehearsal(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+    report: &RunnerRehearsalReport,
+) -> anyhow::Result<RunnerRehearsalReportResponse> {
+    let mut last_error = None;
+    for delay in &PUBLISH_REPORT_DELAYS {
+        if !delay.is_zero() {
+            tokio::time::sleep(*delay).await;
+        }
+        let sent = client
+            .post(format!(
+                "{}/v1/runners/{}/jobs/{}/rehearsal",
+                daemon_url, config.runner_id, build_id
+            ))
+            .bearer_auth(&config.runner_token)
+            .header("x-oore-signing-token", signing_token)
+            .timeout(PUBLISH_REPORT_TIMEOUT)
+            .json(report)
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(resp) => resp,
+            Err(error) => {
+                last_error = Some(anyhow::Error::new(error));
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp.json().await?);
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let error = anyhow::anyhow!("the daemon answered {status}: {body}");
+        if runner_response_is_terminal(status) {
+            return Err(error);
+        }
+        last_error = Some(error);
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the rehearsal report was not sent")))
+}
+
+fn rehearsal_line(item: &oore_contract::StoreReadinessItem) -> String {
+    let mark = match item.level {
+        ReadinessLevel::Ok => "passed",
+        ReadinessLevel::Warn => "check",
+        ReadinessLevel::Block => "fix first",
+    };
+    match &item.detail {
+        Some(detail) => format!("[oore-rehearsal] {mark}: {}. {detail}", item.title),
+        None => format!("[oore-rehearsal] {mark}: {}", item.title),
+    }
+}
+
+/// Checks each store submission the pipeline would make, and submits
+/// nothing. Runs every store, so one rehearsal lists every fix; fails when
+/// any check blocks.
+async fn run_rehearsal_steps(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    steps: &mut Vec<StepResult>,
+    inputs: RehearsalInputs<'_>,
+) -> anyhow::Result<()> {
+    let RehearsalInputs {
+        workspace,
+        signing_workspace,
+        secrets,
+        signed_ipa_path,
+        builds_android,
+        builds_ios,
+        plan,
+    } = inputs;
+    let mut log = async |stream: &str, line: String| {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            stream,
+            &line,
+        )
+        .await;
+    };
+    let play_planned = !matches!(plan.google_play, Ok(None));
+    let app_store_planned = !matches!(plan.app_store, Ok(None));
+    if !play_planned && !app_store_planned {
+        log(
+            "stdout",
+            "[oore-rehearsal] Nothing to rehearse: this build publishes to no store".to_string(),
+        )
+        .await;
+        return Ok(());
+    }
+    let mut blocked = Vec::new();
+    for store in [PublishStore::GooglePlay, PublishStore::AppStore] {
+        let (step_name, title, planned, built, platform_name) = match store {
+            PublishStore::GooglePlay => (
+                REHEARSE_PLAY_STEP,
+                "Rehearse the Google Play release",
+                play_planned,
+                builds_android,
+                "Android",
+            ),
+            PublishStore::AppStore => (
+                REHEARSE_APP_STORE_STEP,
+                "Rehearse the App Store Connect submission",
+                app_store_planned,
+                builds_ios,
+                "iOS",
+            ),
+        };
+        if !planned {
+            continue;
+        }
+        if !built {
+            log(
+                "stdout",
+                format!(
+                    "[oore-rehearsal] Skipping {title}: this build did not build {platform_name}."
+                ),
+            )
+            .await;
+            continue;
+        }
+        let started = now_unix();
+        log("stdout", step_start_marker(step_name, title)).await;
+        let checks = match store {
+            PublishStore::GooglePlay => match &plan.google_play {
+                Ok(Some(play)) => {
+                    publish::rehearse_google_play(
+                        client,
+                        workspace,
+                        secrets,
+                        plan.changelog.as_deref(),
+                        play,
+                    )
+                    .await
+                }
+                Err(error) => vec![rehearsal_block(
+                    "publish_settings",
+                    "The publish settings stop this upload",
+                    error.clone(),
+                )],
+                Ok(None) => Vec::new(),
+            },
+            PublishStore::AppStore => match &plan.app_store {
+                Ok(Some(app_store)) => {
+                    rehearse_app_store(workspace, signing_workspace, signed_ipa_path, app_store)
+                        .await
+                }
+                Err(error) => vec![rehearsal_block(
+                    "publish_settings",
+                    "The publish settings stop this upload",
+                    error.clone(),
+                )],
+                Ok(None) => Vec::new(),
+            },
+        };
+        let report = RunnerRehearsalReport { store, checks };
+        let items = match report_rehearsal(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+            &report,
+        )
+        .await
+        {
+            Ok(response) => response.checks,
+            Err(error) => {
+                log(
+                    "stderr",
+                    format!("[oore-rehearsal] Warning: Oore could not record this rehearsal, so the build page will not list it: {error:#}"),
+                )
+                .await;
+                let release_store = match store {
+                    PublishStore::GooglePlay => oore_contract::ReleaseStore::GooglePlay,
+                    PublishStore::AppStore => oore_contract::ReleaseStore::AppStore,
+                };
+                report
+                    .checks
+                    .into_iter()
+                    .map(|check| oore_contract::StoreReadinessItem {
+                        store: release_store,
+                        code: check.code,
+                        level: check.level,
+                        title: check.title,
+                        detail: check.detail,
+                        console_url: None,
+                        remembered: false,
+                    })
+                    .collect()
+            }
+        };
+        for item in &items {
+            log("stdout", rehearsal_line(item)).await;
+        }
+        let failed = items.iter().any(|item| item.level == ReadinessLevel::Block);
+        log(
+            "stdout",
+            if failed {
+                format!(
+                    "[oore-rehearsal] {title}: fix the items above first. Nothing was submitted."
+                )
+            } else {
+                format!("[oore-rehearsal] {title}: ready. Nothing was submitted.")
+            },
+        )
+        .await;
+        log(
+            "stdout",
+            step_end_marker(
+                step_name,
+                if failed { "failed" } else { "succeeded" },
+                Some(i32::from(failed)),
+            ),
+        )
+        .await;
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if failed { "failed" } else { "succeeded" }.to_string(),
+            exit_code: Some(i32::from(failed)),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+            publish_from_file: false,
+        });
+        if failed {
+            blocked.push(step_name);
+        }
+    }
+    if blocked.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "The rehearsal found what a store would refuse; see the build's Rehearsal findings"
+        )
+        .context(format!("{} failed", blocked.join(", "))))
+    }
+}
+
 /// Runs the store uploads the pipeline turns on, stopping at the first failure.
 async fn run_publish_steps(
     job: &ClaimedJob,
@@ -6980,6 +7310,26 @@ async fn run_publish_steps(
             log_seq,
             "stdout",
             &format!("[oore-publish] {note}"),
+        )
+        .await;
+    }
+    if publish_plan.rehearsal {
+        return run_rehearsal_steps(
+            job,
+            client,
+            daemon_url,
+            config,
+            log_seq,
+            steps,
+            RehearsalInputs {
+                workspace,
+                signing_workspace,
+                secrets,
+                signed_ipa_path,
+                builds_android: built(BuildPlatform::Android),
+                builds_ios: built(BuildPlatform::Ios),
+                plan: publish_plan,
+            },
         )
         .await;
     }
@@ -10665,6 +11015,7 @@ mod file_publish_tests {
             app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
             disabled: false,
             frozen: None,
+            rehearsal: None,
         };
         let from_file = plan.publish.apply(settings);
         // What the runner gets when the settings themselves say it.
@@ -10674,6 +11025,7 @@ mod file_publish_tests {
             app_store: Some(app_store_settings(testflight(&["Beta"]))),
             disabled: false,
             frozen: None,
+            rehearsal: None,
         };
         assert_eq!(from_file.changelog, equivalent.changelog);
         assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
@@ -10704,6 +11056,7 @@ mod file_publish_tests {
                 app_store: None,
                 disabled: false,
                 frozen: None,
+                rehearsal: None,
             });
             assert_eq!(
                 effective.google_play.unwrap(),

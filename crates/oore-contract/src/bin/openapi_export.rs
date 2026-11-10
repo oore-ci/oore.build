@@ -193,6 +193,7 @@ use utoipa::{
         operations::get_build_insights,
         operations::get_build_trends,
         operations::get_build_failure_hint,
+        operations::get_build_rehearsal,
         operations::list_release_freezes,
         operations::set_release_freeze,
         operations::delete_release_freeze,
@@ -280,6 +281,7 @@ use utoipa::{
         operations::get_job_publish_plan,
         operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
+        operations::report_job_rehearsal,
         operations::report_job_test_results,
         operations::report_job_analysis,
         // ── Build Logs ──
@@ -512,6 +514,10 @@ use utoipa::{
         oore_contract::GooglePlayCredentialsTestRequest,
         oore_contract::GooglePlayCredentialsTestResponse,
         oore_contract::RunnerPublishPlan,
+        oore_contract::RunnerRehearsalPlan,
+        oore_contract::RehearsalCheck,
+        oore_contract::RunnerRehearsalReport,
+        oore_contract::RunnerRehearsalReportResponse,
         oore_contract::RunnerRetryArtifact,
         oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
@@ -603,6 +609,7 @@ use utoipa::{
         oore_contract::SlowerStep,
         oore_contract::BuildFailureHint,
         oore_contract::BuildFailureHintResponse,
+        oore_contract::BuildRehearsalResponse,
         oore_contract::ReleaseFreeze,
         oore_contract::SetReleaseFreezeRequest,
         oore_contract::ListReleaseFreezesResponse,
@@ -2934,6 +2941,19 @@ mod operations {
     )]
     pub(super) fn get_build_failure_hint() {}
 
+    /// Get a release rehearsal's findings
+    ///
+    /// What a rehearsal build checked for each store, blocking findings first. A rehearsal (`rehearsal: true` on `POST /v1/projects/{project_id}/builds`) signs and checks every store submission and submits nothing. Empty for a build that is not a rehearsal or has not reached its store checks.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/rehearsal", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Rehearsal findings", body = BuildRehearsalResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_rehearsal() {}
+
     /// Get store vitals
     ///
     /// Google Play crash and ANR rates with top issues, and App Store hang
@@ -4136,6 +4156,26 @@ mod operations {
         )
     )]
     pub(super) fn report_job_publish_result() {}
+
+    /// Report a release rehearsal
+    ///
+    /// Records what a rehearsal build's checks found for one store, and returns them with Oore's own store readiness findings added.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        request_body = RunnerRehearsalReport,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = RunnerRehearsalReportResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active or is not a rehearsal", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_rehearsal() {}
 
     /// Get job-scoped iOS signing material
     ///
