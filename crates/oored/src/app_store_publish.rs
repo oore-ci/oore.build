@@ -1001,6 +1001,24 @@ impl Step {
     }
 }
 
+/// The step that ends a release whose build App Store Connect never listed:
+/// failed, with the reason every `release_failed` message shows.
+fn gave_up_discovery(link: &LinkRow, now: i64) -> Option<Step> {
+    (now - link.created_at > BUILD_DISCOVERY_TIMEOUT_SECS).then(|| Step {
+        stage: Some(Stage::Done),
+        transition: Some((
+            ReleaseState::Failed,
+            None,
+            format!(
+                "App Store Connect did not list build {} ({}) within six hours. \
+                 Check the email Apple sent about the upload, then upload again.",
+                link.version, link.build_number
+            ),
+        )),
+        ..Step::default()
+    })
+}
+
 async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscError> {
     let config: AppStorePublishConfig = serde_json::from_str(&link.config).unwrap_or_default();
     let mut step = Step::wait(POLL_PROCESSING_SECS);
@@ -1033,18 +1051,7 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
                 .find_build(&app_id, &link.version, &link.build_number)
                 .await?
             else {
-                if now_unix() - link.created_at > BUILD_DISCOVERY_TIMEOUT_SECS {
-                    step.stage = Some(Stage::Done);
-                    step.transition = Some((
-                        ReleaseState::Failed,
-                        None,
-                        format!(
-                            "App Store Connect did not list build {} ({}) within six hours",
-                            link.version, link.build_number
-                        ),
-                    ));
-                }
-                return Ok(step);
+                return Ok(gave_up_discovery(link, now_unix()).unwrap_or(step));
             };
             step.asc_build_id = Some(build.id.clone());
             match build.processing {
@@ -2421,6 +2428,34 @@ mod tests {
             remapped_at: Some(0),
         };
         (release, link)
+    }
+
+    #[tokio::test]
+    async fn giving_up_on_a_build_apple_never_listed_notifies_with_the_reason() {
+        let pool = releases::tests::pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (release, mut link) = app_store_release(deps, ReleaseState::Processing, 0.0).await;
+        link.stage = "awaiting_build".into();
+        link.created_at = 1_000;
+        assert!(gave_up_discovery(&link, 1_000 + BUILD_DISCOVERY_TIMEOUT_SECS).is_none());
+        let step = gave_up_discovery(&link, 1_001 + BUILD_DISCOVERY_TIMEOUT_SECS).unwrap();
+
+        let mut events = scheduler.subscribe_release_events();
+        apply_step(deps, &link, step).await.unwrap();
+        let failed = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(failed.state, ReleaseState::Failed);
+        let event = events.try_recv().unwrap();
+        assert_eq!(
+            crate::notification_dispatch::release_event_type_name(event.kind),
+            Some("release_failed")
+        );
+        assert!(event.reason.unwrap().contains("within six hours"));
     }
 
     #[tokio::test]
