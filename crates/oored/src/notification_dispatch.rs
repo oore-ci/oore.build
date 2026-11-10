@@ -880,7 +880,23 @@ fn build_notification_payload(
     event: &BuildStateEvent,
 ) -> serde_json::Value {
     let project_name: Option<String> = row.try_get("project_name").ok().flatten();
-    let pipeline_name: Option<String> = row.try_get("pipeline_name").ok().flatten();
+    let rehearsal = row
+        .try_get::<String, _>("config_snapshot")
+        .ok()
+        .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(&snapshot).ok())
+        .is_some_and(|snapshot| crate::builds::snapshot_rehearsal(&snapshot));
+    // Every message names the pipeline, so a rehearsal says so there.
+    let pipeline_name: Option<String> = row
+        .try_get::<Option<String>, _>("pipeline_name")
+        .ok()
+        .flatten()
+        .map(|name| {
+            if rehearsal {
+                format!("{name} (rehearsal, nothing submitted)")
+            } else {
+                name
+            }
+        });
 
     serde_json::json!({
         "event": format!("build.{}", event.to_status),
@@ -896,6 +912,7 @@ fn build_notification_payload(
             "trigger_actor": row.try_get::<Option<String>, _>("trigger_actor").ok().flatten(),
             "started_at": row.try_get::<Option<i64>, _>("started_at").ok().flatten(),
             "finished_at": row.try_get::<Option<i64>, _>("finished_at").ok().flatten(),
+            "rehearsal": rehearsal,
         },
         "project_name": project_name,
         "pipeline_name": pipeline_name,

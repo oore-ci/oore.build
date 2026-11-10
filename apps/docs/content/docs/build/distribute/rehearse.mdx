@@ -1,0 +1,71 @@
+---
+title: 'Rehearse a release'
+status: implemented
+description: 'Build, sign and check a store release with Google Play and App Store Connect, without submitting anything.'
+---
+
+A rehearsal runs a release pipeline exactly as the release would: it builds,
+signs, and then asks Google Play and App Store Connect whether they would take
+the result. Nothing is submitted, released or sent to testers. Use it before a
+release that matters, after changing signing, or when someone new runs their
+first release.
+
+## What you need
+
+- Developer access or higher to the app.
+- A pipeline that publishes to Google Play, the App Store, or both. A pipeline
+  that publishes to no store has nothing to rehearse.
+- A runner with the Oore version that has rehearsals. An older runner builds
+  the rehearsal but uploads nothing and checks nothing.
+
+## Rehearse
+
+1. Open the app's **Releases** tab and choose **Rehearse a release**.
+2. Pick the pipeline, the branch or commit and the workflow, as for a real
+   release. Release notes you write here are checked too.
+3. Choose **Rehearse**.
+
+The build page says **Rehearsal · nothing submitted** beside its status, and
+notifications add "(rehearsal, nothing submitted)" to the pipeline name.
+
+From the CLI, add `--rehearsal` to
+[`oore build run`](/reference/cli/oore-build-run).
+
+## What it checks
+
+For **Google Play**, the runner opens an edit, uploads the app bundle, sets
+the track and the release notes, and asks Play to validate the edit. It then
+deletes the edit without committing it, so nothing reaches any track. Play
+reports a version code that is already used, a package name that does not
+match, missing listing details, and a service account without access.
+
+For the **App Store**, the runner checks the signed IPA, the app icon, the
+release notes and the listing, then runs Apple's own validation
+(`altool --validate-app`) with the pipeline's App Store Connect key. Apple
+reports problems such as a build number that is already used, a missing
+entitlement or an invalid icon.
+
+Oore also adds the pipeline's store readiness checks, the same ones shown on
+the pipeline's **Publishing** tab.
+
+## Read the result
+
+When the rehearsal finishes, the build page shows one of these:
+
+- **Ready to release**: every store would take it. Choose **Release this
+  commit** to run the real release with the same pipeline, workflow and
+  commit.
+- **Fix N things before you release**: each item says what the store refused,
+  with a link to the page in Play Console or App Store Connect that fixes it.
+  Fix them, then choose **Re-run** on the build to rehearse again.
+- **The rehearsal did not finish**: the build or a store check failed before
+  the stores answered. The build log shows why.
+
+A rehearsal checks both stores before it fails, so one run lists every fix.
+
+## Good to know
+
+- A release freeze does not stop a rehearsal, because nothing is released.
+- The rehearsal uses a version code like any other build. The release that
+  follows gets a higher one.
+- The findings are also at `GET /v1/builds/{build_id}/rehearsal`.

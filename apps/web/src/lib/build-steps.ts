@@ -19,6 +19,8 @@ const RUNNER_STEP_LABELS = new Map([
   ['artifacts', 'Collect artifacts'],
   ['publish-play', 'Upload to Google Play'],
   ['publish-app-store', 'Upload to App Store Connect'],
+  ['rehearse-play', 'Rehearse Google Play release'],
+  ['rehearse-app-store', 'Rehearse App Store submission'],
 ])
 
 const STAGE_LABELS = new Map([

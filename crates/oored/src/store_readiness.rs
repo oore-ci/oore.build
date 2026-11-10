@@ -305,6 +305,27 @@ async fn app_store_items(state: &AppState, pipeline_id: &str) -> Vec<StoreReadin
     items
 }
 
+/// What would stop a pipeline's next store submission: refusals remembered
+/// from earlier submissions, replaced by what App Store Connect shows now.
+/// Blocking findings first.
+pub(crate) async fn pipeline_readiness_items(
+    state: &AppState,
+    pipeline_id: &str,
+) -> sqlx::Result<Vec<StoreReadinessItem>> {
+    let mut items = remembered(&state.db, pipeline_id).await?;
+    for live in app_store_items(state, pipeline_id).await {
+        // A live finding replaces the remembered one with the same code.
+        items.retain(|item| !(item.store == live.store && item.code == live.code));
+        items.push(live);
+    }
+    items.sort_by_key(|item| match item.level {
+        ReadinessLevel::Block => 0,
+        ReadinessLevel::Warn => 1,
+        ReadinessLevel::Ok => 2,
+    });
+    Ok(items)
+}
+
 /// `GET /v1/pipelines/{pipeline_id}/publish/readiness`.
 pub async fn get_pipeline_publish_readiness(
     State(state): State<Arc<AppState>>,
@@ -320,27 +341,16 @@ pub async fn get_pipeline_publish_readiness(
         ProjectPermission::Read,
     )
     .await?;
-    let store_failure = |error: sqlx::Error| {
-        error!(%error, "store readiness error");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "store_error",
-            "Failed to check store readiness",
-        )
-    };
-    let mut items = remembered(&state.db, &pipeline_id)
+    let items = pipeline_readiness_items(&state, &pipeline_id)
         .await
-        .map_err(store_failure)?;
-    for live in app_store_items(&state, &pipeline_id).await {
-        // A live finding replaces the remembered one with the same code.
-        items.retain(|item| !(item.store == live.store && item.code == live.code));
-        items.push(live);
-    }
-    items.sort_by_key(|item| match item.level {
-        ReadinessLevel::Block => 0,
-        ReadinessLevel::Warn => 1,
-        ReadinessLevel::Ok => 2,
-    });
+        .map_err(|error| {
+            error!(%error, "store readiness error");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to check store readiness",
+            )
+        })?;
     let configured = match app_store_publish::load_config(&state.db, &pipeline_id).await {
         Ok(Some((config, _))) if config.enabled => config.preflight,
         _ => match pipeline_publish::load_google_play(&state.db, &pipeline_id).await {

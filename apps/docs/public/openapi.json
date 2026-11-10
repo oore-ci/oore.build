@@ -2991,6 +2991,54 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/rehearsal": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get a release rehearsal's findings",
+        "description": "What a rehearsal build checked for each store, blocking findings first. A rehearsal (`rehearsal: true` on `POST /v1/projects/{project_id}/builds`) signs and checks every store submission and submits nothing. Empty for a build that is not a rehearsal or has not reached its store checks.",
+        "operationId": "get_build_rehearsal",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rehearsal findings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildRehearsalResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/reject": {
       "post": {
         "tags": [
@@ -12685,6 +12733,102 @@
         ]
       }
     },
+    "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal": {
+      "post": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Report a release rehearsal",
+        "description": "Records what a rehearsal build's checks found for one store, and returns them with Oore's own store readiness findings added.",
+        "operationId": "report_job_rehearsal",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerRehearsalReport"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerRehearsalReportResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active or is not a rehearsal",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/runners/{runner_id}/jobs/{job_id}/retry-artifacts": {
       "get": {
         "tags": [
@@ -17480,6 +17624,10 @@
             "type": "integer",
             "format": "int64"
           },
+          "rehearsal": {
+            "type": "boolean",
+            "description": "A release rehearsal: the build signs and checks every store\nsubmission the real run would make, and submits nothing. Its findings\nare at `GET /v1/builds/{build_id}/rehearsal`."
+          },
           "release_outcome": {
             "oneOf": [
               {
@@ -18375,6 +18523,34 @@
           }
         }
       },
+      "BuildRehearsalResponse": {
+        "type": "object",
+        "description": "`GET /v1/builds/{build_id}/rehearsal`.",
+        "required": [
+          "build_id",
+          "checks",
+          "stores"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreReadinessItem"
+            },
+            "description": "Blocking findings first, then warnings, then passed checks."
+          },
+          "stores": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseStore"
+            },
+            "description": "The stores whose submission was checked. A store the pipeline\npublishes to but that is missing here was not reached, such as when\nthe build failed first."
+          }
+        }
+      },
       "BuildReleaseOutcome": {
         "type": "string",
         "description": "The furthest-behind store release of a build, in words a build list can\nshow beside the build status.",
@@ -19115,6 +19291,13 @@
               "$ref": "#/components/schemas/BuildPlatform"
             },
             "description": "Optional one-run platform selection. Omitted builds every platform configured by the pipeline."
+          },
+          "rehearsal": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Rehearse a release: build and sign as the real run would, check each\nstore submission with the store, and submit nothing. The pipeline\nshould publish to a store; with none there is nothing to check."
           },
           "store_notes": {
             "type": [
@@ -24424,6 +24607,33 @@
           }
         }
       },
+      "RehearsalCheck": {
+        "type": "object",
+        "description": "One check a rehearsal ran, as the runner reports it.",
+        "required": [
+          "code",
+          "level",
+          "title"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable identifier, such as `play_validate` or `asc_validate`."
+          },
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "level": {
+            "$ref": "#/components/schemas/ReadinessLevel"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
       "Release": {
         "type": "object",
         "required": [
@@ -25981,6 +26191,17 @@
                 "description": "Present only when Google Play publishing is enabled."
               }
             ]
+          },
+          "rehearsal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerRehearsalPlan",
+                "description": "A rehearsal build: what to check instead of upload. `google_play` and\n`app_store` above are then empty and `disabled` is set, so a runner\nthat predates rehearsals uploads nothing, even for a file that names\nits own service account."
+              }
+            ]
           }
         }
       },
@@ -26060,6 +26281,70 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "RunnerRehearsalPlan": {
+        "type": "object",
+        "description": "The store submissions a rehearsal checks without making them.",
+        "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunnerAppStorePublishPlan"
+              }
+            ]
+          },
+          "disabled": {
+            "type": "boolean",
+            "description": "Publishing is off for the build's workflow, so there is nothing to\ncheck. The top-level `disabled` is always set for a rehearsal."
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayPublishConfig"
+              }
+            ]
+          }
+        }
+      },
+      "RunnerRehearsalReport": {
+        "type": "object",
+        "description": "`POST /v1/runners/{runner_id}/jobs/{job_id}/rehearsal` — what a\nrehearsal found for one store.",
+        "required": [
+          "store",
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RehearsalCheck"
+            }
+          },
+          "store": {
+            "$ref": "#/components/schemas/PublishStore"
+          }
+        }
+      },
+      "RunnerRehearsalReportResponse": {
+        "type": "object",
+        "description": "The rehearsal findings for a store: the runner's checks plus what Oore\nreads from the store itself.",
+        "required": [
+          "checks"
+        ],
+        "properties": {
+          "checks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreReadinessItem"
+            }
           }
         }
       },

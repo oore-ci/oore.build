@@ -253,6 +253,8 @@ pub struct EffectivePublish {
     pub app_store: Result<Option<RunnerAppStorePublishPlan>, String>,
     /// Adjustments made to fit Play's rules, for the publish log.
     pub notes: Vec<String>,
+    /// Check each store submission instead of making it.
+    pub rehearsal: bool,
 }
 
 impl PlanPublish {
@@ -270,10 +272,19 @@ impl PlanPublish {
             app_store,
             disabled,
             frozen,
+            rehearsal,
         } = settings;
+        let is_rehearsal = rehearsal.is_some();
+        // A rehearsal checks its plan instead and uploads nothing, so a
+        // freeze does not hold it.
+        let (google_play, app_store, disabled, frozen) = match rehearsal {
+            Some(plan) => (plan.google_play, plan.app_store, plan.disabled, None),
+            None => (google_play, app_store, disabled, frozen),
+        };
         if let Some(reason) = frozen {
             return EffectivePublish {
                 changelog,
+                rehearsal: is_rehearsal,
                 google_play: Ok(None),
                 app_store: Ok(None),
                 notes: vec![format!(
@@ -284,6 +295,7 @@ impl PlanPublish {
         if disabled {
             return EffectivePublish {
                 changelog,
+                rehearsal: is_rehearsal,
                 google_play: Ok(None),
                 app_store: Ok(None),
                 notes: vec![
@@ -440,6 +452,7 @@ impl PlanPublish {
             google_play,
             app_store,
             notes,
+            rehearsal: is_rehearsal,
         }
     }
 }
@@ -3987,6 +4000,7 @@ mod tests {
             app_store: Some(app_store_settings()),
             disabled: false,
             frozen: None,
+            rehearsal: None,
         }
     }
 
@@ -4201,6 +4215,41 @@ mod tests {
     }
 
     #[test]
+    fn rehearsal_checks_its_own_plan_and_old_runners_upload_nothing() {
+        // The file names its own service account, so it needs no settings.
+        let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: production, service_account: PLAY_JSON }\n";
+        let rehearsal = RunnerPublishPlan {
+            changelog: None,
+            google_play: None,
+            app_store: None,
+            disabled: true,
+            frozen: Some("Sale weekend".to_string()),
+            rehearsal: Some(crate::RunnerRehearsalPlan {
+                disabled: false,
+                google_play: Some(play_settings()),
+                app_store: Some(app_store_settings()),
+            }),
+        };
+        let effective = publish_of(yaml, None).apply(rehearsal.clone());
+        assert!(effective.rehearsal);
+        assert_eq!(
+            effective.google_play.unwrap().unwrap().track,
+            "production".to_string()
+        );
+        assert!(effective.app_store.unwrap().is_some());
+
+        // A runner without rehearsals sees the top-level plan: off.
+        let old_runner_view = RunnerPublishPlan {
+            rehearsal: None,
+            ..rehearsal
+        };
+        let effective = publish_of(yaml, None).apply(old_runner_view);
+        assert!(!effective.rehearsal);
+        assert_eq!(effective.google_play.unwrap(), None);
+        assert!(effective.app_store.unwrap().is_none());
+    }
+
+    #[test]
     fn file_publish_replaces_where_the_settings_upload() {
         let settings = RunnerPublishPlan {
             changelog: Some("Fixes".to_string()),
@@ -4208,6 +4257,7 @@ mod tests {
             app_store: Some(app_store_settings()),
             disabled: false,
             frozen: None,
+            rehearsal: None,
         };
         let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: closed, rollout: 0.07 }\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: Beta }\n";
         let effective = publish_of(yaml, None).apply(settings.clone());
@@ -4279,6 +4329,7 @@ mod tests {
             app_store: Some(app_store_settings()),
             disabled: false,
             frozen: None,
+            rehearsal: None,
         });
         let play = effective.google_play.unwrap().unwrap();
         assert_eq!(play.service_account_secret, "PLAY_RELEASE");
@@ -4323,6 +4374,7 @@ mod tests {
             app_store: Some(app_store_settings()),
             disabled: false,
             frozen: None,
+            rehearsal: None,
         });
         assert_eq!(
             effective
@@ -4343,6 +4395,7 @@ mod tests {
             app_store: None,
             disabled: false,
             frozen: None,
+            rehearsal: None,
         };
         let effective = publish_of(PUBLISHING, None).apply(settings);
         let play = effective.google_play.unwrap_err();
@@ -4366,6 +4419,7 @@ mod tests {
             app_store: None,
             disabled: false,
             frozen: None,
+            rehearsal: None,
         });
         assert_eq!(none.google_play.unwrap(), None);
         assert!(none.app_store.unwrap().is_none());

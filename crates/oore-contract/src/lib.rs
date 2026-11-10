@@ -1762,6 +1762,11 @@ pub struct Build {
     /// store has not taken yet says so. Absent when the build has no release.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_outcome: Option<BuildReleaseOutcome>,
+    /// A release rehearsal: the build signs and checks every store
+    /// submission the real run would make, and submits nothing. Its findings
+    /// are at `GET /v1/builds/{build_id}/rehearsal`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rehearsal: bool,
 }
 
 /// The furthest-behind store release of a build, in words a build list can
@@ -1904,6 +1909,11 @@ pub struct CreateBuildRequest {
     /// with several workflows and no default needs one named here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<String>,
+    /// Rehearse a release: build and sign as the real run would, check each
+    /// store submission with the store, and submit nothing. The pipeline
+    /// should publish to a store; with none there is nothing to check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rehearsal: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -5224,6 +5234,67 @@ pub struct RunnerPublishPlan {
     /// until it is lifted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub frozen: Option<String>,
+    /// A rehearsal build: what to check instead of upload. `google_play` and
+    /// `app_store` above are then empty and `disabled` is set, so a runner
+    /// that predates rehearsals uploads nothing, even for a file that names
+    /// its own service account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rehearsal: Option<RunnerRehearsalPlan>,
+}
+
+/// The store submissions a rehearsal checks without making them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct RunnerRehearsalPlan {
+    /// Publishing is off for the build's workflow, so there is nothing to
+    /// check. The top-level `disabled` is always set for a rehearsal.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<GooglePlayPublishConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<RunnerAppStorePublishPlan>,
+}
+
+/// One check a rehearsal ran, as the runner reports it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct RehearsalCheck {
+    /// Stable identifier, such as `play_validate` or `asc_validate`.
+    pub code: String,
+    pub level: ReadinessLevel,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// `POST /v1/runners/{runner_id}/jobs/{job_id}/rehearsal` — what a
+/// rehearsal found for one store.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerRehearsalReport {
+    pub store: PublishStore,
+    #[schema(required = true)]
+    pub checks: Vec<RehearsalCheck>,
+}
+
+/// The rehearsal findings for a store: the runner's checks plus what Oore
+/// reads from the store itself.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerRehearsalReportResponse {
+    #[schema(required = true)]
+    pub checks: Vec<StoreReadinessItem>,
+}
+
+/// `GET /v1/builds/{build_id}/rehearsal`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildRehearsalResponse {
+    pub build_id: String,
+    /// Blocking findings first, then warnings, then passed checks.
+    #[schema(required = true)]
+    pub checks: Vec<StoreReadinessItem>,
+    /// The stores whose submission was checked. A store the pipeline
+    /// publishes to but that is missing here was not reached, such as when
+    /// the build failed first.
+    #[schema(required = true)]
+    pub stores: Vec<ReleaseStore>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
