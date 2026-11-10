@@ -118,12 +118,15 @@ runner's next build.
 
 ## Environment variables
 
-The runner reads these variables from its process environment. A runner that
-the Complete or Runner profile manages runs as a launchd service with a fixed
-environment of `HOME`, `PATH`, and one runner-internal path. `oore setup` and
-`oore update` refuse to manage that service when its definition has other
-variables, so these variables apply only to a runner started with
-`oore runner start`.
+The runner reads these variables from its process environment, then from
+`runner.env` beside `runner.json` for any the environment does not set. A
+runner that the Complete or Runner profile manages runs as a launchd service
+with a fixed environment, which `oore setup` and `oore update` check, so set
+them there with
+[`oore runner config set`](/reference/cli/oore-runner#oore-runner-config) and
+restart the runner. The file holds one `KEY=value` per line and only the
+variables below. The runner reports a file it cannot read or that names
+another key in its log, and starts without it.
 
 | Variable                            | Default                                              | Role                                                                                                                             |
 | ----------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
