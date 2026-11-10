@@ -1911,7 +1911,7 @@ pub struct CreateBuildRequest {
     pub workflow: Option<String>,
     /// Rehearse a release: build and sign as the real run would, check each
     /// store submission with the store, and submit nothing. The pipeline
-    /// should publish to a store; with none there is nothing to check.
+    /// must publish to at least one store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rehearsal: Option<bool>,
 }

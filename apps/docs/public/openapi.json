@@ -19297,7 +19297,7 @@
               "boolean",
               "null"
             ],
-            "description": "Rehearse a release: build and sign as the real run would, check each\nstore submission with the store, and submit nothing. The pipeline\nshould publish to a store; with none there is nothing to check."
+            "description": "Rehearse a release: build and sign as the real run would, check each\nstore submission with the store, and submit nothing. The pipeline\nmust publish to at least one store."
           },
           "store_notes": {
             "type": [
