@@ -39,6 +39,7 @@ fn play(track: &str, rollout_percent: Option<f64>, draft: bool) -> GooglePlayPub
         release_notes: GooglePlayReleaseNotesSource::default(),
         release_notes_locale: "en-US".to_string(),
         release_notes_dir: None,
+        listing_dir: None,
         upload_mapping: true,
         in_app_update_priority: None,
         rollout_policy: None,
@@ -58,6 +59,8 @@ fn app_store(groups: &[&str]) -> AppStorePublishConfig {
         release_type: AppStoreReleaseType::default(),
         earliest_release_date: None,
         release_notes_dir: None,
+        listing_dir: None,
+        listing: Vec::new(),
         cancel_previous_submission: false,
         preflight: PublishPreflight::default(),
     }

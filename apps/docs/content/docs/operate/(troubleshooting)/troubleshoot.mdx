@@ -70,6 +70,24 @@ platform checks on the Runner Mac:
 oore doctor --all
 ```
 
+## A build failed
+
+The top of a failed build's page shows the log line that explains the
+failure. For common failures, such as a Gradle task, a CocoaPods version
+conflict, `pub` version solving, a locked keychain, a wrong keystore
+password, a missing SDK license or a full disk, Oore adds the **Likely
+cause** and what usually fixes it. Select **Show in Logs** to open the line
+with the lines around it.
+
+Select **Compare with the last good build** to see the newest succeeded
+build of the same pipeline, on the same branch when there is one, side by
+side with the failed one: commit, branch, version, runner, workflow and each
+step's result and time. What differs is in bold.
+
+When a test fails and then passes on the same commit, it is flaky rather
+than broken. **Insights** lists those tests under **Trends**, with the steps
+whose middle time grew by a quarter or more over the period.
+
 ## A push does not start a build
 
 Check whether GitHub or GitLab delivered the webhook and why Oore skipped it.

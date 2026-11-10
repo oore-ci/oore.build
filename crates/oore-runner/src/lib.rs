@@ -7233,6 +7233,15 @@ async fn run_publish_steps(
                     },
                     None => None,
                 };
+                let listing = match app_store.config.listing_dir.as_deref() {
+                    Some(dir) => match app_store_upload::read_listing_dir(workspace, dir) {
+                        Ok(listing) => listing,
+                        Err(error) => {
+                            break 'upload Err(error.context("failed to read listing_dir"));
+                        }
+                    },
+                    None => None,
+                };
                 // Once altool starts, Apple may get the build; don't start
                 // it for a build that has already stopped.
                 match check_build_active(client, daemon_url, config, &job.build_id, authority)
@@ -7245,7 +7254,7 @@ async fn run_publish_steps(
                         uploaded = app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir) => {
                             uploaded.and_then(|message| {
                                 app_store_upload::publish_result(metadata, &app_store.config, release_notes)
-                                    .map(|result| (message, result))
+                                    .map(|result| (message, RunnerPublishResult { listing, ..result }))
                             })
                         }
                         _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
@@ -10154,6 +10163,7 @@ mod publish_report_tests {
             testflight_groups: None,
             held_for_review: false,
             release_notes: None,
+            listing: None,
         };
         report_publish_result(
             &reqwest::Client::new(),
@@ -10654,6 +10664,7 @@ mod file_publish_tests {
             google_play: Some(play_settings("production", None)),
             app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
             disabled: false,
+            frozen: None,
         };
         let from_file = plan.publish.apply(settings);
         // What the runner gets when the settings themselves say it.
@@ -10662,6 +10673,7 @@ mod file_publish_tests {
             google_play: Some(play_settings("closed", Some(20.0))),
             app_store: Some(app_store_settings(testflight(&["Beta"]))),
             disabled: false,
+            frozen: None,
         };
         assert_eq!(from_file.changelog, equivalent.changelog);
         assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
@@ -10691,6 +10703,7 @@ mod file_publish_tests {
                 google_play: Some(play_settings("internal", None)),
                 app_store: None,
                 disabled: false,
+                frozen: None,
             });
             assert_eq!(
                 effective.google_play.unwrap(),

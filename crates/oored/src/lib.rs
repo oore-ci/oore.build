@@ -11,8 +11,10 @@ pub mod audit_logs;
 pub mod auth;
 pub mod background;
 pub mod build_analysis;
+pub mod build_failure_hint;
 pub mod build_feedback;
 pub mod build_insights;
+pub mod build_trends;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
@@ -43,6 +45,7 @@ pub mod project_rbac;
 pub mod projects;
 pub mod queue_estimate;
 pub mod rbac;
+pub mod release_freezes;
 pub mod release_store;
 pub mod releases;
 pub mod repository_config_files;
@@ -2972,6 +2975,7 @@ pub async fn build_router_with_recovery(
             "/v1/builds/insights",
             get(build_insights::get_build_insights),
         )
+        .route("/v1/builds/trends", get(build_trends::get_build_trends))
         .route("/v1/store-vitals", get(store_vitals::get_store_vitals))
         .route(
             "/v1/store-vitals/refresh",
@@ -2982,6 +2986,10 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))
         .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
+        .route(
+            "/v1/builds/{build_id}/failure-hint",
+            get(build_failure_hint::get_build_failure_hint),
+        )
         .route(
             "/v1/builds/{build_id}/retry-step",
             post(step_retry::retry_build_step),
@@ -3024,6 +3032,14 @@ pub async fn build_router_with_recovery(
             post(releases::release_action),
         )
         .route("/v1/release-events", get(releases::list_release_activity))
+        .route(
+            "/v1/release-freezes",
+            get(release_freezes::list_release_freezes).put(release_freezes::set_release_freeze),
+        )
+        .route(
+            "/v1/release-freezes/{freeze_id}",
+            axum::routing::delete(release_freezes::delete_release_freeze),
+        )
         .route(
             "/v1/projects/{project_id}/environments",
             get(environments::list_project_environments)

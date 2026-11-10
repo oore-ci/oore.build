@@ -1460,6 +1460,13 @@ pub(crate) async fn run_rollout_tick(
         if !due || release.awaiting_approval {
             continue;
         }
+        // A freeze holds scheduled steps too; the step is taken once lifted.
+        if crate::release_freezes::active_freeze(deps.pool, &release.project_id)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
         let Some(fraction) = release.policy.next_step(release.rollout_fraction) else {
             continue;
         };
@@ -1805,6 +1812,19 @@ pub async fn release_action(
         _ => ProjectPermission::ManageReleases,
     };
     require_project_permission(&role, permission)?;
+    // A freeze holds anything that reaches more users; pausing and halting
+    // stay possible.
+    if matches!(
+        action,
+        ReleaseAction::Raise
+            | ReleaseAction::Resume
+            | ReleaseAction::Complete
+            | ReleaseAction::Approve
+            | ReleaseAction::ReleaseNow
+            | ReleaseAction::Resubmit
+    ) {
+        crate::release_freezes::ensure_not_frozen(&state.db, &current.project_id).await?;
+    }
     if request.fraction.is_some() && action != ReleaseAction::Raise {
         return Err(api_err(
             StatusCode::BAD_REQUEST,

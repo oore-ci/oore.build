@@ -5,6 +5,9 @@ import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 import type { Release } from '@oore/client/models'
 
 import { ReleaseActions } from '@/components/releases/release-actions'
+import { ReleaseCalendar } from '@/components/releases/release-calendar'
+import { ReleaseFreezeControl } from '@/components/releases/release-freeze'
+import { RecordReleaseButton } from '@/components/releases/record-release-dialog'
 import { ReleaseStateBadge } from '@/components/releases/release-rollout'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
@@ -226,7 +229,13 @@ function VersionRow({ group }: { group: VersionGroup }) {
  * An app's releases: where each version is on every store track, then each
  * version across both stores with its controls.
  */
-export function ProjectReleasesTab({ projectId }: { projectId: string }) {
+export function ProjectReleasesTab({
+  projectId,
+  canManage = false,
+}: {
+  projectId: string
+  canManage?: boolean
+}) {
   const releasesQuery = useReleases({ project_id: projectId, limit: 200 })
   const latestBuildQuery = useBuilds({
     project_id: projectId,
@@ -247,6 +256,10 @@ export function ProjectReleasesTab({ projectId }: { projectId: string }) {
   return (
     <TabsContent value="releases">
       <Stack gap={4} className="pt-2">
+        <Row gap={2} className="flex-wrap justify-end empty:hidden">
+          <ReleaseFreezeControl projectId={projectId} canManage={canManage} />
+          {canManage ? <RecordReleaseButton projectId={projectId} /> : null}
+        </Row>
         {releasesQuery.error ? (
           <Alert variant="destructive">
             <AlertDescription className="flex items-center justify-between gap-3">
@@ -311,6 +324,7 @@ export function ProjectReleasesTab({ projectId }: { projectId: string }) {
                 </CardContent>
               </Card>
             </div>
+            <ReleaseCalendar releases={releases} />
           </>
         )}
       </Stack>

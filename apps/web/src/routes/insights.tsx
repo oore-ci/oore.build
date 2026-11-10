@@ -6,6 +6,7 @@ import {
   requireAuthOrRedirect,
 } from '@/lib/instance-context'
 import { DashboardBuildHealth } from '@/components/dashboard-build-health'
+import { DashboardBuildTrends } from '@/components/dashboard-build-trends'
 import { DashboardProjectHealth } from '@/components/dashboard-project-health'
 import { DashboardStoreHealth } from '@/components/dashboard-store-health'
 import PageHeader from '@/components/page-header'
@@ -31,7 +32,8 @@ export const Route = createFileRoute('/insights')({
 
 /**
  * The slower look that used to sit at the bottom of Home: build health over
- * a period, health per app and the stores' crash numbers.
+ * a period, trends across builds, health per app and the stores' crash
+ * numbers.
  */
 function InsightsPage() {
   const [days, setDays] = useState<BuildInsightsWindow>(7)
@@ -58,6 +60,9 @@ function InsightsPage() {
           onDaysChange={setDays}
           onlineRunners={runnersQuery.data}
         />
+        <div id="trends" className="scroll-mt-20">
+          <DashboardBuildTrends days={days} />
+        </div>
         <div id="app-health" className="scroll-mt-20">
           <DashboardProjectHealth days={days} />
         </div>

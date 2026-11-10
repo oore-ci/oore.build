@@ -2151,6 +2151,55 @@
         ]
       }
     },
+    "/v1/builds/trends": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get build trends",
+        "description": "Tests that failed and then passed on the same commit, and build steps whose median run time grew, across apps the caller can read.",
+        "operationId": "get_build_trends",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Window length in days: 7, 14, 30 (default) or 90",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Build trends",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildTrendsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}": {
       "get": {
         "tags": [
@@ -2404,6 +2453,54 @@
           },
           "409": {
             "description": "Build not in cancellable state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/failure-hint": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get a failed build's likely cause",
+        "description": "The log line that explains a failed build, with the likely cause and fix. No hint for a build that did not fail or whose log has no line that stands out.",
+        "operationId": "get_build_failure_hint",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Failure hint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildFailureHintResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -9313,6 +9410,138 @@
           },
           "400": {
             "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/release-freezes": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "List release freezes",
+        "description": "The instance-wide freeze and the freezes of apps the caller can read. While a freeze holds an app, store uploads are skipped, promotions and rollout changes that reach more users are refused, and scheduled rollout steps wait.",
+        "operationId": "list_release_freezes",
+        "responses": {
+          "200": {
+            "description": "Release freezes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReleaseFreezesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Freeze releases",
+        "description": "Freeze one app (maintainer) or every app (instance owner or admin, no project_id). Freezing again replaces the reason.",
+        "operationId": "set_release_freeze",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetReleaseFreezeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The freeze",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseFreeze"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/release-freezes/{freeze_id}": {
+      "delete": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Lift a release freeze",
+        "operationId": "delete_release_freeze",
+        "parameters": [
+          {
+            "name": "freeze_id",
+            "in": "path",
+            "description": "Freeze ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Lifted"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Freeze not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -16433,6 +16662,48 @@
           "app_store"
         ]
       },
+      "AppStoreListing": {
+        "type": "object",
+        "description": "One language of an App Store listing, read from the repository. Absent\nfields are left as they are in App Store Connect.",
+        "required": [
+          "locale"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "keywords": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "marketing_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "promotional_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "support_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "AppStorePublishConfig": {
         "type": "object",
         "description": "App Store publishing settings for a pipeline, stored as the `app_store`\npublish target. Uploads use the App Store Connect API key from the\npipeline's iOS signing settings and require the `app_store` export method.",
@@ -16458,6 +16729,20 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "listing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppStoreListing"
+            },
+            "description": "The listing the runner read from `listing_dir` for this upload."
+          },
+          "listing_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A repository directory with the store listing in fastlane's layout,\n`<locale>/description.txt`, `keywords.txt`, `promotional_text.txt`,\n`marketing_url.txt` and `support_url.txt`, such as\n`fastlane/metadata`. Each submitted version gets it."
           },
           "phased_release": {
             "type": "boolean",
@@ -17670,6 +17955,65 @@
           }
         }
       },
+      "BuildFailureHint": {
+        "type": "object",
+        "description": "The first line of a failed build's log that explains the failure, with\nthe likely cause.",
+        "required": [
+          "line",
+          "sequence",
+          "category",
+          "cause"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "`gradle`, `xcode`, `cocoapods`, `signing`, `dart`, `flutter`,\n`network`, `disk` or `other`."
+          },
+          "cause": {
+            "type": "string",
+            "description": "What probably went wrong, in plain words."
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What usually fixes it."
+          },
+          "line": {
+            "type": "string",
+            "description": "The log line, trimmed."
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its sequence in the build log, to jump to it."
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The step whose log the line is in."
+          }
+        }
+      },
+      "BuildFailureHintResponse": {
+        "type": "object",
+        "properties": {
+          "hint": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildFailureHint",
+                "description": "Absent when the build did not fail or no line stood out."
+              }
+            ]
+          }
+        }
+      },
       "BuildFeedback": {
         "type": "object",
         "required": [
@@ -18334,6 +18678,34 @@
             "format": "int64"
           },
           "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildTrendsResponse": {
+        "type": "object",
+        "required": [
+          "window_days",
+          "flaky_tests",
+          "slower_steps"
+        ],
+        "properties": {
+          "flaky_tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlakyTest"
+            },
+            "description": "Most occurrences first, at most 20."
+          },
+          "slower_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlowerStep"
+            },
+            "description": "Largest slowdown first, at most 10."
+          },
+          "window_days": {
             "type": "integer",
             "format": "int64"
           }
@@ -20049,6 +20421,67 @@
           }
         }
       },
+      "FlakyTest": {
+        "type": "object",
+        "description": "A test that failed and then passed on the same commit, so the failure\nwas not the code's.",
+        "required": [
+          "project_id",
+          "project_name",
+          "pipeline_id",
+          "pipeline_name",
+          "suite",
+          "name",
+          "occurrences",
+          "failed_build_id",
+          "failed_build_number",
+          "passed_build_id",
+          "passed_build_number",
+          "last_seen_at"
+        ],
+        "properties": {
+          "failed_build_id": {
+            "type": "string"
+          },
+          "failed_build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_seen_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "occurrences": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Times it failed and then passed on the same commit in the window."
+          },
+          "passed_build_id": {
+            "type": "string"
+          },
+          "passed_build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "suite": {
+            "type": "string"
+          }
+        }
+      },
       "FrontendPairRequest": {
         "type": "object",
         "required": [
@@ -20374,6 +20807,13 @@
             "format": "int32",
             "description": "In-app update priority, 0 to 5.",
             "minimum": 0
+          },
+          "listing_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A repository directory with the store listing in fastlane's layout,\n`<locale>/title.txt`, `short_description.txt`,\n`full_description.txt` and `video.txt`, such as\n`fastlane/metadata/android`. Sent with every upload."
           },
           "package_name": {
             "type": [
@@ -21669,6 +22109,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ReleaseActivityEvent"
+            }
+          }
+        }
+      },
+      "ListReleaseFreezesResponse": {
+        "type": "object",
+        "required": [
+          "freezes"
+        ],
+        "properties": {
+          "freezes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFreeze"
             }
           }
         }
@@ -24360,6 +24814,46 @@
           }
         }
       },
+      "ReleaseFreeze": {
+        "type": "object",
+        "description": "Store submissions and promotions are held, for one app or the whole\ninstance.",
+        "required": [
+          "id",
+          "reason",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent for a freeze of the whole instance."
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "ReleaseHealth": {
         "type": "string",
         "enum": [
@@ -25470,6 +25964,13 @@
             "type": "boolean",
             "description": "The build's workflow has publishing turned off in the pipeline's\nworkflow settings, so nothing uploads, whatever the file says."
           },
+          "frozen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A release freeze holds store uploads; its reason. Nothing uploads\nuntil it is lifted."
+          },
           "google_play": {
             "oneOf": [
               {
@@ -25497,6 +25998,16 @@
           "held_for_review": {
             "type": "boolean",
             "description": "Google Play only took the edit with `changesNotSentForReview=true`:\nthe release waits in Play Console until someone sends it for review."
+          },
+          "listing": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AppStoreListing"
+            },
+            "description": "App Store uploads: the store listing read from the repository\n(`listing_dir`), applied to the version Oore submits."
           },
           "package_name": {
             "type": "string"
@@ -25949,6 +26460,24 @@
               "null"
             ],
             "description": "What to test, up to 1000 characters. Shown in the email."
+          }
+        }
+      },
+      "SetReleaseFreezeRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app to freeze; absent freezes the whole instance."
+          },
+          "reason": {
+            "type": "string"
           }
         }
       },
@@ -26533,6 +27062,52 @@
           "member_id": {
             "type": "string",
             "description": "Slack member ID, such as `U0123ABCD`."
+          }
+        }
+      },
+      "SlowerStep": {
+        "type": "object",
+        "description": "A build step whose run time grew over the window.",
+        "required": [
+          "project_id",
+          "project_name",
+          "pipeline_id",
+          "pipeline_name",
+          "step",
+          "before_seconds",
+          "after_seconds",
+          "builds"
+        ],
+        "properties": {
+          "after_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Median seconds in the second half of the window."
+          },
+          "before_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Median seconds in the first half of the window."
+          },
+          "builds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Succeeded builds the medians come from."
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
           }
         }
       },

@@ -1767,6 +1767,7 @@ pub async fn promote_build(
     Json(request): Json<CreatePromotionRequest>,
 ) -> ApiResult<EnvironmentPromotion> {
     let role = role_with(&state, &auth, &project_id, ProjectPermission::Read).await?;
+    crate::release_freezes::ensure_not_frozen(&state.db, &project_id).await?;
     request_promotion(
         ReleaseDeps::from(&*state),
         &project_id,
@@ -1786,6 +1787,7 @@ pub async fn approve_promotion(
     Path((project_id, promotion_id)): Path<(String, String)>,
     body: Option<Json<PromotionDecisionRequest>>,
 ) -> ApiResult<EnvironmentPromotion> {
+    crate::release_freezes::ensure_not_frozen(&state.db, &project_id).await?;
     decide(state, auth, project_id, promotion_id, body, true).await
 }
 

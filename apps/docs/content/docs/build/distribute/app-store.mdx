@@ -131,6 +131,30 @@ are not left without the app.
 Pause, resume and complete on the release change Apple's phased release.
 Apple sets the percentages, so raising a step is not available.
 
+## Store listing from the repository
+
+To keep the description and keywords in Git, set **Store listing from the
+repository** in the pipeline's App Store settings to a directory in
+fastlane's layout, such as `fastlane/metadata`:
+
+```text
+fastlane/metadata/
+  en-US/
+    description.txt       # at most 4000 characters
+    keywords.txt          # at most 100 characters, comma separated
+    promotional_text.txt  # at most 170 characters
+    marketing_url.txt
+    support_url.txt
+    release_notes.txt     # read by "Notes from the repository"
+```
+
+The runner reads the files when it uploads the build, and Oore sets them on
+the version it submits, with "What's New". A file you leave out keeps what
+App Store Connect has, and `review_information` is skipped. A file over
+Apple's limit fails the upload. If Apple refuses a field, the submission goes
+ahead and the release shows the refusal as a warning. Screenshots are not
+uploaded; change them in App Store Connect.
+
 ## Pre-flight
 
 Before the upload, the **Publishing** tab and the runner check what Apple

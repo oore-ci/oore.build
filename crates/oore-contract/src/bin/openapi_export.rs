@@ -191,6 +191,11 @@ use utoipa::{
         operations::list_builds,
         operations::list_build_actors,
         operations::get_build_insights,
+        operations::get_build_trends,
+        operations::get_build_failure_hint,
+        operations::list_release_freezes,
+        operations::set_release_freeze,
+        operations::delete_release_freeze,
         operations::get_build,
         operations::list_build_installs,
         operations::list_build_shares,
@@ -593,6 +598,15 @@ use utoipa::{
         oore_contract::ProjectBuildInsights,
         oore_contract::FailingPipelineInsights,
         oore_contract::BuildInsightsResponse,
+        oore_contract::BuildTrendsResponse,
+        oore_contract::FlakyTest,
+        oore_contract::SlowerStep,
+        oore_contract::BuildFailureHint,
+        oore_contract::BuildFailureHintResponse,
+        oore_contract::ReleaseFreeze,
+        oore_contract::SetReleaseFreezeRequest,
+        oore_contract::ListReleaseFreezesResponse,
+        oore_contract::AppStoreListing,
         oore_contract::CancelBuildResponse,
         oore_contract::BuildApprovalState,
         oore_contract::BuildApproval,
@@ -2892,6 +2906,34 @@ mod operations {
     )]
     pub(super) fn get_build_insights() {}
 
+    /// Get build trends
+    ///
+    /// Tests that failed and then passed on the same commit, and build steps whose median run time grew, across apps the caller can read.
+    #[utoipa::path(get, path = "/v1/builds/trends", tag = "Builds",
+        params(
+            ("days" = Option<i64>, Query, description = "Window length in days: 7, 14, 30 (default) or 90"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build trends", body = BuildTrendsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_trends() {}
+
+    /// Get a failed build's likely cause
+    ///
+    /// The log line that explains a failed build, with the likely cause and fix. No hint for a build that did not fail or whose log has no line that stands out.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/failure-hint", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Failure hint", body = BuildFailureHintResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_failure_hint() {}
+
     /// Get store vitals
     ///
     /// Google Play crash and ANR rates with top issues, and App Store hang
@@ -3536,6 +3578,43 @@ mod operations {
         )
     )]
     pub(super) fn list_release_events() {}
+
+    /// List release freezes
+    ///
+    /// The instance-wide freeze and the freezes of apps the caller can read. While a freeze holds an app, store uploads are skipped, promotions and rollout changes that reach more users are refused, and scheduled rollout steps wait.
+    #[utoipa::path(get, path = "/v1/release-freezes", tag = "Releases",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release freezes", body = ListReleaseFreezesResponse),
+        )
+    )]
+    pub(super) fn list_release_freezes() {}
+
+    /// Freeze releases
+    ///
+    /// Freeze one app (maintainer) or every app (instance owner or admin, no project_id). Freezing again replaces the reason.
+    #[utoipa::path(put, path = "/v1/release-freezes", tag = "Releases",
+        request_body = SetReleaseFreezeRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The freeze", body = ReleaseFreeze),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) fn set_release_freeze() {}
+
+    /// Lift a release freeze
+    #[utoipa::path(delete, path = "/v1/release-freezes/{freeze_id}", tag = "Releases",
+        params(("freeze_id" = String, Path, description = "Freeze ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Lifted"),
+            (status = 403, description = "Forbidden", body = ApiError),
+            (status = 404, description = "Freeze not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_release_freeze() {}
 
     // ── Environments ──
 

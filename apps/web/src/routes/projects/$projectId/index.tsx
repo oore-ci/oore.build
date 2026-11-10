@@ -1,3 +1,4 @@
+import { useAuthStore } from '@/stores/auth-store'
 import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -240,6 +241,7 @@ function ProjectDetailPage() {
     'instance_settings:write',
     'instance_settings:read',
   ])
+  const instanceRole = useAuthStore((s) => s.user?.role)
   const projectRole = data?.current_user_role ?? data?.project.current_user_role
   const canWriteProjects = hasProjectPermission(projectRole, 'projects:write')
   const canDeleteProjects = hasProjectPermission(projectRole, 'projects:delete')
@@ -250,6 +252,7 @@ function ProjectDetailPage() {
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const canManageAccess = projectRole === 'maintainer'
   const canManageReleases = projectRole === 'maintainer'
+  const isInstanceAdmin = instanceRole === 'owner' || instanceRole === 'admin'
   const canOperateReleases =
     projectRole === 'maintainer' || projectRole === 'developer'
   const pipelineCount = search.pipelineQ
@@ -675,7 +678,10 @@ function ProjectDetailPage() {
 
         {activeTab === 'releases' ? (
           <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-            <ProjectReleasesTab projectId={projectId} />
+            <ProjectReleasesTab
+              projectId={projectId}
+              canManage={canManageReleases || isInstanceAdmin}
+            />
           </Suspense>
         ) : null}
 

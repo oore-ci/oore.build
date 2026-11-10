@@ -11,7 +11,8 @@ use oore_contract::{
     RunnerPublishResult,
 };
 use oore_google_play::{
-    CommitOutcome, LocalizedText, MAX_RELEASE_NOTES_CHARS, PlayEdits, ReleaseStatus, TrackRelease,
+    CommitOutcome, Listing, LocalizedText, MAX_FULL_DESCRIPTION_CHARS, MAX_RELEASE_NOTES_CHARS,
+    MAX_SHORT_DESCRIPTION_CHARS, MAX_TITLE_CHARS, PlayEdits, ReleaseStatus, TrackRelease,
     access_token, is_play_rejection, play_track_name, read_aab_manifest,
 };
 
@@ -144,6 +145,85 @@ fn release_notes(
     }
 }
 
+/// Reads one listing file, `None` when it is missing or empty; fails when
+/// it is longer than Play takes, so a listing is never cut short.
+fn listing_field(
+    dir: &Path,
+    file: &str,
+    max_chars: Option<usize>,
+) -> anyhow::Result<Option<String>> {
+    let path = dir.join(file);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if let Some(max) = max_chars
+        && text.chars().count() > max
+    {
+        bail!(
+            "{} is {} characters; Google Play takes at most {max}",
+            path.display(),
+            text.chars().count()
+        );
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// Reads the store listing in fastlane's layout: `<dir>/<locale>/title.txt`,
+/// `short_description.txt`, `full_description.txt` and `video.txt`.
+pub(crate) fn read_play_listing_dir(
+    workspace: &Path,
+    relative: &str,
+) -> anyhow::Result<Vec<Listing>> {
+    let canonical_workspace = workspace.canonicalize()?;
+    let dir = workspace
+        .join(relative)
+        .canonicalize()
+        .with_context(|| format!("store listing directory {relative} does not exist"))?;
+    if !dir.starts_with(&canonical_workspace) {
+        bail!("store listing directory {relative} resolves outside the workspace");
+    }
+    let mut listings = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(language) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let listing = Listing {
+            language: language.to_string(),
+            title: listing_field(&path, "title.txt", Some(MAX_TITLE_CHARS))?,
+            short_description: listing_field(
+                &path,
+                "short_description.txt",
+                Some(MAX_SHORT_DESCRIPTION_CHARS),
+            )?,
+            full_description: listing_field(
+                &path,
+                "full_description.txt",
+                Some(MAX_FULL_DESCRIPTION_CHARS),
+            )?,
+            video: listing_field(&path, "video.txt", None)?,
+        };
+        if listing.title.is_some()
+            || listing.short_description.is_some()
+            || listing.full_description.is_some()
+            || listing.video.is_some()
+        {
+            listings.push(listing);
+        }
+    }
+    listings.sort_by(|a, b| a.language.cmp(&b.language));
+    Ok(listings)
+}
+
 /// Status and user fraction for the initial release.
 fn release_status(config: &GooglePlayPublishConfig) -> (ReleaseStatus, Option<f64>) {
     if config.draft {
@@ -250,6 +330,10 @@ pub(crate) async fn publish_to_google_play(
     let track = play_track_name(&config.track);
     let (status, user_fraction) = release_status(config);
     let notes = release_notes(workspace, config, changelog)?;
+    let listings = match &config.listing_dir {
+        Some(dir) => read_play_listing_dir(workspace, dir)?,
+        None => Vec::new(),
+    };
     let mapping = config
         .upload_mapping
         .then(|| mapping_for_bundle(workspace, &bundle))
@@ -289,6 +373,16 @@ pub(crate) async fn publish_to_google_play(
                 );
             }
             None => {}
+        }
+        for listing in &listings {
+            edits.update_listing(listing).await?;
+        }
+        if !listings.is_empty() {
+            let languages: Vec<&str> = listings.iter().map(|l| l.language.as_str()).collect();
+            staged_log.push(format!(
+                "[oore-publish] Updated the store listing for {}",
+                languages.join(", ")
+            ));
         }
         edits
             .update_track(
@@ -376,6 +470,7 @@ pub(crate) async fn publish_to_google_play(
         testflight_groups: None,
         held_for_review,
         release_notes: None,
+        listing: None,
     })
 }
 
@@ -476,6 +571,26 @@ mod tests {
 
         config.release_notes_dir = Some("../outside".to_string());
         assert!(release_notes(&root, &config, None).is_err());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn store_listing_from_fastlane_metadata() {
+        let root = workspace("listing");
+        touch(&root, "metadata/en-US/title.txt", "Shop\n");
+        touch(&root, "metadata/en-US/full_description.txt", "Buy things.");
+        touch(&root, "metadata/de-DE/short_description.txt", "Kaufen");
+        touch(&root, "metadata/fr-FR/changelogs/1.txt", "ignored");
+        let listings = read_play_listing_dir(&root, "metadata").unwrap();
+        assert_eq!(listings.len(), 2);
+        assert_eq!(listings[0].language, "de-DE");
+        assert_eq!(listings[0].short_description.as_deref(), Some("Kaufen"));
+        assert_eq!(listings[1].title.as_deref(), Some("Shop"));
+        assert_eq!(listings[1].short_description, None);
+
+        touch(&root, "metadata/en-US/title.txt", &"a".repeat(31));
+        assert!(read_play_listing_dir(&root, "metadata").is_err());
+        assert!(read_play_listing_dir(&root, "../outside").is_err());
         fs::remove_dir_all(&root).ok();
     }
 

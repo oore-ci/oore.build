@@ -22,6 +22,7 @@ import { secretHandlersList } from './secrets'
 import { storeCredentialHandlers } from './store-credentials'
 import { signingHandlers } from './signing'
 import { personalHandlers } from './personal'
+import { releaseFreezeHandlers } from './release-freezes'
 import { testerHandlers } from './testers'
 
 export const allHandlers = [
@@ -32,6 +33,8 @@ export const allHandlers = [
   ...userHandlers,
   ...projectHandlers,
   ...pipelineHandlers,
+  // Before builds: /v1/builds/trends would match /v1/builds/{build_id}.
+  ...releaseFreezeHandlers,
   ...buildHandlers,
   ...releaseHandlers,
   ...environmentHandlers,

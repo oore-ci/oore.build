@@ -2,6 +2,10 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { Release, ReleaseHistoryEntry } from '@oore/client/models'
 import { StoreErrorMessage } from '@/components/build-details/store-wait-alert'
 import { Row } from '@/components/layout/row'
+import {
+  HaltedRecovery,
+  HotfixButton,
+} from '@/components/releases/release-recovery'
 import { ReleaseActions } from '@/components/releases/release-actions'
 import { PromoteReleaseButton } from '@/components/environments/promote-release-button'
 import {
@@ -164,11 +168,15 @@ function ReleaseCard({
         </Stack>
         <Row gap={1} className="-mt-0.5">
           <PromoteReleaseButton release={current} />
+          {current.state !== 'halted' && current.allowed_actions.length ? (
+            <HotfixButton release={current} />
+          ) : null}
           <ReleaseActions release={current} />
         </Row>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <StoreActionNotice release={current} />
+        <HaltedRecovery release={current} />
         {isAdoptedRelease(current) ? (
           <Text variant="muted">
             Found in{' '}

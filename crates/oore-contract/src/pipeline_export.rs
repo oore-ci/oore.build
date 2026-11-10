@@ -699,6 +699,7 @@ mod tests {
             release_notes: GooglePlayReleaseNotesSource::default(),
             release_notes_locale: "en-US".to_string(),
             release_notes_dir: None,
+            listing_dir: None,
             upload_mapping: true,
             in_app_update_priority: None,
             rollout_policy: None,
@@ -718,6 +719,8 @@ mod tests {
             release_type: AppStoreReleaseType::default(),
             earliest_release_date: None,
             release_notes_dir: None,
+            listing_dir: None,
+            listing: Vec::new(),
             cancel_previous_submission: false,
             preflight: PublishPreflight::default(),
         }
