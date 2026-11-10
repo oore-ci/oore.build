@@ -40,7 +40,7 @@ import { BuildProgressStrip } from './build-progress-strip'
 import { QueuedBuildRunners } from './queued-build-runners'
 import TriggerBuildDrawer from '@/components/trigger-build-drawer'
 import { Stack } from '@/components/layout/stack'
-import { buildProgress } from '@/lib/build-identity'
+import { buildProgress, queueLabel } from '@/lib/build-identity'
 import { AnalyzerPanel } from './analyzer-panel'
 import { TestsPanel } from './tests-panel'
 import type {
@@ -199,8 +199,11 @@ export function BuildDetailPage({
   const nowSeconds = useTime((now) =>
     isTerminal ? Math.floor(now / 60_000) * 60 : Math.floor(now / 1000),
   )
+  // Live events refresh these on every build change; polling is the fallback.
+  const subPoll = (ms: number) =>
+    isTerminal ? false : liveEvents ? LIVE_FALLBACK_POLL_MS : ms
   const artifactsQuery = useArtifacts(buildId, {
-    refetchInterval: isTerminal ? false : 3000,
+    refetchInterval: subPoll(3000),
   })
   const artifacts = artifactsQuery.data?.artifacts ?? []
   const { refetch: refetchArtifacts } = artifactsQuery
@@ -214,13 +217,13 @@ export function BuildDetailPage({
   const feedbackQuery = useBuildFeedback(buildId)
   const feedback = feedbackQuery.data?.feedback ?? NO_FEEDBACK
   const sizesQuery = useBuildSizeReport(buildId, {
-    refetchInterval: isTerminal ? false : 5000,
+    refetchInterval: subPoll(5000),
   })
   const testsQuery = useBuildTests(buildId, {
-    refetchInterval: isTerminal ? false : 5000,
+    refetchInterval: subPoll(5000),
   })
   const analysisQuery = useBuildAnalysis(buildId, {
-    refetchInterval: isTerminal ? false : 5000,
+    refetchInterval: subPoll(5000),
   })
   const analysisCounts = analysisQuery.data?.analysis?.counts
   const hasAnalyzerTab =
@@ -355,6 +358,7 @@ export function BuildDetailPage({
           elapsedSeconds: nowSeconds - startedAt,
         })
       : null
+  const queueText = queueLabel(data?.queue)
   const [rerunDrawerOpen, setRerunDrawerOpen] = useState(false)
   const buildToRerun = data?.build
   const rerunPrefill = useMemo(
@@ -849,6 +853,11 @@ export function BuildDetailPage({
 
       {build.status === 'running' ? (
         <BuildProgressStrip progress={progress} stepLabel={runningStep} />
+      ) : null}
+      {build.status === 'queued' && queueText ? (
+        <Text variant="muted" role="status">
+          {queueText}
+        </Text>
       ) : null}
 
       {build.runner_policy_block_reason ? (

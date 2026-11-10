@@ -1,6 +1,7 @@
 import { Link, useLocation } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
+  Analytics01Icon,
   ArrowDown01Icon,
   CommandLineIcon,
   DashboardSquare02Icon,
@@ -44,6 +45,7 @@ export const WORKSPACE_ITEMS: Array<NavItem> = [
   { title: 'Home', to: '/', icon: DashboardSquare02Icon },
   { title: 'Apps', to: '/projects', icon: Folder02Icon },
   { title: 'Builds', to: '/builds', icon: CommandLineIcon },
+  { title: 'Insights', to: '/insights', icon: Analytics01Icon },
 ]
 
 /**

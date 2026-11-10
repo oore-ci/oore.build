@@ -13,9 +13,11 @@ import { demoPlayPublishEnabled } from './secrets'
 import { parseDemoJsonObject } from '../request'
 import type {
   AddProjectMemberRequest,
+  BuildPlatform,
   CreateProjectRequest,
   UpdateProjectMemberRequest,
 } from '@oore/client/models'
+import type { DemoProject } from '../state'
 
 const projectRoleSchema = z.enum(['maintainer', 'developer', 'viewer'])
 const projectMemberRequestSchema = z.toZod<AddProjectMemberRequest>()(
@@ -60,6 +62,44 @@ function demoSetupProgress(projectId: string) {
   }
 }
 
+const LIVE_STATES = new Set(['rolling', 'complete'])
+
+/** Adds the per-person and derived fields the backend computes. */
+function decorateProject<T extends DemoProject>(project: T, userId: string) {
+  const platforms = new Set<BuildPlatform>()
+  for (const pipeline of demoState.pipelines) {
+    if (pipeline.project_id !== project.id) continue
+    for (const platform of pipeline.execution_config.platforms) {
+      platforms.add(platform)
+    }
+  }
+  const lastBuild = demoState.builds
+    .filter((build) => build.project_id === project.id)
+    .reduce<number | undefined>(
+      (latest, build) => Math.max(latest ?? 0, build.created_at),
+      undefined,
+    )
+  const live = demoState.releases
+    .filter(
+      (release) =>
+        release.project_id === project.id &&
+        LIVE_STATES.has(release.state) &&
+        release.version_name,
+    )
+    .sort((left, right) => right.updated_at - left.updated_at)[0]
+  return {
+    ...project,
+    is_favorite: (demoState.favoriteProjects[userId] ?? []).includes(
+      project.id,
+    ),
+    platforms: (['android', 'ios', 'macos'] as const).filter((platform) =>
+      platforms.has(platform),
+    ),
+    last_build_at: lastBuild,
+    live_version: live?.version_name ?? undefined,
+  }
+}
+
 function hasProjectMembership(projectId: string, userId: string): boolean {
   return !!demoState.projectRoles[projectId]?.[userId]
 }
@@ -77,7 +117,14 @@ export const projectHandlers = [
     const persona = getDemoPersonaFromRequest(request)
     let projects = demoState.projects.flatMap((project) => {
       const role = getDemoProjectRole(persona, project.id)
-      return role ? [{ ...project, current_user_role: role }] : []
+      return role
+        ? [
+            {
+              ...decorateProject(project, persona.userId),
+              current_user_role: role,
+            },
+          ]
+        : []
     })
     const integrationId = url.searchParams.get('integration_id')
     if (integrationId) {
@@ -103,6 +150,14 @@ export const projectHandlers = [
     const sort = url.searchParams.get('sort')
     const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
     projects.sort((left, right) => {
+      if (sort === 'activity') {
+        return (
+          Number(right.is_favorite) - Number(left.is_favorite) ||
+          (right.last_build_at ?? right.created_at) -
+            (left.last_build_at ?? left.created_at) ||
+          left.id.localeCompare(right.id)
+        )
+      }
       const leftValue =
         sort === 'name'
           ? left.name.toLowerCase()
@@ -143,7 +198,10 @@ export const projectHandlers = [
       )
     }
     return HttpResponse.json({
-      project: { ...project, current_user_role: role },
+      project: {
+        ...decorateProject(project, persona.userId),
+        current_user_role: role,
+      },
       pipeline_count: demoState.pipelines.filter(
         (pipeline) => pipeline.project_id === project.id,
       ).length,

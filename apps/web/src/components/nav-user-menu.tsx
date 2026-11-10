@@ -5,8 +5,10 @@ import {
   Logout03Icon,
   ComputerIcon,
   Moon02Icon,
+  Notification03Icon,
   Sun03Icon,
 } from '@hugeicons/core-free-icons'
+import { Link } from '@tanstack/react-router'
 import { useTheme } from 'next-themes'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
@@ -249,6 +251,10 @@ export default function NavUserMenu({
               </DropdownMenuRadioGroup>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
+            <DropdownMenuItem render={<Link to="/account/notifications" />}>
+              <HugeiconsIcon icon={Notification03Icon} size={16} />
+              Notifications
+            </DropdownMenuItem>
             <DropdownMenuItem
               render={
                 <a

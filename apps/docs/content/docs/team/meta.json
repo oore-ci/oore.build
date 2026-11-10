@@ -1,5 +1,11 @@
 {
   "title": "Team and access",
   "pagesIndex": "index",
-  "pages": ["index", "(people)", "access", "notifications"]
+  "pages": [
+    "index",
+    "(people)",
+    "access",
+    "notifications",
+    "your-notifications"
+  ]
 }

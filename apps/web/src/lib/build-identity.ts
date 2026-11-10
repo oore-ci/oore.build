@@ -96,6 +96,33 @@ export function remainingLabel(remainingSeconds: number): string {
   return `about ${Math.round(remainingSeconds / 60)} min left`
 }
 
+/**
+ * Where a queued build stands: "2 builds ahead, about 9 min" or
+ * "Next in line". Null when the daemon sent no estimate.
+ */
+export function queueLabel(
+  queue:
+    | {
+        ahead: number
+        running: number
+        estimated_wait_seconds?: number | null
+      }
+    | null
+    | undefined,
+): string | null {
+  if (!queue) return null
+  const position =
+    queue.ahead === 0
+      ? queue.running > 0
+        ? 'Next in line once a runner frees up'
+        : 'Next in line'
+      : `${queue.ahead} build${queue.ahead === 1 ? '' : 's'} ahead`
+  const wait = queue.estimated_wait_seconds
+  if (wait == null) return position
+  if (wait < 60) return `${position}, under a minute`
+  return `${position}, about ${Math.round(wait / 60)} min`
+}
+
 /** Builds one webhook delivery started within this many seconds of each other. */
 const SAME_PUSH_WINDOW_SECONDS = 120
 

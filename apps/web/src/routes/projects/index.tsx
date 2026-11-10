@@ -59,6 +59,7 @@ interface ProjectsSearch {
 }
 
 const PROJECT_SORT_VALUES = new Set<ProjectSort>([
+  'activity',
   'created_at',
   'updated_at',
   'name',
@@ -109,7 +110,7 @@ function ProjectsListPage() {
   const navigate = Route.useNavigate()
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
-  const sort = search.sort ?? 'updated_at'
+  const sort = search.sort ?? 'activity'
   const direction = search.direction ?? 'desc'
   const projectsQuery = useProjects({
     search: search.q,

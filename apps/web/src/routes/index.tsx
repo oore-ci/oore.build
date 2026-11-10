@@ -19,9 +19,7 @@ import {
 } from '@/components/dashboard-builds'
 import { DashboardGettingStarted } from '@/components/dashboard-sections'
 import DashboardBuildIncident from '@/components/dashboard-build-incident'
-import { DashboardBuildHealth } from '@/components/dashboard-build-health'
-import { DashboardProjectHealth } from '@/components/dashboard-project-health'
-import { DashboardStoreHealth } from '@/components/dashboard-store-health'
+import { HomeInsightsSummary } from '@/components/home-insights-summary'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,12 +33,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useAttention } from '@/hooks/use-attention'
-import { useBuilds, type BuildInsightsWindow } from '@/hooks/use-builds'
+import { useBuilds } from '@/hooks/use-builds'
 import { useIntegrations } from '@/hooks/use-integrations'
-import {
-  canChangeApprovalPolicy,
-  useHasPermissions,
-} from '@/hooks/use-permissions'
+import { useHasPermissions } from '@/hooks/use-permissions'
 import { useProjects } from '@/hooks/use-projects'
 import { useReleaseEvents, useReleases } from '@/hooks/use-releases'
 import { useRunners } from '@/hooks/use-runners'
@@ -59,6 +54,8 @@ import { useListNavigation } from '@/hooks/use-list-navigation'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
+import { useBuildScope } from '@/stores/build-scope-store'
+import { BuildScopeToggle } from '@/components/build-scope-toggle'
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 const ReleaseBoard = lazy(() =>
@@ -387,10 +384,6 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   const [canWriteIntegrations, canWriteProjects, canWriteBuilds] =
     useHasPermissions(['integrations:write', 'projects:write', 'builds:write'])
   const attention = useAttention()
-  const canApprove = canChangeApprovalPolicy(
-    useAuthStore((s) => s.user?.role),
-    undefined,
-  )
 
   const scope = useFirstAppScope()
   const guidedProjectId = useFirstAppStore(
@@ -415,11 +408,11 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     },
   )
 
+  const buildScope = useBuildScope()
   const recentBuildsQuery = useBuilds(
-    { limit: 50 },
-    { select: selectDashboardBuilds },
+    { limit: 50, mine: buildScope.scope === 'mine' || undefined },
+    { select: selectDashboardBuilds, enabled: buildScope.resolved },
   )
-  const [insightsDays, setInsightsDays] = useState<BuildInsightsWindow>(7)
   const activeBuilds = recentBuildsQuery.data?.active ?? []
   const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
   const hasProjects = projects.length > 0
@@ -458,6 +451,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   if (
     projectsQuery.isLoading ||
     recentBuildsQuery.isLoading ||
+    !buildScope.resolved ||
     runnersQuery.isLoading
   ) {
     return (
@@ -476,6 +470,31 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
       <HugeiconsIcon icon={PlayIcon} data-icon="inline-start" />
       Run build
     </Button>
+  )
+
+  const homeRunBuild = !canShowRunBuild ? null : noOnlineRunners ? (
+    <Tooltip>
+      <TooltipTrigger render={<span tabIndex={0} />}>
+        {runBuildButton}
+      </TooltipTrigger>
+      <TooltipContent>
+        No runner is online, so a build would only wait.
+      </TooltipContent>
+    </Tooltip>
+  ) : (
+    <Suspense fallback={null}>
+      <TriggerBuildDrawer
+        description="Choose an app, pipeline and branch to build."
+        onBuildCreated={(buildId) => {
+          void navigate({
+            to: '/builds/$buildId',
+            params: { buildId },
+          })
+        }}
+      >
+        {runBuildButton}
+      </TriggerBuildDrawer>
+    </Suspense>
   )
 
   return (
@@ -499,29 +518,14 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
               : undefined
           }
           actions={
-            !canShowRunBuild ? undefined : noOnlineRunners ? (
-              <Tooltip>
-                <TooltipTrigger render={<span tabIndex={0} />}>
-                  {runBuildButton}
-                </TooltipTrigger>
-                <TooltipContent>
-                  No runner is online, so a build would only wait.
-                </TooltipContent>
-              </Tooltip>
-            ) : (
-              <Suspense fallback={null}>
-                <TriggerBuildDrawer
-                  description="Choose an app, pipeline and branch to build."
-                  onBuildCreated={(buildId) => {
-                    void navigate({
-                      to: '/builds/$buildId',
-                      params: { buildId },
-                    })
-                  }}
-                >
-                  {runBuildButton}
-                </TriggerBuildDrawer>
-              </Suspense>
+            !hasProjects ? undefined : (
+              <>
+                <BuildScopeToggle
+                  scope={buildScope.scope}
+                  onChange={buildScope.setScope}
+                />
+                {homeRunBuild}
+              </>
             )
           }
         />
@@ -538,7 +542,9 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
         ) : null}
 
         {hasProjects &&
-        (guidedProjectId || recentBuildsQuery.data?.builds.length === 0) ? (
+        (guidedProjectId ||
+          (buildScope.scope === 'all' &&
+            recentBuildsQuery.data?.builds.length === 0)) ? (
           <Suspense fallback={<Skeleton className="h-16 w-full" />}>
             <SetupChecklist
               projectId={guidedProjectId ?? projects[0].id}
@@ -611,19 +617,8 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
           </div>
         ) : null}
 
-        {/* 3. How things are going over the period, for the slower look. */}
-        {hasProjects ? (
-          <DashboardBuildHealth
-            canApprove={canApprove}
-            days={insightsDays}
-            onDaysChange={setInsightsDays}
-            onlineRunners={runnersQuery.data?.online}
-          />
-        ) : null}
-
-        {hasProjects ? <DashboardProjectHealth days={insightsDays} /> : null}
-
-        {hasProjects ? <DashboardStoreHealth /> : null}
+        {/* 3. The slower look lives on Insights; Home says only what is off. */}
+        {hasProjects ? <HomeInsightsSummary /> : null}
       </Stack>
     </PageLayout>
   )

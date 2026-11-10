@@ -338,6 +338,15 @@ pub async fn update_preferences(
 
 // ── Inbox ───────────────────────────────────────────────────────
 
+/// "Google Play · production", "TestFlight" or "App Store".
+fn release_place(store: &str, track: &str) -> String {
+    match (store, track) {
+        ("app_store", "testflight") => "TestFlight".to_string(),
+        ("app_store", _) => "App Store".to_string(),
+        _ => format!("{} · {track}", store_words(store)),
+    }
+}
+
 fn release_state_words(state: &str) -> &str {
     match state {
         "blocked" => "was refused by the store",
@@ -469,7 +478,8 @@ pub async fn inbox_for(
          FROM release_history h \
          JOIN releases r ON r.id = h.release_id \
          JOIN user_favorite_projects f ON f.project_id = r.project_id AND f.user_id = ?1 \
-         WHERE h.at >= ?2 AND h.to_state NOT IN ('uploading') \
+         WHERE h.at >= ?2 AND h.to_state IN ('blocked', 'in_review', 'approved', 'rejected', \
+               'rolling', 'paused', 'halted', 'complete', 'failed') \
          ORDER BY h.at DESC LIMIT 50",
     )
     .bind(user_id)
@@ -492,11 +502,7 @@ pub async fn inbox_for(
                 version.as_deref().unwrap_or("release"),
                 release_state_words(&state)
             ),
-            detail: format!(
-                "{} · {}",
-                store_words(&store),
-                row.get::<String, _>("track")
-            ),
+            detail: release_place(&store, &row.get::<String, _>("track")),
             project_id,
             project_name: project_name.clone(),
             build_id: row.get("build_id"),

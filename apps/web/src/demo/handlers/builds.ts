@@ -138,6 +138,27 @@ function demoRetryableSteps(build: (typeof demoState.builds)[number]) {
   )
 }
 
+/** Queued builds ahead of this one, at a typical eight minutes each. */
+function demoQueue(build: (typeof demoState.builds)[number]) {
+  if (build.status !== 'queued' || build.approval?.state === 'pending') {
+    return undefined
+  }
+  const queued = demoState.builds.filter(
+    (other) =>
+      other.status === 'queued' &&
+      other.approval?.state !== 'pending' &&
+      other.created_at < build.created_at,
+  )
+  const running = demoState.builds.filter(
+    (other) => other.status === 'running',
+  ).length
+  return {
+    ahead: queued.length,
+    running,
+    estimated_wait_seconds: (queued.length + (running > 0 ? 1 : 0)) * 240,
+  }
+}
+
 export const buildHandlers = [
   demoApi.previewBuildChangelog(async ({ request, params }) => {
     await delay(200)
@@ -216,6 +237,13 @@ export const buildHandlers = [
 
     const branch = url.searchParams.get('branch')
     if (branch) builds = builds.filter((b) => b.branch === branch)
+
+    if (url.searchParams.get('mine') === 'true') {
+      const pinned = new Set(demoState.favoriteProjects[persona.userId] ?? [])
+      builds = builds.filter(
+        (b) => b.trigger_actor === persona.email || pinned.has(b.project_id),
+      )
+    }
 
     // Mirrors the daemon's `trigger`: trigger types, or webhook events.
     if (url.searchParams.has('trigger')) {
@@ -381,6 +409,7 @@ export const buildHandlers = [
     return HttpResponse.json({
       build: withBuildContext(build),
       retryable_steps: demoRetryableSteps(build),
+      queue: demoQueue(build),
       events: demoState.buildEvents[build.id] ?? [
         {
           id: `evt-auto-${build.id}`,
