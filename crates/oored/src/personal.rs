@@ -640,26 +640,17 @@ pub async fn digest_for(
                 releases,
             });
         }
-
-        let expiries = sqlx::query(
-            "SELECT 'Certificate for ' || pl.name AS name, s.p12_expires_at AS expires_at \
-             FROM pipeline_ios_signing_settings s JOIN pipelines pl ON pl.id = s.pipeline_id \
-             WHERE pl.project_id = ?1 AND s.p12_expires_at BETWEEN ?2 AND ?3 \
-             UNION ALL \
-             SELECT 'Profile ' || COALESCE(pp.profile_name, pp.bundle_id) AS name, pp.expires_at \
-             FROM pipeline_ios_provisioning_profiles pp JOIN pipelines pl ON pl.id = pp.pipeline_id \
-             WHERE pl.project_id = ?1 AND pp.expires_at BETWEEN ?2 AND ?3",
-        )
-        .bind(project_id)
-        .bind(now)
-        .bind(now + EXPIRY_WINDOW)
-        .fetch_all(pool)
-        .await?;
-        for row in expiries {
+    }
+    let names: std::collections::HashMap<&str, &str> = projects
+        .iter()
+        .map(|(id, name)| (id.as_str(), name.as_str()))
+        .collect();
+    for expiry in crate::signing_expiry::expiring(pool, now, now + EXPIRY_WINDOW).await? {
+        if let Some(name) = names.get(expiry.project_id.as_str()) {
             expiring.push(DigestExpiry {
-                name: row.get("name"),
-                project_name: name.clone(),
-                expires_at: row.get("expires_at"),
+                name: format!("{} in {}", expiry.what, expiry.holder),
+                project_name: name.to_string(),
+                expires_at: expiry.expires_at,
             });
         }
     }
