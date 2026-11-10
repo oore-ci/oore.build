@@ -172,6 +172,18 @@ pub(crate) fn normalize_config(
     {
         errors.push("The release notes directory must be a path inside the repository".to_string());
     }
+    config.listing_dir = config
+        .listing_dir
+        .take()
+        .map(|dir| dir.trim().trim_end_matches('/').to_string())
+        .filter(|dir| !dir.is_empty());
+    if let Some(dir) = &config.listing_dir
+        && (dir.starts_with('/') || dir.split('/').any(|part| part == ".."))
+    {
+        errors.push("The store listing directory must be a path inside the repository".to_string());
+    }
+    // Only an upload carries a listing read from the repository.
+    config.listing.clear();
 
     if config.destination == AppStoreDestination::Testflight {
         config.submit_for_review = false;
@@ -663,6 +675,9 @@ fn uploaded_config(
         .filter(|notes| !notes.is_empty())
     {
         config.release_notes = notes.clone();
+    }
+    if let Some(listing) = reported.listing.as_ref().filter(|l| !l.is_empty()) {
+        config.listing = listing.clone();
     }
     let groups: Vec<String> = match &reported.testflight_groups {
         Some(groups) => groups
@@ -1281,6 +1296,14 @@ async fn distribute_app_store(
             .await
         {
             warn!(%error, locale = %note.locale, "failed to set App Store notes");
+            notes_warning = Some(error.0);
+        }
+    }
+    // The listing from the repository; a refused field must not stop the
+    // submission, so it becomes a warning like the notes.
+    for listing in &config.listing {
+        if let Err(error) = asc.set_version_listing(&version_id, listing).await {
+            warn!(%error, locale = %listing.locale, "failed to set the App Store listing");
             notes_warning = Some(error.0);
         }
     }
@@ -2947,6 +2970,7 @@ mod tests {
                 .map(|groups| groups.iter().map(|group| group.to_string()).collect()),
             held_for_review: false,
             release_notes: None,
+            listing: None,
         }
     }
 
@@ -3010,6 +3034,25 @@ mod tests {
             uploaded_config(saved.clone(), &reported("app_store", None)),
             saved
         );
+    }
+
+    #[test]
+    fn the_reported_listing_goes_with_the_version() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            listing_dir: Some("fastlane/metadata".to_string()),
+            ..testflight(&[])
+        };
+        let listing = vec![oore_contract::AppStoreListing {
+            locale: "en-US".to_string(),
+            keywords: Some("shop".to_string()),
+            ..Default::default()
+        }];
+        let report = RunnerPublishResult {
+            listing: Some(listing.clone()),
+            ..reported("app_store", None)
+        };
+        assert_eq!(uploaded_config(saved, &report).listing, listing);
     }
 
     #[test]
@@ -3132,6 +3175,14 @@ mod tests {
             _: &str,
         ) -> AscResult<()> {
             self.record(format!("version notes {version_id} {locale}"));
+            Ok(())
+        }
+        async fn set_version_listing(
+            &self,
+            version_id: &str,
+            listing: &oore_contract::AppStoreListing,
+        ) -> AscResult<()> {
+            self.record(format!("version listing {version_id} {}", listing.locale));
             Ok(())
         }
         async fn enable_phased_release(&self, version_id: &str) -> AscResult<()> {

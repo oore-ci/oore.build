@@ -2086,6 +2086,107 @@ pub struct BuildInsightsResponse {
     pub failing_pipelines: Vec<FailingPipelineInsights>,
 }
 
+/// A test that failed and then passed on the same commit, so the failure
+/// was not the code's.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct FlakyTest {
+    pub project_id: String,
+    pub project_name: String,
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub suite: String,
+    pub name: String,
+    /// Times it failed and then passed on the same commit in the window.
+    pub occurrences: i64,
+    pub failed_build_id: String,
+    pub failed_build_number: i64,
+    pub passed_build_id: String,
+    pub passed_build_number: i64,
+    pub last_seen_at: i64,
+}
+
+/// A build step whose run time grew over the window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct SlowerStep {
+    pub project_id: String,
+    pub project_name: String,
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub step: String,
+    /// Median seconds in the first half of the window.
+    pub before_seconds: i64,
+    /// Median seconds in the second half of the window.
+    pub after_seconds: i64,
+    /// Succeeded builds the medians come from.
+    pub builds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildTrendsResponse {
+    pub window_days: i64,
+    /// Most occurrences first, at most 20.
+    pub flaky_tests: Vec<FlakyTest>,
+    /// Largest slowdown first, at most 10.
+    pub slower_steps: Vec<SlowerStep>,
+}
+
+/// The first line of a failed build's log that explains the failure, with
+/// the likely cause.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildFailureHint {
+    /// The step whose log the line is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// The log line, trimmed.
+    pub line: String,
+    /// Its sequence in the build log, to jump to it.
+    pub sequence: i64,
+    /// `gradle`, `xcode`, `cocoapods`, `signing`, `dart`, `flutter`,
+    /// `network`, `disk` or `other`.
+    pub category: String,
+    /// What probably went wrong, in plain words.
+    pub cause: String,
+    /// What usually fixes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildFailureHintResponse {
+    /// Absent when the build did not fail or no line stood out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<BuildFailureHint>,
+}
+
+/// Store submissions and promotions are held, for one app or the whole
+/// instance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ReleaseFreeze {
+    pub id: String,
+    /// Absent for a freeze of the whole instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_email: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetReleaseFreezeRequest {
+    /// The app to freeze; absent freezes the whole instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListReleaseFreezesResponse {
+    pub freezes: Vec<ReleaseFreeze>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelBuildResponse {
     pub build: Build,
@@ -4900,6 +5001,12 @@ pub struct GooglePlayPublishConfig {
     pub release_notes_locale: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes_dir: Option<String>,
+    /// A repository directory with the store listing in fastlane's layout,
+    /// `<locale>/title.txt`, `short_description.txt`,
+    /// `full_description.txt` and `video.txt`, such as
+    /// `fastlane/metadata/android`. Sent with every upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing_dir: Option<String>,
     /// Upload R8/ProGuard `mapping.txt` when the build produced one.
     #[serde(default = "default_true")]
     pub upload_mapping: bool,
@@ -4962,6 +5069,7 @@ impl GooglePlayPublishConfig {
             release_notes: GooglePlayReleaseNotesSource::Changelog,
             release_notes_locale: default_release_notes_locale(),
             release_notes_dir: None,
+            listing_dir: None,
             upload_mapping: true,
             in_app_update_priority: None,
             rollout_policy: None,
@@ -5037,6 +5145,11 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
                 .push("release_notes_dir is required for repo_files release notes".to_string()),
         }
     }
+    if let Some(dir) = config.listing_dir.as_deref()
+        && let Err(error) = validate_repository_config_path(dir)
+    {
+        errors.push(format!("listing_dir {error}"));
+    }
     if config
         .in_app_update_priority
         .is_some_and(|priority| priority > 5)
@@ -5107,6 +5220,10 @@ pub struct RunnerPublishPlan {
     /// workflow settings, so nothing uploads, whatever the file says.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disabled: bool,
+    /// A release freeze holds store uploads; its reason. Nothing uploads
+    /// until it is lifted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -5162,6 +5279,10 @@ pub struct RunnerPublishResult {
     /// repository (`release_notes_dir`), which replace the saved notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes: Option<Vec<AppStoreReleaseNote>>,
+    /// App Store uploads: the store listing read from the repository
+    /// (`listing_dir`), applied to the version Oore submits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<Vec<AppStoreListing>>,
 }
 
 // ── Pipeline Android signing types ──────────────────────────────
@@ -5791,6 +5912,23 @@ pub struct AppStoreReleaseNote {
     pub whats_new: String,
 }
 
+/// One language of an App Store listing, read from the repository. Absent
+/// fields are left as they are in App Store Connect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+pub struct AppStoreListing {
+    pub locale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promotional_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marketing_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support_url: Option<String>,
+}
+
 /// App Store publishing settings for a pipeline, stored as the `app_store`
 /// publish target. Uploads use the App Store Connect API key from the
 /// pipeline's iOS signing settings and require the `app_store` export method.
@@ -5828,6 +5966,15 @@ pub struct AppStorePublishConfig {
     /// build. Relative to the repository root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes_dir: Option<String>,
+    /// A repository directory with the store listing in fastlane's layout,
+    /// `<locale>/description.txt`, `keywords.txt`, `promotional_text.txt`,
+    /// `marketing_url.txt` and `support_url.txt`, such as
+    /// `fastlane/metadata`. Each submitted version gets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing_dir: Option<String>,
+    /// The listing the runner read from `listing_dir` for this upload.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub listing: Vec<AppStoreListing>,
     /// Cancel an open review submission that holds other items (an in-app
     /// event, a custom product page) instead of waiting for someone to
     /// clear it, like Codemagic's `--cancel-previous-submissions`.

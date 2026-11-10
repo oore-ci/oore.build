@@ -534,11 +534,26 @@ pub async fn get_job_publish_plan(
         .await;
     }
 
+    let project_id: Option<String> =
+        sqlx::query_scalar("SELECT project_id FROM builds WHERE id = ?1")
+            .bind(&job_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| store_error("Failed to load publish settings", e))?;
+    let frozen = match project_id {
+        Some(project_id) => crate::release_freezes::active_freeze(&state.db, &project_id)
+            .await
+            .map_err(|e| store_error("Failed to load release freezes", e))?
+            .map(|freeze| freeze.reason),
+        None => None,
+    };
+    let held = disabled || frozen.is_some();
     Ok(Json(RunnerPublishPlan {
         changelog,
-        google_play: google_play.filter(|_| !disabled),
-        app_store: app_store.filter(|_| !disabled),
+        google_play: google_play.filter(|_| !held),
+        app_store: app_store.filter(|_| !held),
         disabled,
+        frozen,
     }))
 }
 
@@ -728,6 +743,7 @@ mod tests {
             testflight_groups: None,
             held_for_review: false,
             release_notes: None,
+            listing: None,
         };
 
         let first = record_play_release(deps, "b1", "pl1", &result)
