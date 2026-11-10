@@ -3,6 +3,7 @@
   "pagesIndex": "index",
   "pages": [
     "index",
+    "runbook",
     "access",
     "runners",
     "...storage",
