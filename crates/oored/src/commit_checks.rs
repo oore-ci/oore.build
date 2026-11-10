@@ -319,7 +319,7 @@ async fn load_context(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Optio
 
 /// The web UI origin links point at. The local development defaults are
 /// left out, since a link to them is useless to anyone reading the check.
-async fn frontend_base_url(pool: &SqlitePool) -> Option<Url> {
+pub(crate) async fn frontend_base_url(pool: &SqlitePool) -> Option<Url> {
     let settings = load_effective_external_access_network_settings(pool)
         .await
         .ok()?;
@@ -1208,7 +1208,16 @@ async fn report_build(
             )
             .await
             .map_err(|(_, axum::Json(e))| anyhow::anyhow!(e.error))?;
-            report_github(pool, client, github_api_base_url, &token, &ctx, &reports).await
+            report_github(pool, client, github_api_base_url, &token, &ctx, &reports).await?;
+            if ctx.status.is_terminal()
+                && let Err(error) =
+                    report_pr_comment(pool, client, github_api_base_url, &token, &ctx, &artifacts)
+                        .await
+            {
+                // A missing permission must not fail the checks, which did post.
+                warn!(%error, build_id = %ctx.build_id, "failed to update the pull request comment");
+            }
+            Ok(())
         }
         "gitlab" => {
             for report in &reports {
@@ -1239,6 +1248,123 @@ async fn report_build(
         }
         _ => Ok(()),
     }
+}
+
+/// The pull request a webhook build was made for.
+async fn pull_request_number(pool: &SqlitePool, build_id: &str) -> anyhow::Result<Option<i64>> {
+    Ok(sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT CAST(json_extract(w.payload, '$.number') AS INTEGER) \
+         FROM builds b JOIN integration_webhooks w ON w.id = b.webhook_id \
+         WHERE b.id = ?1 AND b.trigger_event = 'pull_request'",
+    )
+    .bind(build_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten())
+}
+
+/// The pull request comment: the build's result and one install link per
+/// installable file, so reviewers do not have to open the checks.
+fn pr_comment_body(ctx: &BuildContext, base: Option<&Url>, artifacts: &[ArtifactLink]) -> String {
+    let status = match ctx.status {
+        BuildStatus::Succeeded => "succeeded",
+        BuildStatus::Failed => "failed",
+        BuildStatus::Canceled => "was canceled",
+        BuildStatus::TimedOut => "timed out",
+        _ => "finished",
+    };
+    let build_link = base
+        .map(|base| web_url(base, &format!("/builds/{}", ctx.build_id), None))
+        .map(|url| format!("[#{}]({url})", ctx.build_number))
+        .unwrap_or_else(|| format!("#{}", ctx.build_number));
+    let short_sha: String = ctx.commit_sha.chars().take(7).collect();
+    let mut body = format!(
+        "<!-- oore-pr-comment:{} -->\n**Oore · {}**: build {build_link} {status} for {short_sha}.\n",
+        ctx.pipeline_id,
+        markdown_text(&ctx.pipeline_name),
+    );
+    let installs: Vec<(&ArtifactLink, &String)> = artifacts
+        .iter()
+        .filter_map(|artifact| artifact.install_url.as_ref().map(|url| (artifact, url)))
+        .collect();
+    if installs.is_empty() {
+        if ctx.status == BuildStatus::Succeeded {
+            body.push_str("\nNothing in this build installs on a device.\n");
+        }
+    } else {
+        body.push_str("\n| Platform | Install |\n| --- | --- |\n");
+        for (artifact, url) in installs {
+            body.push_str(&format!(
+                "| {} | [{}]({url}) |\n",
+                platform_label(artifact.platform.unwrap_or("android")),
+                markdown_text(&artifact.name),
+            ));
+        }
+        body.push_str(
+            "\nOpen a link on the phone, or open it on a computer and scan the code shown there.\n",
+        );
+    }
+    body.push_str("\n<sub>Updated by Oore with each new build of this pull request.</sub>\n");
+    body
+}
+
+async fn report_pr_comment(
+    pool: &SqlitePool,
+    client: &reqwest::Client,
+    api_base_url: &str,
+    token: &str,
+    ctx: &BuildContext,
+    artifacts: &[ArtifactLink],
+) -> anyhow::Result<()> {
+    let Some(pr_number) = pull_request_number(pool, &ctx.build_id).await? else {
+        return Ok(());
+    };
+    let existing = sqlx::query(
+        "SELECT c.external_id, owner.created_at AS owner_created_at FROM scm_pr_comments c \
+         LEFT JOIN builds owner ON owner.id = c.build_id \
+         WHERE c.pipeline_id = ?1 AND c.repository_full_name = ?2 AND c.pr_number = ?3",
+    )
+    .bind(&ctx.pipeline_id)
+    .bind(&ctx.full_name)
+    .bind(pr_number)
+    .fetch_optional(pool)
+    .await?;
+    // An older build finishing late leaves a newer build's comment alone.
+    if existing
+        .as_ref()
+        .and_then(|row| row.get::<Option<i64>, _>("owner_created_at"))
+        .is_some_and(|created_at| created_at > ctx.created_at)
+    {
+        return Ok(());
+    }
+    let existing_id: Option<String> = existing.map(|row| row.get("external_id"));
+    let base = frontend_base_url(pool).await;
+    let body = pr_comment_body(ctx, base.as_ref(), artifacts);
+    let id = github::upsert_pr_comment(
+        client,
+        api_base_url,
+        token,
+        &ctx.full_name,
+        pr_number,
+        existing_id.as_deref(),
+        &body,
+    )
+    .await?;
+    sqlx::query(
+        "INSERT INTO scm_pr_comments (pipeline_id, repository_full_name, pr_number, external_id, build_id, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT (pipeline_id, repository_full_name, pr_number) DO UPDATE SET \
+           external_id = excluded.external_id, build_id = excluded.build_id, updated_at = excluded.updated_at",
+    )
+    .bind(&ctx.pipeline_id)
+    .bind(&ctx.full_name)
+    .bind(pr_number)
+    .bind(&id)
+    .bind(&ctx.build_id)
+    .bind(now_unix())
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// Who reports a platform's check for a pipeline and commit. The newest

@@ -1230,6 +1230,7 @@ pub async fn update_job_status(
         events,
         retryable_steps: Vec::new(),
         queue: None,
+        retention: None,
     }))
 }
 

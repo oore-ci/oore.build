@@ -1930,6 +1930,26 @@ pub struct BuildDetailResponse {
     /// Where a queued build stands: builds ahead of it and a rough wait.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue: Option<BuildQueueEstimate>,
+    /// How long retention keeps this finished build and why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention: Option<BuildRetention>,
+}
+
+/// Why retention keeps a finished build, and until when.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildRetention {
+    /// Someone chose to keep this build; retention never removes it.
+    pub kept: bool,
+    /// A release keeps it: one still in progress, or the version live on a
+    /// store track.
+    pub kept_by_release: bool,
+    /// Its outcome is one the retention policy keeps.
+    pub kept_by_status: bool,
+    /// When the age limit removes it, in unix seconds. Absent when it is
+    /// kept or there is no age limit; count and size limits can remove it
+    /// sooner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
 }
 
 /// A queued build's place in line, from the builds queued before it and
@@ -7819,4 +7839,202 @@ mod tests {
             }
         }
     }
+}
+
+// ── Testers: latest links, groups, installs, device registration ──
+
+/// A link that always installs the newest succeeded build of a pipeline,
+/// optionally only from one branch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct LatestInstallLink {
+    pub id: String,
+    pub project_id: String,
+    pub pipeline_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub platform: BuildPlatform,
+    /// The full link. Only returned when the link is created; later lists
+    /// show `prefix` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub prefix: String,
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<i64>,
+    pub use_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateLatestInstallLinkRequest {
+    pub platform: BuildPlatform,
+    /// Only builds from this branch. Empty or absent means any branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListLatestInstallLinksResponse {
+    pub links: Vec<LatestInstallLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TesterGroupMember {
+    pub user_id: String,
+    pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// A named set of people a build can be sent to, such as QA or design.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TesterGroup {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<TesterGroupMember>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TesterGroupRequest {
+    /// 1 to 80 characters, unique on the instance.
+    pub name: String,
+    pub member_user_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListTesterGroupsResponse {
+    pub groups: Vec<TesterGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SendBuildToGroupRequest {
+    pub group_id: String,
+    /// What to test, up to 1000 characters. Shown in the email.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildShareRecipient {
+    pub user_id: String,
+    pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// First install of this build by this person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<i64>,
+    /// The person cannot open this app, so the email could not include it.
+    pub no_access: bool,
+}
+
+/// A build sent to a tester group, with who installed it since.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildShare {
+    pub id: String,
+    pub build_id: String,
+    pub group_id: String,
+    pub group_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_by_email: Option<String>,
+    pub sent_at: i64,
+    pub recipients: Vec<BuildShareRecipient>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildSharesResponse {
+    pub shares: Vec<BuildShare>,
+}
+
+/// Someone installing one of a build's artifacts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ArtifactInstall {
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
+    /// How it was installed: `install_page`, `share_link` or `latest_link`.
+    pub via: String,
+    pub installed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListArtifactInstallsResponse {
+    pub installs: Vec<ArtifactInstall>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRegistrationState {
+    /// Waiting for the iPhone to install the profile.
+    Pending,
+    /// Apple has the device; the next ad hoc build includes it.
+    Registered,
+    Failed,
+    Expired,
+}
+
+/// Registering an iPhone for a pipeline's ad hoc builds from the install
+/// page: the phone installs a profile that reports its UDID.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct DeviceRegistration {
+    pub id: String,
+    pub pipeline_id: String,
+    pub state: DeviceRegistrationState,
+    /// Open this on the iPhone, in Safari.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateDeviceRegistrationRequest {
+    /// A name for the device in Apple's list, such as `Asha's iPhone`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+}
+
+/// Recent tester feedback across apps the caller can see.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RecentFeedback {
+    pub feedback: BuildFeedback,
+    pub project_id: String,
+    pub project_name: String,
+    pub build_number: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListRecentFeedbackResponse {
+    pub feedback: Vec<RecentFeedback>,
+}
+
+/// Web push for the installed tester portal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct WebPushConfig {
+    /// VAPID public key, base64url, for `PushManager.subscribe`.
+    pub public_key: String,
+    /// Whether this browser endpoint is subscribed for the caller.
+    pub subscribed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebPushSubscriptionRequest {
+    pub endpoint: String,
+    /// The subscription's `p256dh` key, base64url.
+    pub p256dh: String,
+    /// The subscription's `auth` secret, base64url.
+    pub auth: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebPushUnsubscribeRequest {
+    pub endpoint: String,
 }

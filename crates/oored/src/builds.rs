@@ -1981,11 +1981,59 @@ pub async fn get_build(
             None
         });
 
+    let retention = build_retention(pool, &build_id).await.unwrap_or_else(|e| {
+        warn!(build_id = %build_id, error = %e, "failed to work out the build's retention");
+        None
+    });
+
     Ok(Json(BuildDetailResponse {
         build,
         events,
         retryable_steps,
         queue,
+        retention,
+    }))
+}
+
+/// Why retention keeps a finished build and when its age limit removes it.
+pub(crate) async fn build_retention(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+) -> Result<Option<oore_contract::BuildRetention>, sqlx::Error> {
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT b.project_id, b.status, b.kept_at, \
+                COALESCE(b.finished_at, b.created_at) AS finished_at, \
+                EXISTS (SELECT 1 FROM releases r WHERE r.build_id = b.id AND {}) AS by_release \
+         FROM builds b WHERE b.id = ?1",
+        crate::background::RELEASE_KEEPS_BUILD
+    )))
+    .bind(build_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let status: String = row.get("status");
+    if !matches!(
+        status.as_str(),
+        "succeeded" | "failed" | "canceled" | "timed_out"
+    ) {
+        return Ok(None);
+    }
+    let project_id: String = row.get("project_id");
+    let policy = crate::retention::load_effective_policy(pool, &project_id).await?;
+    let kept = row.get::<Option<i64>, _>("kept_at").is_some();
+    let kept_by_release = row.get::<i64, _>("by_release") != 0;
+    let kept_by_status = policy.keep_statuses.iter().any(|kept| kept == &status);
+    let expires_at = (policy.enabled && !kept && !kept_by_release && !kept_by_status)
+        .then_some(policy.max_age_days)
+        .flatten()
+        .map(|days| row.get::<i64, _>("finished_at") + days * 86_400);
+    Ok(Some(oore_contract::BuildRetention {
+        kept,
+        kept_by_release,
+        kept_by_status,
+        expires_at,
     }))
 }
 

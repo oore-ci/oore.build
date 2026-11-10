@@ -16,6 +16,7 @@ pub mod build_insights;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
+pub mod device_registration;
 pub mod environments;
 pub mod events;
 pub mod extractors;
@@ -61,9 +62,11 @@ pub mod store_readiness;
 pub mod store_sync;
 pub mod store_vitals;
 pub mod test_results;
+pub mod testers;
 pub mod token;
 pub mod users;
 pub mod util;
+pub mod web_push;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -2477,6 +2480,7 @@ pub async fn build_router_with_recovery(
             shared_state.encryption_key.to_vec(),
         );
         personal::start_personal_mailer(pool.clone(), shared_state.encryption_key.to_vec());
+        web_push::start_web_push_notifier(pool.clone(), shared_state.encryption_key.to_vec());
         notification_dispatch::start_notification_dispatcher(
             pool,
             sched,
@@ -2592,6 +2596,47 @@ pub async fn build_router_with_recovery(
             get(personal::get_preferences).put(personal::update_preferences),
         )
         .route("/v1/users/me/inbox", get(personal::get_inbox))
+        .route(
+            "/v1/builds/{build_id}/installs",
+            get(testers::list_build_installs),
+        )
+        .route(
+            "/v1/builds/{build_id}/shares",
+            get(testers::list_build_shares).post(testers::send_build_to_group),
+        )
+        .route(
+            "/v1/builds/{build_id}/keep",
+            axum::routing::put(testers::keep_build).delete(testers::unkeep_build),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/latest-links",
+            get(testers::list_latest_links).post(testers::create_latest_link),
+        )
+        .route(
+            "/v1/latest-links/{link_id}",
+            axum::routing::delete(testers::delete_latest_link),
+        )
+        .route(
+            "/v1/tester-groups",
+            get(testers::list_tester_groups).post(testers::create_tester_group),
+        )
+        .route(
+            "/v1/tester-groups/{group_id}",
+            axum::routing::put(testers::update_tester_group).delete(testers::delete_tester_group),
+        )
+        .route("/v1/feedback/recent", get(testers::list_recent_feedback))
+        .route(
+            "/v1/pipelines/{pipeline_id}/device-registrations",
+            post(device_registration::create_registration),
+        )
+        .route(
+            "/v1/device-registrations/{registration_id}",
+            get(device_registration::get_registration),
+        )
+        .route("/v1/web-push/config", get(web_push::get_config))
+        .route("/v1/web-push/subscriptions", post(web_push::subscribe))
+        .route("/v1/web-push/unsubscribe", post(web_push::unsubscribe))
+        .route("/v1/web-push/test", post(web_push::send_test))
         .route("/v1/users/me/digest", get(personal::get_digest))
         .route("/v1/users/me/digest/send", post(personal::send_digest_now))
         .route(
@@ -3170,6 +3215,21 @@ pub async fn build_router_with_recovery(
         .route(
             "/install/ios/{token}/manifest.plist",
             get(artifact_install::ios_install_manifest),
+        )
+        .route("/install/latest/{token}", get(testers::open_latest_link))
+        .route(
+            "/install/register-device/{token}/profile.mobileconfig",
+            get(device_registration::profile),
+        )
+        .route(
+            "/install/register-device/{token}/callback",
+            post(device_registration::callback).layer(DefaultBodyLimit::max(
+                device_registration::MAX_CALLBACK_BYTES,
+            )),
+        )
+        .route(
+            "/install/register-device/{token}/done",
+            get(device_registration::done),
         )
         .route(
             "/install/download/{token}",
