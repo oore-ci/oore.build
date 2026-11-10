@@ -1444,6 +1444,31 @@ enum RunnerSubcommand {
     RotateToken,
     /// Stop and remove the managed macOS runner service
     UninstallService,
+    /// Show or change runner settings such as the cache size and VM image
+    Config(RunnerConfigArgs),
+}
+
+#[derive(Debug, Args)]
+struct RunnerConfigArgs {
+    #[command(subcommand)]
+    command: RunnerConfigCommand,
+    /// Path to the runner config file. Defaults to the installed runner's.
+    #[arg(long, global = true)]
+    config: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum RunnerConfigCommand {
+    /// Print every runner setting and its value
+    Show,
+    /// Set a runner setting
+    Set {
+        /// Setting name, such as OORE_RUNNER_CACHE_MAX_GB
+        key: String,
+        value: String,
+    },
+    /// Remove a runner setting, so the runner uses its default
+    Unset { key: String },
 }
 
 #[derive(Debug, Args)]
@@ -4746,6 +4771,63 @@ async fn rollback_registered_runner(
         anyhow::bail!("{} - {}", error.code, error.error);
     }
     anyhow::bail!("daemon returned HTTP {status}")
+}
+
+/// Apply `runner.env` as environment variables the environment does not
+/// already set. Must run before any other thread starts. A file the runner
+/// cannot read or parse is reported and skipped, so it never stops the
+/// runner from starting.
+fn apply_runner_settings(config_path: &Path) -> anyhow::Result<()> {
+    let settings = match oore_runner::settings::read_settings(config_path) {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("Ignoring runner settings: {error:#}");
+            return Ok(());
+        }
+    };
+    for (key, value) in
+        oore_runner::settings::settings_to_apply(&settings, |key| std::env::var(key).ok())
+    {
+        // SAFETY: called from `main` before the tokio runtime or any other
+        // thread exists, so nothing reads the environment concurrently.
+        unsafe { std::env::set_var(&key, &value) };
+        eprintln!(
+            "Runner setting {key}={value} (from {})",
+            oore_runner::settings::SETTINGS_FILE
+        );
+    }
+    Ok(())
+}
+
+fn handle_runner_config(args: RunnerConfigArgs) -> anyhow::Result<()> {
+    use oore_runner::settings::{SETTINGS_KEYS, read_settings, settings_path, write_setting};
+    let config_path = runner_config_path(args.config)?;
+    match args.command {
+        RunnerConfigCommand::Show => {
+            let settings = read_settings(&config_path)?;
+            println!("Settings file: {}", settings_path(&config_path).display());
+            for (key, about) in SETTINGS_KEYS {
+                let value = settings
+                    .get(*key)
+                    .map(String::as_str)
+                    .unwrap_or("(default)");
+                println!("  {key}={value}\n      {about}");
+            }
+            return Ok(());
+        }
+        RunnerConfigCommand::Set { key, value } => {
+            write_setting(&config_path, &key, Some(&value))?;
+            println!("Set {key}={}", value.trim());
+        }
+        RunnerConfigCommand::Unset { key } => {
+            write_setting(&config_path, &key, None)?;
+            println!("Removed {key}");
+        }
+    }
+    println!(
+        "Restart the runner to apply it: sudo launchctl kickstart -k system/{RUNNER_SERVICE_LABEL}"
+    );
+    Ok(())
 }
 
 async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
@@ -13286,6 +13368,9 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(handle_runner_register(args, false))?;
             }
             RunnerSubcommand::Start(args) => {
+                // Before the runtime starts any thread: settings become
+                // environment variables for the runner to read.
+                apply_runner_settings(&runner_config_path(args.config.clone())?)?;
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_start(args))?;
@@ -13301,6 +13386,7 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(handle_runner_rotate_token())?;
             }
             RunnerSubcommand::UninstallService => handle_runner_uninstall_service_direct()?,
+            RunnerSubcommand::Config(args) => handle_runner_config(args)?,
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
