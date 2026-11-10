@@ -1,24 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import {
-  getActiveInstanceOrRedirect,
-  requireInstanceRoleOrRedirect,
-} from '@/lib/instance-context'
-
-export type {
-  ExternalAccessNetworkFormValues,
-  ExternalAccessOidcFormValues,
-  TrustedProxyFormValues,
-} from './preferences.lazy'
-
+/** The General settings page used to live here; keep old links working. */
 export const Route = createFileRoute('/settings/preferences')({
-  staticData: {
-    breadcrumb: {
-      title: 'General',
-    },
-  },
-  beforeLoad: (context) => {
-    const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
+  beforeLoad: () => {
+    throw redirect({ href: `/settings/general${window.location.search}` })
   },
 })

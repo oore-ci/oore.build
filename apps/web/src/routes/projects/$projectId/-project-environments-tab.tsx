@@ -18,6 +18,7 @@ import {
   environmentTargetLabel,
   getPromotionStateVariant,
   PROMOTION_STATE_LABEL,
+  promotableRelease,
   promotionSourceLabel,
   rolloutPolicySummary,
 } from '@/lib/environments'
@@ -74,22 +75,6 @@ import { TabsContent } from '@/components/ui/tabs'
 
 const ENVIRONMENTS_DOCS_URL =
   'https://docs.oore.build/build/distribute/environments'
-
-/**
- * A release in this environment that can still be promoted elsewhere: a live
- * Google Play release, or a TestFlight release testers have. A release on the
- * App Store itself is the end of the path.
- */
-function promotableRelease(environment: ProjectEnvironment) {
-  const release = environment.latest_release
-  if (!release) return undefined
-  if (release.store === 'app_store' && release.track === 'app_store') {
-    return undefined
-  }
-  return ['rolling', 'paused', 'complete'].includes(release.state)
-    ? release
-    : undefined
-}
 
 function RowList({ children }: { children: Array<React.ReactNode> }) {
   return (

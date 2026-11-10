@@ -1705,8 +1705,29 @@ pub struct Build {
     pub commit_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub branch: Option<String>,
+    /// The first line of the built commit's message. The runner reports it
+    /// after checkout, so a queued build has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_title: Option<String>,
+    /// The built commit's author name, reported with `commit_title`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_author: Option<String>,
+    /// The app version the build makes, from `pubspec.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    /// The store version code (Android versionCode, iOS build number) the
+    /// build makes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+    /// The newer build that canceled this one, when a push to the same
+    /// branch replaced it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<BuildReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
+    /// Release notes written for this build's store uploads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_build_id: Option<String>,
     /// Steps this build retries against `source_build_id`'s stored artifacts.
@@ -1801,6 +1822,26 @@ impl BuildReleaseOutcome {
     }
 }
 
+/// Another build, by id and number.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct BuildReference {
+    pub id: String,
+    pub build_number: i64,
+}
+
+/// What a runner found out about a build after checkout.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ReportBuildIdentityRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_author: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_code: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct BuildContext {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1852,6 +1893,12 @@ pub struct CreateBuildRequest {
     pub trigger_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
+    /// What's new in this release, as testers and store users read it. It
+    /// replaces the pipeline's Google Play and App Store release notes for
+    /// the build's uploads (Play's notes language, App Store's first
+    /// locale). Omitted uses the pipeline's notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_notes: Option<String>,
     /// The `.oore.yaml` version 2 workflow to build. Omitted uses the
     /// pipeline's default workflow, then the file's only workflow. A file
     /// with several workflows and no default needs one named here.
@@ -1880,6 +1927,42 @@ pub struct BuildDetailResponse {
     /// can run again without rebuilding.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retryable_steps: Vec<String>,
+    /// Where a queued build stands: builds ahead of it and a rough wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<BuildQueueEstimate>,
+    /// How long retention keeps this finished build and why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention: Option<BuildRetention>,
+}
+
+/// Why retention keeps a finished build, and until when.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildRetention {
+    /// Someone chose to keep this build; retention never removes it.
+    pub kept: bool,
+    /// A release keeps it: one still in progress, or the version live on a
+    /// store track.
+    pub kept_by_release: bool,
+    /// Its outcome is one the retention policy keeps.
+    pub kept_by_status: bool,
+    /// When the age limit removes it, in unix seconds. Absent when it is
+    /// kept or there is no age limit; count and size limits can remove it
+    /// sooner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<i64>,
+}
+
+/// A queued build's place in line, from the builds queued before it and
+/// each pipeline's median build time.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildQueueEstimate {
+    /// Queued builds that a runner takes first.
+    pub ahead: i64,
+    /// Builds running now.
+    pub running: i64,
+    /// Rough seconds until a runner takes this build; absent with no history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_wait_seconds: Option<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -2003,6 +2086,107 @@ pub struct BuildInsightsResponse {
     pub failing_pipelines: Vec<FailingPipelineInsights>,
 }
 
+/// A test that failed and then passed on the same commit, so the failure
+/// was not the code's.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct FlakyTest {
+    pub project_id: String,
+    pub project_name: String,
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub suite: String,
+    pub name: String,
+    /// Times it failed and then passed on the same commit in the window.
+    pub occurrences: i64,
+    pub failed_build_id: String,
+    pub failed_build_number: i64,
+    pub passed_build_id: String,
+    pub passed_build_number: i64,
+    pub last_seen_at: i64,
+}
+
+/// A build step whose run time grew over the window.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct SlowerStep {
+    pub project_id: String,
+    pub project_name: String,
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub step: String,
+    /// Median seconds in the first half of the window.
+    pub before_seconds: i64,
+    /// Median seconds in the second half of the window.
+    pub after_seconds: i64,
+    /// Succeeded builds the medians come from.
+    pub builds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildTrendsResponse {
+    pub window_days: i64,
+    /// Most occurrences first, at most 20.
+    pub flaky_tests: Vec<FlakyTest>,
+    /// Largest slowdown first, at most 10.
+    pub slower_steps: Vec<SlowerStep>,
+}
+
+/// The first line of a failed build's log that explains the failure, with
+/// the likely cause.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildFailureHint {
+    /// The step whose log the line is in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub step: Option<String>,
+    /// The log line, trimmed.
+    pub line: String,
+    /// Its sequence in the build log, to jump to it.
+    pub sequence: i64,
+    /// `gradle`, `xcode`, `cocoapods`, `signing`, `dart`, `flutter`,
+    /// `network`, `disk` or `other`.
+    pub category: String,
+    /// What probably went wrong, in plain words.
+    pub cause: String,
+    /// What usually fixes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildFailureHintResponse {
+    /// Absent when the build did not fail or no line stood out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<BuildFailureHint>,
+}
+
+/// Store submissions and promotions are held, for one app or the whole
+/// instance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct ReleaseFreeze {
+    pub id: String,
+    /// Absent for a freeze of the whole instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_email: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SetReleaseFreezeRequest {
+    /// The app to freeze; absent freezes the whole instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListReleaseFreezesResponse {
+    pub freezes: Vec<ReleaseFreeze>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct CancelBuildResponse {
     pub build: Build,
@@ -2103,8 +2287,42 @@ pub struct Runner {
     /// How many builds the runner runs at the same time.
     #[serde(default = "default_runner_max_concurrent_builds")]
     pub max_concurrent_builds: u32,
+    /// What the runner found when it checked its build tools, as
+    /// `oore doctor` would. Empty for runners that do not report them.
+    #[serde(default)]
+    pub toolchain: Vec<RunnerToolchainCheck>,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+/// The outcome of one build tool check on a runner.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunnerToolchainStatus {
+    Ok,
+    /// Builds that need it fail until it is installed.
+    Missing,
+    /// Builds may work, but something is worth fixing.
+    Warning,
+}
+
+/// One build tool a runner checked, such as Xcode or the Android SDK.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RunnerToolchainCheck {
+    /// Stable id, such as `xcode` or `android_sdk`.
+    pub id: String,
+    /// What people call the tool, such as "Android SDK".
+    pub label: String,
+    /// Platforms that need it. Empty when every build does.
+    #[serde(default)]
+    pub platforms: Vec<BuildPlatform>,
+    pub status: RunnerToolchainStatus,
+    /// The version or path found, or what is wrong.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    /// How to fix a missing tool, often a command to run on the runner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
 }
 
 /// The most builds one runner may run at the same time.
@@ -3176,6 +3394,143 @@ pub struct Project {
     #[serde(default)]
     #[schema(required = true)]
     pub auto_add_pipelines: bool,
+    /// The signed-in person pinned this app; pinned apps sort first.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub is_favorite: bool,
+    /// When the app's newest build started, for sorting by activity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_build_at: Option<i64>,
+    /// Platforms its pipelines build.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub platforms: Vec<BuildPlatform>,
+    /// Version of the newest store release that is rolling out or complete.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_version: Option<String>,
+}
+
+/// Which of their own builds a person hears about.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PersonalBuildEvents {
+    Off,
+    #[default]
+    Failed,
+    All,
+}
+
+/// One person's notification choices. Instance channels are unaffected.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct NotificationPreferences {
+    /// Builds this person started.
+    pub my_builds: PersonalBuildEvents,
+    /// Builds waiting for an approval this person can give.
+    pub approvals: bool,
+    /// Store release changes of the apps this person pinned.
+    pub followed_releases: bool,
+    /// Send these by email, using the instance's email channel server.
+    pub email: bool,
+    /// Show these as browser notifications while Oore is open.
+    pub browser: bool,
+    /// A weekly summary email on Monday morning (UTC).
+    pub weekly_digest: bool,
+}
+
+impl Default for NotificationPreferences {
+    fn default() -> Self {
+        Self {
+            my_builds: PersonalBuildEvents::Failed,
+            approvals: true,
+            followed_releases: true,
+            email: false,
+            browser: true,
+            weekly_digest: false,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct NotificationPreferencesResponse {
+    pub preferences: NotificationPreferences,
+    /// An enabled email channel exists, so Oore can send personal email.
+    pub email_available: bool,
+    /// Where personal email goes.
+    pub email_address: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InboxItemKind {
+    Approval,
+    FailedBuild,
+    Release,
+}
+
+/// Something for this person: an approval they can give, a build of theirs
+/// that failed, or a change to a release of an app they pinned.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct InboxItem {
+    pub id: String,
+    pub kind: InboxItemKind,
+    pub title: String,
+    pub detail: String,
+    pub project_id: String,
+    pub project_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
+    pub at: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct InboxResponse {
+    /// Newest first, from the last 7 days.
+    pub items: Vec<InboxItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestPipeline {
+    pub name: String,
+    pub median_seconds: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestRelease {
+    pub version: String,
+    pub store: String,
+    pub track: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestApp {
+    pub project_id: String,
+    pub name: String,
+    pub builds: i64,
+    pub succeeded: i64,
+    pub failed: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slowest_pipeline: Option<DigestPipeline>,
+    pub releases: Vec<DigestRelease>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DigestExpiry {
+    pub name: String,
+    pub project_name: String,
+    pub expires_at: i64,
+}
+
+/// What the weekly digest says for this person: their apps' last 7 days.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WeeklyDigest {
+    pub period_start: i64,
+    pub period_end: i64,
+    pub apps: Vec<DigestApp>,
+    /// Signing certificates and profiles that expire in the next 30 days.
+    pub expiring: Vec<DigestExpiry>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -3223,6 +3578,39 @@ pub struct ProjectDetailResponse {
     pub pipeline_count: i64,
     pub build_count: i64,
     pub current_user_role: ProjectRole,
+    /// The steps after the first install that the app has done.
+    #[serde(default)]
+    pub setup: ProjectSetupProgress,
+}
+
+/// What an app has set up beyond its first build, for the checklist that
+/// follows the first install.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct ProjectSetupProgress {
+    /// A pipeline signs release builds, or the app's signing library holds
+    /// an identity.
+    pub release_signing: bool,
+    /// A pipeline uploads to Google Play or App Store Connect.
+    pub store_publishing: bool,
+    /// Someone has viewer access to the app, as testers do.
+    pub testers: bool,
+}
+
+/// What Oore found in an app's repository on its default branch, to propose
+/// its first pipelines.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectAppDetection {
+    /// The branch or commit Oore read.
+    pub reference: String,
+    /// The repository has a `pubspec.yaml` that depends on Flutter.
+    pub flutter: bool,
+    /// The `name` in `pubspec.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    /// Platform folders found, such as `android/` and `ios/`.
+    pub platforms: Vec<BuildPlatform>,
+    /// Valid Oore config files found, such as `.oore.yaml`.
+    pub config_files: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -4613,6 +5001,12 @@ pub struct GooglePlayPublishConfig {
     pub release_notes_locale: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes_dir: Option<String>,
+    /// A repository directory with the store listing in fastlane's layout,
+    /// `<locale>/title.txt`, `short_description.txt`,
+    /// `full_description.txt` and `video.txt`, such as
+    /// `fastlane/metadata/android`. Sent with every upload.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing_dir: Option<String>,
     /// Upload R8/ProGuard `mapping.txt` when the build produced one.
     #[serde(default = "default_true")]
     pub upload_mapping: bool,
@@ -4675,6 +5069,7 @@ impl GooglePlayPublishConfig {
             release_notes: GooglePlayReleaseNotesSource::Changelog,
             release_notes_locale: default_release_notes_locale(),
             release_notes_dir: None,
+            listing_dir: None,
             upload_mapping: true,
             in_app_update_priority: None,
             rollout_policy: None,
@@ -4750,6 +5145,11 @@ pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> 
                 .push("release_notes_dir is required for repo_files release notes".to_string()),
         }
     }
+    if let Some(dir) = config.listing_dir.as_deref()
+        && let Err(error) = validate_repository_config_path(dir)
+    {
+        errors.push(format!("listing_dir {error}"));
+    }
     if config
         .in_app_update_priority
         .is_some_and(|priority| priority > 5)
@@ -4820,6 +5220,10 @@ pub struct RunnerPublishPlan {
     /// workflow settings, so nothing uploads, whatever the file says.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub disabled: bool,
+    /// A release freeze holds store uploads; its reason. Nothing uploads
+    /// until it is lifted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -4875,6 +5279,10 @@ pub struct RunnerPublishResult {
     /// repository (`release_notes_dir`), which replace the saved notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes: Option<Vec<AppStoreReleaseNote>>,
+    /// App Store uploads: the store listing read from the repository
+    /// (`listing_dir`), applied to the version Oore submits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing: Option<Vec<AppStoreListing>>,
 }
 
 // ── Pipeline Android signing types ──────────────────────────────
@@ -5094,6 +5502,11 @@ pub struct PipelineWorkflowSettings {
     /// Replaces the pipeline's approval policy for the workflow's builds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_required: Option<bool>,
+    /// TestFlight groups the workflow's builds go to, replacing the file's
+    /// and the pipeline's groups. Only used when the upload goes to
+    /// TestFlight.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_groups: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
 }
@@ -5115,6 +5528,8 @@ pub struct UpdatePipelineWorkflowSettingsRequest {
     pub publish_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub testflight_groups: Option<Vec<String>>,
 }
 
 // ── Pipeline iOS signing types ──────────────────────────────────
@@ -5497,6 +5912,23 @@ pub struct AppStoreReleaseNote {
     pub whats_new: String,
 }
 
+/// One language of an App Store listing, read from the repository. Absent
+/// fields are left as they are in App Store Connect.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
+pub struct AppStoreListing {
+    pub locale: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keywords: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub promotional_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marketing_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support_url: Option<String>,
+}
+
 /// App Store publishing settings for a pipeline, stored as the `app_store`
 /// publish target. Uploads use the App Store Connect API key from the
 /// pipeline's iOS signing settings and require the `app_store` export method.
@@ -5534,6 +5966,15 @@ pub struct AppStorePublishConfig {
     /// build. Relative to the repository root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_notes_dir: Option<String>,
+    /// A repository directory with the store listing in fastlane's layout,
+    /// `<locale>/description.txt`, `keywords.txt`, `promotional_text.txt`,
+    /// `marketing_url.txt` and `support_url.txt`, such as
+    /// `fastlane/metadata`. Each submitted version gets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listing_dir: Option<String>,
+    /// The listing the runner read from `listing_dir` for this upload.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub listing: Vec<AppStoreListing>,
     /// Cancel an open review submission that holds other items (an in-app
     /// event, a custom product page) instead of waiting for someone to
     /// clear it, like Codemagic's `--cancel-previous-submissions`.
@@ -6047,6 +6488,11 @@ pub struct NotificationChannel {
     /// daemons that predate it, which is the same as none.
     #[serde(default)]
     pub slack_mentions: Vec<SlackMention>,
+    /// Slack channel ID, such as `C0123ABCD`, the bot token posts release
+    /// updates to (Slack only). With it, each release gets one message that
+    /// Oore edits as the release moves, with details in its thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack_channel_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
     pub created_at: i64,
@@ -6088,6 +6534,10 @@ pub struct CreateNotificationChannelRequest {
     /// Slack member IDs to mention (Slack only). Works without a bot token.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub slack_mentions: Vec<SlackMention>,
+    /// Slack channel ID for one updating message per release (Slack only).
+    /// Needs a bot token with `chat:write` that is in the channel.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack_channel_id: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -6120,6 +6570,10 @@ pub struct UpdateNotificationChannelRequest {
     /// empty list to clear.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub slack_mentions: Option<Vec<SlackMention>>,
+    /// New Slack channel ID for release updates. Omit to keep existing; pass
+    /// an empty string to clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slack_channel_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
@@ -6705,6 +7159,12 @@ pub struct Release {
     /// together. App Store releases only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_status: Option<String>,
+    /// How long store review usually takes for this app on this store, in
+    /// seconds: the average of its last five finished reviews (App Store
+    /// and TestFlight counted apart). Only on releases in review, and absent
+    /// until the app has finished two reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typical_review_seconds: Option<i64>,
     /// Why the release is in its state, in the store's words where there
     /// are some: the reason of its latest history entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -7526,4 +7986,202 @@ mod tests {
             }
         }
     }
+}
+
+// ── Testers: latest links, groups, installs, device registration ──
+
+/// A link that always installs the newest succeeded build of a pipeline,
+/// optionally only from one branch.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct LatestInstallLink {
+    pub id: String,
+    pub project_id: String,
+    pub pipeline_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    pub platform: BuildPlatform,
+    /// The full link. Only returned when the link is created; later lists
+    /// show `prefix` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub prefix: String,
+    pub created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_by_email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<i64>,
+    pub use_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateLatestInstallLinkRequest {
+    pub platform: BuildPlatform,
+    /// Only builds from this branch. Empty or absent means any branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListLatestInstallLinksResponse {
+    pub links: Vec<LatestInstallLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TesterGroupMember {
+    pub user_id: String,
+    pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// A named set of people a build can be sent to, such as QA or design.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct TesterGroup {
+    pub id: String,
+    pub name: String,
+    pub members: Vec<TesterGroupMember>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct TesterGroupRequest {
+    /// 1 to 80 characters, unique on the instance.
+    pub name: String,
+    pub member_user_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListTesterGroupsResponse {
+    pub groups: Vec<TesterGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SendBuildToGroupRequest {
+    pub group_id: String,
+    /// What to test, up to 1000 characters. Shown in the email.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildShareRecipient {
+    pub user_id: String,
+    pub email: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// First install of this build by this person.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_at: Option<i64>,
+    /// The person cannot open this app, so the email could not include it.
+    pub no_access: bool,
+}
+
+/// A build sent to a tester group, with who installed it since.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildShare {
+    pub id: String,
+    pub build_id: String,
+    pub group_id: String,
+    pub group_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sent_by_email: Option<String>,
+    pub sent_at: i64,
+    pub recipients: Vec<BuildShareRecipient>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListBuildSharesResponse {
+    pub shares: Vec<BuildShare>,
+}
+
+/// Someone installing one of a build's artifacts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ArtifactInstall {
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
+    /// How it was installed: `install_page`, `share_link` or `latest_link`.
+    pub via: String,
+    pub installed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListArtifactInstallsResponse {
+    pub installs: Vec<ArtifactInstall>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceRegistrationState {
+    /// Waiting for the iPhone to install the profile.
+    Pending,
+    /// Apple has the device; the next ad hoc build includes it.
+    Registered,
+    Failed,
+    Expired,
+}
+
+/// Registering an iPhone for a pipeline's ad hoc builds from the install
+/// page: the phone installs a profile that reports its UDID.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct DeviceRegistration {
+    pub id: String,
+    pub pipeline_id: String,
+    pub state: DeviceRegistrationState,
+    /// Open this on the iPhone, in Safari.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct CreateDeviceRegistrationRequest {
+    /// A name for the device in Apple's list, such as `Asha's iPhone`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+}
+
+/// Recent tester feedback across apps the caller can see.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RecentFeedback {
+    pub feedback: BuildFeedback,
+    pub project_id: String,
+    pub project_name: String,
+    pub build_number: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ListRecentFeedbackResponse {
+    pub feedback: Vec<RecentFeedback>,
+}
+
+/// Web push for the installed tester portal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct WebPushConfig {
+    /// VAPID public key, base64url, for `PushManager.subscribe`.
+    pub public_key: String,
+    /// Whether this browser endpoint is subscribed for the caller.
+    pub subscribed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebPushSubscriptionRequest {
+    pub endpoint: String,
+    /// The subscription's `p256dh` key, base64url.
+    pub p256dh: String,
+    /// The subscription's `auth` secret, base64url.
+    pub auth: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct WebPushUnsubscribeRequest {
+    pub endpoint: String,
 }

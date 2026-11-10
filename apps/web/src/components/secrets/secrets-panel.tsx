@@ -59,7 +59,7 @@ import { Text } from '@/components/layout/text'
 
 const SCOPE_LABEL = {
   instance: 'Instance',
-  project: 'Project',
+  project: 'App',
   pipeline: 'Pipeline',
 } as const satisfies Record<SecretScope, string>
 

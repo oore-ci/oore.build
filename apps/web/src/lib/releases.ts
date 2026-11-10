@@ -585,7 +585,7 @@ export const RELEASE_ACTION_COPY = {
     label: 'Approve',
     title: 'Approve release?',
     description: (release) =>
-      `${releaseVersionLabel(release)} continues to ${RELEASE_STORE_LABEL[release.store]} ${release.track}.`,
+      `${releaseVersionLabel(release)} continues to ${releaseDestinationLabel(release).replace(' · ', ' ')}.`,
     confirmLabel: 'Approve',
   },
   raise: {
@@ -685,12 +685,12 @@ export const RELEASE_ACTION_COPY = {
     destructive: true,
   },
   attach_schedule: {
-    done: 'Schedule attached',
-    label: 'Let Oore roll it out',
-    title: 'Let Oore roll it out?',
+    done: 'Oore manages this rollout now',
+    label: 'Manage rollout with Oore',
+    title: 'Manage this rollout with Oore?',
     description: (release) =>
       `Oore takes over ${releaseVersionLabel(release)}'s rollout from ${formatRolloutPercent(release.rollout_fraction)} with the release's schedule${release.policy.steps?.length ? ` (${release.policy.steps.map(formatRolloutPercent).join(', ')})` : ''}, halting on crash spikes.`,
-    confirmLabel: 'Attach schedule',
+    confirmLabel: 'Let Oore manage it',
   },
   detach_schedule: {
     done: 'Schedule detached',
@@ -794,4 +794,28 @@ export function releaseChangeShare(
   return partial && event.to_fraction != null && event.to_fraction < 1
     ? formatRolloutPercent(event.to_fraction)
     : null
+}
+
+/** How long a review usually takes, roughly: "about 2 hours", "about 1 day". */
+export function reviewDurationLabel(seconds: number): string {
+  const hours = seconds / 3600
+  if (hours < 1) return 'under an hour'
+  if (hours < 20) {
+    const rounded = Math.max(1, Math.round(hours))
+    return `about ${rounded} ${rounded === 1 ? 'hour' : 'hours'}`
+  }
+  const days = Math.max(1, Math.round(hours / 24))
+  return `about ${days} ${days === 1 ? 'day' : 'days'}`
+}
+
+/**
+ * "Usually about 1 day for this app", from the app's own recent reviews,
+ * for a release in review. `null` until the app has a review history.
+ */
+export function reviewExpectation(
+  release: Pick<Release, 'state' | 'typical_review_seconds'>,
+): string | null {
+  if (release.state !== 'in_review' || release.typical_review_seconds == null)
+    return null
+  return `usually ${reviewDurationLabel(release.typical_review_seconds)} for this app`
 }

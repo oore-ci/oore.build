@@ -14,10 +14,12 @@
     "oore-doctor",
     "oore-status",
     "oore-login",
+    "oore-init",
     "oore-pipeline-validate",
     "oore-pipeline-plan",
     "oore-pipeline-migrate",
     "oore-pipeline-workflows",
+    "oore-pipeline-readiness",
     "oore-build-run",
     "oore-version"
   ],

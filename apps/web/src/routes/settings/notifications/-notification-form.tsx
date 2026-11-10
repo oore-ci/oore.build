@@ -1,8 +1,15 @@
 import type { UseFormReturn } from 'react-hook-form'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { useWatch } from 'react-hook-form'
 import * as z from 'zod'
 import type { SmtpConfig, UpdateSmtpConfig } from '@oore/client/models'
 import { Button } from '@/components/ui/button'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowDown01Icon } from '@hugeicons/core-free-icons'
 import { Checkbox } from '@/components/ui/checkbox'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Switch } from '@/components/ui/switch'
@@ -110,6 +117,10 @@ export const notificationChannelSchema = z.object({
   secret: z.string().optional(),
   remove_secret: z.boolean(),
   slack_mentions: z.string(),
+  slack_channel_id: z
+    .string()
+    .trim()
+    .regex(/^([CG][A-Z0-9]{8,23})?$/, 'Use the channel ID, such as C0123ABCD'),
   event_scope: z.enum(['all', 'selected']),
   events: z.array(z.string()),
   smtp_host: z.string().optional(),
@@ -240,6 +251,7 @@ export const notificationChannelDefaults: NotificationChannelFormValues = {
   secret: '',
   remove_secret: false,
   slack_mentions: '',
+  slack_channel_id: '',
   event_scope: 'all',
   events: [],
   smtp_host: '',
@@ -262,6 +274,7 @@ export function notificationChannelEditValues(
     enabled: channel.enabled,
     project_id: channel.project_id ?? ALL_PROJECTS,
     slack_mentions: formatSlackMentions(channel.slack_mentions),
+    slack_channel_id: channel.slack_channel_id ?? '',
     event_scope: channel.events.length > 0 ? 'selected' : 'all',
     events: channel.events,
     smtp_host: smtp?.host ?? '',
@@ -304,6 +317,7 @@ export function createNotificationChannelRequest(
       url: values.url,
       secret: values.secret || undefined,
       slack_mentions: slackMentions(values),
+      slack_channel_id: values.slack_channel_id.trim() || undefined,
     }
   }
   if (values.channel_type !== 'email') {
@@ -337,6 +351,7 @@ export function updateNotificationChannelRequest(
       url: values.url || undefined,
       secret: values.remove_secret ? '' : values.secret || undefined,
       slack_mentions: slackMentions(values),
+      slack_channel_id: values.slack_channel_id.trim(),
     }
   }
   if (values.channel_type !== 'email') {
@@ -381,7 +396,7 @@ function ProjectScopeField({
   const projectsQuery = useProjects({ limit: 100 })
   const projects = projectsQuery.data?.projects ?? []
   const items = {
-    [ALL_PROJECTS]: 'All projects',
+    [ALL_PROJECTS]: 'All apps',
     ...Object.fromEntries(
       projects.map((project) => [project.id, project.name]),
     ),
@@ -393,7 +408,7 @@ function ProjectScopeField({
       name="project_id"
       render={({ field }) => (
         <FormItem>
-          <FormLabel>Project</FormLabel>
+          <FormLabel>App</FormLabel>
           <Select
             value={field.value}
             onValueChange={field.onChange}
@@ -401,7 +416,7 @@ function ProjectScopeField({
           >
             <FormControl>
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="All projects" />
+                <SelectValue placeholder="All apps" />
               </SelectTrigger>
             </FormControl>
             <SelectContent>
@@ -415,7 +430,7 @@ function ProjectScopeField({
           <FormDescription>
             {field.value === ALL_PROJECTS
               ? 'Receives events from every project, plus runner alerts.'
-              : 'Receives build and release events for this project only.'}
+              : 'Receives build and release events for this app only.'}
           </FormDescription>
           {projectsQuery.isError ? (
             <p className="text-sm text-destructive">
@@ -818,84 +833,135 @@ export function NotificationChannelFormFields({
           ) : null}
 
           {channelType === 'slack' ? (
-            <>
-              <FormField
-                control={form.control}
-                name="secret"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      {editing ? 'New bot token' : 'Bot token (optional)'}
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type="password"
-                        placeholder={editing ? undefined : 'xoxb-...'}
-                        autoComplete="off"
-                        disabled={removeSecret}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {channel?.has_secret
-                        ? removeSecret
-                          ? 'The bot token will be removed when you save.'
-                          : 'Leave blank to keep the configured bot token.'
-                        : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {channel?.has_secret ? (
+            <Collapsible
+              defaultOpen={
+                !!channel?.has_secret ||
+                (channel?.slack_mentions?.length ?? 0) > 0 ||
+                !!channel?.slack_channel_id
+              }
+              className="space-y-4"
+            >
+              <CollapsibleTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-ml-2 data-panel-open:[&_svg]:rotate-180"
+                  />
+                }
+              >
+                Mentions and release threads
+                <HugeiconsIcon icon={ArrowDown01Icon} data-icon="inline-end" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="space-y-4">
                 <FormField
                   control={form.control}
-                  name="remove_secret"
+                  name="secret"
                   render={({ field }) => (
-                    <FormItem className="flex items-start gap-3">
+                    <FormItem>
+                      <FormLabel>
+                        {editing ? 'New bot token' : 'Bot token (optional)'}
+                      </FormLabel>
                       <FormControl>
-                        <Checkbox
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
+                        <Input
+                          type="password"
+                          placeholder={editing ? undefined : 'xoxb-...'}
+                          autoComplete="off"
+                          disabled={removeSecret}
+                          {...field}
                         />
                       </FormControl>
-                      <div className="space-y-0.5">
-                        <FormLabel>Remove configured bot token</FormLabel>
-                        <FormDescription>
-                          Only people listed under member IDs will be mentioned.
-                        </FormDescription>
-                      </div>
+                      <FormDescription>
+                        {channel?.has_secret
+                          ? removeSecret
+                            ? 'The bot token will be removed when you save.'
+                            : 'Leave blank to keep the configured bot token.'
+                          : 'A bot token with the users:read.email scope lets Oore mention people by matching their sign-in email. With chat:write and a channel ID below, it also keeps one message per release. Without it, use member IDs below; anyone unmapped is named by email or Git username.'}
+                      </FormDescription>
+                      <FormMessage />
                     </FormItem>
                   )}
                 />
-              ) : null}
-              <FormField
-                control={form.control}
-                name="slack_mentions"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Slack member IDs (optional)</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder={
-                          'dev@example.com U0123ABCD\noctocat U0456EFGH'
-                        }
-                        rows={4}
-                        spellCheck={false}
-                        className="font-mono"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      One per line: a sign-in email or Git username, then the
-                      Slack member ID to mention. Push builds use the Git
-                      username. These take priority over the bot token lookup.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </>
+                {channel?.has_secret ? (
+                  <FormField
+                    control={form.control}
+                    name="remove_secret"
+                    render={({ field }) => (
+                      <FormItem className="flex items-start gap-3">
+                        <FormControl>
+                          <Checkbox
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                        <div className="space-y-0.5">
+                          <FormLabel>Remove configured bot token</FormLabel>
+                          <FormDescription>
+                            Only people listed under member IDs will be
+                            mentioned.
+                          </FormDescription>
+                        </div>
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+                <FormField
+                  control={form.control}
+                  name="slack_channel_id"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        Channel ID for release threads (optional)
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="C0123ABCD"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        With a bot token that has chat:write and is in this
+                        channel, each release gets one message that Oore edits
+                        as it moves (uploaded, in review, approved, rolling,
+                        done), and every change goes in its thread. Find the ID
+                        under the channel's name, then About.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="slack_mentions"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Slack member IDs (optional)</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          placeholder={
+                            'dev@example.com U0123ABCD\noctocat U0456EFGH'
+                          }
+                          rows={4}
+                          spellCheck={false}
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        One per line: a sign-in email or Git username, then the
+                        Slack member ID to mention. Push builds use the Git
+                        username. These take priority over the bot token lookup.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </CollapsibleContent>
+            </Collapsible>
           ) : null}
         </>
       )}

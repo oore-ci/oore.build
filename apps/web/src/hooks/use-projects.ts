@@ -15,12 +15,14 @@ import type {
 import {
   addProjectMember,
   createProject,
+  createSampleProject,
   deleteProject,
   removeProjectMember,
   updateProject,
   updateProjectMember,
 } from '@oore/client/operations'
 import {
+  detectProjectAppOptions,
   getProjectOptions,
   getProjectQueryKey,
   listProjectMemberCandidatesOptions,
@@ -105,6 +107,28 @@ export function useProject(projectId: string) {
   })
 }
 
+/**
+ * What app the repository holds on its default branch: Flutter or not, the
+ * platform folders and Oore config files. Read through the source provider,
+ * so it is fetched once per visit.
+ */
+export function useProjectAppDetection(
+  projectId: string,
+  options?: { enabled?: boolean },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+  const query = scopeOoreQueryOptions(
+    instanceId,
+    detectProjectAppOptions({ client, path: { project_id: projectId } }),
+  )
+  return useQuery({
+    ...query,
+    enabled: (options?.enabled ?? true) && !!baseUrl && !!token && !!projectId,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
+}
+
 export function useCreateProject() {
   const queryClient = useQueryClient()
   const { baseUrl, client, instanceId, token } = useApiContext()
@@ -114,6 +138,28 @@ export function useCreateProject() {
       if (!baseUrl || !token)
         return Promise.reject(new Error('Not authenticated'))
       return createProject({ body: data, client, throwOnError: true })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: scopeOoreQueryKey(
+          instanceId,
+          listProjectsQueryKey({ client }),
+        ),
+      })
+    },
+  })
+}
+
+/** Local Only: the backend creates a Flutter sample app and adds it. */
+export function useCreateSampleProject() {
+  const queryClient = useQueryClient()
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useMutation({
+    mutationFn: () => {
+      if (!baseUrl || !token)
+        return Promise.reject(new Error('Not authenticated'))
+      return createSampleProject({ client, throwOnError: true })
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({

@@ -27,7 +27,7 @@ import {
   LIVE_RELEASE_STATES,
   needsStoreAction,
   RELEASE_HEALTH_LABEL,
-  RELEASE_STORE_LABEL,
+  releaseDestinationLabel,
   releaseAppName,
   releaseHealthDetail,
   releaseNextStep,
@@ -59,6 +59,8 @@ function RolloutHealth({
   release: Release
   storeAnchor?: string
 }) {
+  // A release with no crash numbers yet has nothing to report.
+  if (release.health === 'unknown') return null
   const badge = (
     <Badge variant={getReleaseHealthVariant(release.health)}>
       {RELEASE_HEALTH_LABEL[release.health]}
@@ -69,14 +71,9 @@ function RolloutHealth({
       <TooltipTrigger
         render={
           storeAnchor ? (
-            <a
-              href={`#${storeAnchor}`}
-              onClick={(event) => {
-                const target = document.getElementById(storeAnchor)
-                if (!target) return
-                event.preventDefault()
-                target.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }}
+            <Link
+              to="/insights"
+              hash={storeAnchor}
               aria-label={`Rollout health ${RELEASE_HEALTH_LABEL[release.health]}. Open store health for ${releaseAppName(release)}`}
               className={cn(focusRingVariants(), 'rounded-2xl')}
             />
@@ -116,7 +113,7 @@ function ReleaseRow({
         {releaseAppName(release)}
       </Link>
       <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
-        {RELEASE_STORE_LABEL[release.store]} {release.track} ·{' '}
+        {releaseDestinationLabel(release)} ·{' '}
         <span className="tabular-nums">{releaseVersionLabel(release)}</span>
         {isAdoptedRelease(release) ? ' · found in store' : ''}
       </span>

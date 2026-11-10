@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { detectInstallDevice } from './artifact-install'
+import { artifactPurposeLabel, detectInstallDevice } from './artifact-install'
 
 const IOS =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko)'
@@ -33,5 +33,28 @@ describe('detectInstallDevice', () => {
     expect(detectInstallDevice(ANDROID)).toBe('android')
     expect(detectInstallDevice(MAC)).toBe('other')
     expect(detectInstallDevice('')).toBe('other')
+  })
+})
+
+describe('artifactPurposeLabel', () => {
+  test('names the app by platform and variant', () => {
+    expect(
+      artifactPurposeLabel({ artifact_type: 'apk', name: 'app-debug.apk' }),
+    ).toBe('Android debug app')
+    expect(
+      artifactPurposeLabel({
+        artifact_type: 'apk',
+        name: 'app-arm64-v8a-release.apk',
+      }),
+    ).toBe('Android app')
+    expect(
+      artifactPurposeLabel({ artifact_type: 'ipa', name: 'FlutterShop.ipa' }),
+    ).toBe('iOS app')
+  })
+
+  test('says an App Bundle cannot be installed', () => {
+    expect(
+      artifactPurposeLabel({ artifact_type: 'aab', name: 'app-release.aab' }),
+    ).toBe('App Bundle for Google Play, not installable')
   })
 })

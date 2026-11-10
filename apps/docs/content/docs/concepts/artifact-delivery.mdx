@@ -5,7 +5,7 @@ description: 'Understand how Oore turns runner output into authorized downloads 
 ---
 
 An artifact becomes available only after the runner uploads and finalizes it.
-Oore then checks project access before issuing a short-lived capability for a
+Oore then checks app access before issuing a short-lived capability for a
 download or mobile installation.
 
 ## Storage changes the byte path
@@ -32,9 +32,9 @@ Declared artifact patterns are part of build success. A pipeline with patterns
 must produce and finalize a match; a pipeline with no patterns does not require
 an artifact.
 
-## Downloads begin with project authorization
+## Downloads begin with app authorization
 
-Oore checks project artifact-read access before generating a download. The
+Oore checks app artifact-read access before generating a download. The
 result is a short-lived URL and expiry:
 
 - local storage returns a signed Oore URL
@@ -55,7 +55,7 @@ complete app metadata. The phone fetches a generated manifest and then the IPA,
 so the same artifact-scoped capability remains valid for both requests within
 its limited lifetime.
 
-The copied build or install page still requires Oore sign-in and project
+The copied build or install page still requires Oore sign-in and app
 access. When an authorized user selects **Install**, Oore creates the
 artifact-scoped delivery capability. The resulting delivery URL grants access
 only to that artifact.

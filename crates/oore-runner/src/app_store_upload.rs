@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use oore_contract::{
-    AppStoreDestination, AppStorePublishConfig, AppStoreReleaseNote, PublishPreflight,
-    PublishStore, RunnerAppStoreUploadCredentials, RunnerPublishResult,
+    AppStoreDestination, AppStoreListing, AppStorePublishConfig, AppStoreReleaseNote,
+    PublishPreflight, PublishStore, RunnerAppStoreUploadCredentials, RunnerPublishResult,
 };
 use serde_json::Value;
 
@@ -468,6 +468,7 @@ pub(crate) fn publish_result(
         },
         held_for_review: false,
         release_notes,
+        listing: None,
     })
 }
 
@@ -519,6 +520,90 @@ pub(crate) fn read_release_notes_dir(
     }
     notes.sort_by(|a, b| a.locale.cmp(&b.locale));
     Ok((!notes.is_empty()).then_some(notes))
+}
+
+/// Longest App Store listing fields, per App Store Connect.
+const MAX_DESCRIPTION_CHARS: usize = 4000;
+const MAX_KEYWORDS_CHARS: usize = 100;
+const MAX_PROMOTIONAL_TEXT_CHARS: usize = 170;
+
+fn listing_file(
+    dir: &Path,
+    file: &str,
+    max_chars: Option<usize>,
+) -> anyhow::Result<Option<String>> {
+    let path = dir.join(file);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if let Some(max) = max_chars
+        && text.chars().count() > max
+    {
+        anyhow::bail!(
+            "{} is {} characters; App Store Connect takes at most {max}",
+            path.display(),
+            text.chars().count()
+        );
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// Reads the App Store listing in fastlane's layout:
+/// `<dir>/<locale>/description.txt`, `keywords.txt`,
+/// `promotional_text.txt`, `marketing_url.txt` and `support_url.txt`.
+/// `None` when the directory is missing or holds no listing.
+pub(crate) fn read_listing_dir(
+    workspace: &Path,
+    dir: &str,
+) -> anyhow::Result<Option<Vec<AppStoreListing>>> {
+    let canonical_workspace = workspace.canonicalize()?;
+    let Ok(canonical) = workspace.join(dir).canonicalize() else {
+        return Ok(None);
+    };
+    if !canonical.starts_with(&canonical_workspace) {
+        anyhow::bail!("listing_dir {dir} is outside the repository");
+    }
+    let mut listings = Vec::new();
+    for entry in fs::read_dir(&canonical)? {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let locale = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if locale.is_empty() || locale == "default" || locale == "review_information" {
+            continue;
+        }
+        let listing = AppStoreListing {
+            locale,
+            description: listing_file(&path, "description.txt", Some(MAX_DESCRIPTION_CHARS))?,
+            keywords: listing_file(&path, "keywords.txt", Some(MAX_KEYWORDS_CHARS))?,
+            promotional_text: listing_file(
+                &path,
+                "promotional_text.txt",
+                Some(MAX_PROMOTIONAL_TEXT_CHARS),
+            )?,
+            marketing_url: listing_file(&path, "marketing_url.txt", None)?,
+            support_url: listing_file(&path, "support_url.txt", None)?,
+        };
+        if listing
+            != (AppStoreListing {
+                locale: listing.locale.clone(),
+                ..AppStoreListing::default()
+            })
+        {
+            listings.push(listing);
+        }
+    }
+    listings.sort_by(|a, b| a.locale.cmp(&b.locale));
+    Ok((!listings.is_empty()).then_some(listings))
 }
 
 /// Whether a PNG has an alpha channel, from its IHDR colour type (4 is grey
@@ -699,6 +784,26 @@ mod tests {
         assert!(read_release_notes_dir(&dir, "../").is_err());
         let _ = fs::remove_dir_all(dir);
     }
+    #[test]
+    fn reads_the_listing_from_the_repository() {
+        let dir = std::env::temp_dir().join(format!("oore-listing-{}", std::process::id()));
+        fs::create_dir_all(dir.join("meta/en-US")).unwrap();
+        fs::create_dir_all(dir.join("meta/review_information")).unwrap();
+        fs::create_dir_all(dir.join("meta/de-DE")).unwrap();
+        fs::write(dir.join("meta/en-US/description.txt"), "Shop faster\n").unwrap();
+        fs::write(dir.join("meta/en-US/keywords.txt"), "shop,cart").unwrap();
+        fs::write(dir.join("meta/review_information/notes.txt"), "x").unwrap();
+        fs::write(dir.join("meta/de-DE/release_notes.txt"), "only notes").unwrap();
+        let listing = read_listing_dir(&dir, "meta").unwrap().unwrap();
+        assert_eq!(listing.len(), 1);
+        assert_eq!(listing[0].locale, "en-US");
+        assert_eq!(listing[0].description.as_deref(), Some("Shop faster"));
+        assert_eq!(listing[0].keywords.as_deref(), Some("shop,cart"));
+        fs::write(dir.join("meta/en-US/keywords.txt"), "k".repeat(101)).unwrap();
+        assert!(read_listing_dir(&dir, "meta").is_err());
+        assert!(read_listing_dir(&dir, "missing").unwrap().is_none());
+        fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn publish_result_uses_signed_app_identity() {
@@ -859,7 +964,8 @@ mod tests {
             Path::new("/tmp/Runner.ipa"),
             &credentials(),
             &key_dir,
-            Duration::from_millis(500),
+            // Long enough for a busy host to start the script and record its pid.
+            Duration::from_secs(3),
             Duration::ZERO,
         )
         .await
@@ -870,7 +976,12 @@ mod tests {
             "{error}"
         );
         assert!(!key_dir.join("AuthKey_ABC123DEF4.p8").exists());
-        let pid = fs::read_to_string(dir.join("altool.pid")).unwrap();
+        // No pid file means the timeout stopped the script before it ran
+        // its first line, so nothing it started can be left behind.
+        let Ok(pid) = fs::read_to_string(dir.join("altool.pid")) else {
+            let _ = fs::remove_dir_all(dir);
+            return;
+        };
         let pid: libc::pid_t = pid.trim().parse().unwrap();
         let mut gone = false;
         for _ in 0..50 {

@@ -41,6 +41,7 @@ mod metrics;
 mod publish;
 mod tart;
 mod test_reports;
+mod toolchain;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -370,6 +371,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
     let tart_version = tart::find_tart()
         .and_then(|tart| tart::tart_version(&tart))
         .unwrap_or_default();
+    let toolchain = toolchain::refresh().await;
 
     serde_json::json!({
         "os": std::env::consts::OS,
@@ -379,6 +381,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         "tart_version": tart_version,
         "version": version,
         "protocol_version": RUNNER_PROTOCOL_VERSION,
+        "toolchain": toolchain,
     })
 }
 
@@ -3582,6 +3585,9 @@ fn heartbeat_capabilities(
     {
         object.insert("vm_images".to_string(), value);
     }
+    if let (Some(object), Some(toolchain)) = (capabilities.as_object_mut(), toolchain::snapshot()) {
+        object.insert("toolchain".to_string(), toolchain);
+    }
     capabilities
 }
 
@@ -3837,6 +3843,14 @@ pub async fn run_runner_forever(
                     eprintln!("Runner heartbeat is temporarily unavailable: {error:#}");
                 }
             }
+        }
+    });
+
+    // Tools installed while the runner runs show up in the web UI.
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(toolchain::REFRESH_INTERVAL).await;
+            toolchain::refresh().await;
         }
     });
 
@@ -5783,6 +5797,18 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
+    report_build_identity(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &oore_contract::ReportBuildIdentityRequest {
+            version_name: version_name.clone(),
+            version_code: Some(version_code),
+            ..read_head_commit_identity(&workspace).await
+        },
+    )
+    .await;
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
@@ -7207,6 +7233,15 @@ async fn run_publish_steps(
                     },
                     None => None,
                 };
+                let listing = match app_store.config.listing_dir.as_deref() {
+                    Some(dir) => match app_store_upload::read_listing_dir(workspace, dir) {
+                        Ok(listing) => listing,
+                        Err(error) => {
+                            break 'upload Err(error.context("failed to read listing_dir"));
+                        }
+                    },
+                    None => None,
+                };
                 // Once altool starts, Apple may get the build; don't start
                 // it for a build that has already stopped.
                 match check_build_active(client, daemon_url, config, &job.build_id, authority)
@@ -7219,7 +7254,7 @@ async fn run_publish_steps(
                         uploaded = app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir) => {
                             uploaded.and_then(|message| {
                                 app_store_upload::publish_result(metadata, &app_store.config, release_notes)
-                                    .map(|result| (message, result))
+                                    .map(|result| (message, RunnerPublishResult { listing, ..result }))
                             })
                         }
                         _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
@@ -8923,6 +8958,63 @@ async fn abort_artifact(
         .await;
 }
 
+/// The checked-out commit's title and author, from `git log`. Empty when
+/// git cannot say, which leaves the build without them.
+async fn read_head_commit_identity(workspace: &Path) -> oore_contract::ReportBuildIdentityRequest {
+    let output = tokio::process::Command::new("git")
+        .args(["log", "-1", "--format=%s%x00%an"])
+        .current_dir(workspace)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            parse_head_commit_identity(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => oore_contract::ReportBuildIdentityRequest::default(),
+    }
+}
+
+fn parse_head_commit_identity(raw: &str) -> oore_contract::ReportBuildIdentityRequest {
+    let mut parts = raw.trim_end_matches('\n').splitn(2, '\0');
+    let text = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    oore_contract::ReportBuildIdentityRequest {
+        commit_title: text(parts.next()),
+        commit_author: text(parts.next()),
+        ..Default::default()
+    }
+}
+
+/// Tells the backend what the build is. Best effort: an older backend
+/// without the endpoint, or a failed request, only leaves the build
+/// without a title and version.
+async fn report_build_identity(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    identity: &oore_contract::ReportBuildIdentityRequest,
+) {
+    let result = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/identity",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(identity)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
+        .send()
+        .await;
+    if let Err(error) = result {
+        println!("Could not report build identity for {build_id}: {error}");
+    }
+}
+
 struct StatusReport<'a> {
     build_id: &'a str,
     status: &'a str,
@@ -9683,6 +9775,18 @@ mod tests {
     }
 
     #[test]
+    fn head_commit_identity_reads_title_and_author() {
+        let identity = super::parse_head_commit_identity("Fix saved addresses\0Mina Patel\n");
+        assert_eq!(
+            identity.commit_title.as_deref(),
+            Some("Fix saved addresses")
+        );
+        assert_eq!(identity.commit_author.as_deref(), Some("Mina Patel"));
+        let empty = super::parse_head_commit_identity("");
+        assert!(empty.commit_title.is_none() && empty.commit_author.is_none());
+    }
+
+    #[test]
     fn pubspec_version_name_drops_build_number() {
         assert_eq!(
             pubspec_version_name("name: app\nversion: 1.4.0+12\n").as_deref(),
@@ -10059,6 +10163,7 @@ mod publish_report_tests {
             testflight_groups: None,
             held_for_review: false,
             release_notes: None,
+            listing: None,
         };
         report_publish_result(
             &reqwest::Client::new(),
@@ -10559,6 +10664,7 @@ mod file_publish_tests {
             google_play: Some(play_settings("production", None)),
             app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
             disabled: false,
+            frozen: None,
         };
         let from_file = plan.publish.apply(settings);
         // What the runner gets when the settings themselves say it.
@@ -10567,6 +10673,7 @@ mod file_publish_tests {
             google_play: Some(play_settings("closed", Some(20.0))),
             app_store: Some(app_store_settings(testflight(&["Beta"]))),
             disabled: false,
+            frozen: None,
         };
         assert_eq!(from_file.changelog, equivalent.changelog);
         assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
@@ -10596,6 +10703,7 @@ mod file_publish_tests {
                 google_play: Some(play_settings("internal", None)),
                 app_store: None,
                 disabled: false,
+                frozen: None,
             });
             assert_eq!(
                 effective.google_play.unwrap(),

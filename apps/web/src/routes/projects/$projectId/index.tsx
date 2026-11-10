@@ -1,3 +1,4 @@
+import { useAuthStore } from '@/stores/auth-store'
 import { lazy, Suspense, useState } from 'react'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -56,6 +57,11 @@ import { useListNavigation } from '@/hooks/use-list-navigation'
 const ProjectOverview = lazy(() => import('./-project-overview'))
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
+const NextSteps = lazy(() =>
+  import('@/components/next-steps').then((module) => ({
+    default: module.NextSteps,
+  })),
+)
 
 import type { ProjectBuildSort } from './-project-build-sort'
 import { Stack } from '@/components/layout/stack'
@@ -66,6 +72,11 @@ const TriggerBuildDrawer = lazy(loadTriggerBuildDrawer)
 const ProjectBuildsTab = lazy(() =>
   import('./-project-detail-tabs').then((module) => ({
     default: module.ProjectBuildsTab,
+  })),
+)
+const ProjectReleasesTab = lazy(() =>
+  import('./-project-releases-tab').then((module) => ({
+    default: module.ProjectReleasesTab,
   })),
 )
 const ProjectEnvironmentsTab = lazy(() =>
@@ -100,6 +111,7 @@ const TAB_VALUES = [
   'overview',
   'pipelines',
   'builds',
+  'releases',
   'environments',
   'settings',
 ] as const
@@ -229,6 +241,7 @@ function ProjectDetailPage() {
     'instance_settings:write',
     'instance_settings:read',
   ])
+  const instanceRole = useAuthStore((s) => s.user?.role)
   const projectRole = data?.current_user_role ?? data?.project.current_user_role
   const canWriteProjects = hasProjectPermission(projectRole, 'projects:write')
   const canDeleteProjects = hasProjectPermission(projectRole, 'projects:delete')
@@ -239,6 +252,7 @@ function ProjectDetailPage() {
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const canManageAccess = projectRole === 'maintainer'
   const canManageReleases = projectRole === 'maintainer'
+  const isInstanceAdmin = instanceRole === 'owner' || instanceRole === 'admin'
   const canOperateReleases =
     projectRole === 'maintainer' || projectRole === 'developer'
   const pipelineCount = search.pipelineQ
@@ -286,7 +300,7 @@ function ProjectDetailPage() {
 
   const activeTab: TabValue = tab ?? 'overview'
 
-  const label = data?.project.name ?? 'Project Details'
+  const label = data?.project.name ?? 'App Details'
 
   if (isLoading) {
     return (
@@ -303,12 +317,12 @@ function ProjectDetailPage() {
     if (isOoreApiError(error) && error.status === 404) {
       return (
         <PageLayout width="wide">
-          <PageMeta title="Project not found" noindex />
+          <PageMeta title="App not found" noindex />
           <NotFoundState
-            title="Project not found"
-            description="This project was deleted, expired, or the link is wrong."
+            title="App not found"
+            description="This app was deleted, expired, or the link is wrong."
             backTo="/projects"
-            backLabel="Back to projects"
+            backLabel="Back to apps"
           />
         </PageLayout>
       )
@@ -328,7 +342,7 @@ function ProjectDetailPage() {
                 render={<Link to="/projects" />}
                 nativeButton={false}
               >
-                Back to projects
+                Back to apps
               </Button>
               <Button
                 variant="outline"
@@ -373,11 +387,11 @@ function ProjectDetailPage() {
   function handleDelete() {
     deleteMutation.mutate(projectId, {
       onSuccess: () => {
-        toast.success('Project deleted')
+        toast.success('App deleted')
         void navigate({ to: '/projects' })
       },
       onError: (err) => {
-        toast.error(`Failed to delete project: ${err.message}`)
+        toast.error(`Failed to delete app: ${err.message}`)
       },
     })
   }
@@ -561,7 +575,7 @@ function ProjectDetailPage() {
         }}
         className="min-h-0 flex-1"
       >
-        {/* Five tabs outgrow a phone; the row scrolls instead of the page. */}
+        {/* Six tabs outgrow a phone; the row scrolls instead of the page. */}
         <div className="-mb-2 max-w-full shrink-0 overflow-x-auto pb-2">
           <TabsList variant="line">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -572,6 +586,7 @@ function ProjectDetailPage() {
             <TabsTrigger value="builds">
               Builds{buildCount > 0 ? ` (${buildCount})` : ''}
             </TabsTrigger>
+            <TabsTrigger value="releases">Releases</TabsTrigger>
             <TabsTrigger value="environments">Environments</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
@@ -593,7 +608,11 @@ function ProjectDetailPage() {
                 error={buildSummaryQuery.error}
                 onRetry={() => void buildSummaryQuery.refetch()}
                 setup={
-                  showSetup ? <SetupChecklist projectId={projectId} /> : null
+                  showSetup ? (
+                    <SetupChecklist projectId={projectId} />
+                  ) : (
+                    <NextSteps projectId={projectId} />
+                  )
                 }
               />
             </Suspense>
@@ -657,6 +676,15 @@ function ProjectDetailPage() {
           </Suspense>
         ) : null}
 
+        {activeTab === 'releases' ? (
+          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <ProjectReleasesTab
+              projectId={projectId}
+              canManage={canManageReleases || isInstanceAdmin}
+            />
+          </Suspense>
+        ) : null}
+
         {activeTab === 'environments' ? (
           <Suspense fallback={<Skeleton className="h-48 w-full" />}>
             <ProjectEnvironmentsTab
@@ -716,7 +744,7 @@ function ProjectDetailPage() {
                     canReadInstanceSettings ? [{ scope: 'instance' }] : []
                   }
                   target={{ scope: 'project', projectId }}
-                  title="Project secrets"
+                  title="App secrets"
                 />
                 <SigningIdentitiesPanel
                   canWrite={canWritePipelines}
@@ -727,7 +755,7 @@ function ProjectDetailPage() {
 
             {canDeleteProjects ? (
               <DangerZone
-                title="Delete this project"
+                title="Delete this app"
                 description={`Permanently deletes "${project.name}" and all associated pipelines and builds. This cannot be undone.`}
                 action={
                   <Button
@@ -747,9 +775,9 @@ function ProjectDetailPage() {
       <ConfirmDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
-        title="Delete project?"
+        title="Delete app?"
         description={`This will permanently delete "${project.name}" and all associated pipelines and builds. This action cannot be undone.`}
-        confirmLabel="Delete project"
+        confirmLabel="Delete app"
         confirmVariant="destructive"
         isPending={deleteMutation.isPending}
         pendingLabel="Deleting..."

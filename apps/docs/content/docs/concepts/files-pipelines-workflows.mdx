@@ -15,12 +15,12 @@ runs one workflow of one pipeline at one commit.
 | ------------ | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | The file     | The repository | Targets and their build commands, steps, env and vars, workflows, triggers (`on`), where to publish, and the names of signing identities and the Google Play service account secret |
 | The pipeline | Oore           | Which file to read, the default workflow, per-workflow settings, approval, schedules, timeout, size budget, and the store settings and API keys the file cannot name                |
-| The project  | Oore           | The repository, the signing library (keystores, certificates and profiles), and project secrets                                                                                     |
+| The app      | Oore           | The repository, the signing library (keystores, certificates and profiles), and app secrets                                                                                         |
 
 The file names credentials but never holds them. `signing: { ios: coin-store }`
-names an identity in the project's signing library;
+names an identity in the app's signing library;
 `service_account: PLAY_RELEASE` names a secret. The key material stays
-encrypted in Oore, and a commit can only pick among what the project already
+encrypted in Oore, and a commit can only pick among what the app already
 holds.
 
 Several pipelines can read the same file. Each pipeline keeps its own default
@@ -77,14 +77,14 @@ or ad hoc, and an App Store Connect upload needs App Store profiles.
 
 The file changes with the code and is reviewed with it, so a pull request can
 add a workflow, change a build command or move a release to another track.
-Credentials and gates change who can ship, so they stay where only project
+Credentials and gates change who can ship, so they stay where only app
 members with the right role can change them, and a commit cannot point a
-build at a key the project does not hold.
+build at a key the app does not hold.
 
 ## Next step
 
 - [Run two workflows from one file](/build/pipelines/two-workflows)
-- [Move credentials into the project library](/build/sign/project-library)
+- [Move credentials into the app library](/build/sign/project-library)
 - [Add pipelines from the repository](/build/pipelines/from-the-repository)
 - Every field in the [`.oore.yaml` version 2 reference](/reference/config/oore-yaml-v2)
   and the [pipeline settings reference](/reference/config/pipeline-settings)

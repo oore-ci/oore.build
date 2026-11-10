@@ -18,7 +18,7 @@ Each registered backend keeps its own:
 
 - origin and display label
 - authenticated user and session expiry
-- cached project, build, runner, and settings data
+- cached app, build, runner, and settings data
 
 Switching the active instance changes which namespace and backend the client
 uses. A session for one backend is never sent to another.
@@ -41,13 +41,13 @@ namespaced registry and authenticated sessions locally. The hosted service
 does not hold a server-side instance directory, shared session, or copy of
 backend data.
 
-Every backend remains responsible for its own users, projects, runners,
+Every backend remains responsible for its own users, apps, runners,
 artifacts, access mode, and availability.
 
 ## What this means for you
 
 - Sign in independently to each backend.
-- Check the active instance before changing a project or setting.
+- Check the active instance before changing an app or setting.
 - Expect a newly added connection to fail later if its origin is wrong or
   unreachable.
 - Verify the backend origin before saving it because the current UI cannot

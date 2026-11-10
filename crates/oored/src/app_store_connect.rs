@@ -721,9 +721,45 @@ impl<'a> AppStoreConnect<'a> {
         locale: &str,
         whats_new: &str,
     ) -> AscResult<()> {
+        self.upsert_version_localization(version_id, locale, json!({ "whatsNew": whats_new }))
+            .await
+    }
+
+    /// The store listing of one language of a version; fields the listing
+    /// leaves out stay as they are.
+    pub async fn set_version_listing(
+        &self,
+        version_id: &str,
+        listing: &oore_contract::AppStoreListing,
+    ) -> AscResult<()> {
+        let mut attributes = serde_json::Map::new();
+        for (key, value) in [
+            ("description", &listing.description),
+            ("keywords", &listing.keywords),
+            ("promotionalText", &listing.promotional_text),
+            ("marketingUrl", &listing.marketing_url),
+            ("supportUrl", &listing.support_url),
+        ] {
+            if let Some(value) = value {
+                attributes.insert(key.to_string(), json!(value));
+            }
+        }
+        if attributes.is_empty() {
+            return Ok(());
+        }
+        self.upsert_version_localization(version_id, &listing.locale, Value::Object(attributes))
+            .await
+    }
+
+    async fn upsert_version_localization(
+        &self,
+        version_id: &str,
+        locale: &str,
+        attributes: Value,
+    ) -> AscResult<()> {
         let existing: ListEnvelope = self
             .get(
-                "App Store notes lookup",
+                "App Store localization lookup",
                 &format!("/v1/appStoreVersions/{version_id}/appStoreVersionLocalizations"),
                 &[
                     ("fields[appStoreVersionLocalizations]", "locale"),
@@ -738,25 +774,29 @@ impl<'a> AppStoreConnect<'a> {
         {
             return self
                 .patch(
-                    "App Store notes update",
+                    "App Store localization update",
                     &format!("/v1/appStoreVersionLocalizations/{}", localization.id),
                     json!({
                         "data": {
                             "type": "appStoreVersionLocalizations",
                             "id": localization.id,
-                            "attributes": { "whatsNew": whats_new }
+                            "attributes": attributes
                         }
                     }),
                 )
                 .await;
         }
+        let mut attributes = attributes;
+        if let Value::Object(map) = &mut attributes {
+            map.insert("locale".to_string(), json!(locale));
+        }
         self.post(
-            "App Store notes creation",
+            "App Store localization creation",
             "/v1/appStoreVersionLocalizations",
             json!({
                 "data": {
                     "type": "appStoreVersionLocalizations",
-                    "attributes": { "locale": locale, "whatsNew": whats_new },
+                    "attributes": attributes,
                     "relationships": {
                         "appStoreVersion": {
                             "data": { "type": "appStoreVersions", "id": version_id }
@@ -1241,6 +1281,11 @@ pub(crate) trait AscApi {
         locale: &str,
         whats_new: &str,
     ) -> AscResult<()>;
+    async fn set_version_listing(
+        &self,
+        version_id: &str,
+        listing: &oore_contract::AppStoreListing,
+    ) -> AscResult<()>;
     async fn enable_phased_release(&self, version_id: &str) -> AscResult<()>;
     async fn disable_phased_release(&self, version_id: &str) -> AscResult<()>;
     async fn submit_for_review(
@@ -1300,6 +1345,13 @@ impl AscApi for AppStoreConnect<'_> {
         whats_new: &str,
     ) -> AscResult<()> {
         AppStoreConnect::set_version_whats_new(self, version_id, locale, whats_new).await
+    }
+    async fn set_version_listing(
+        &self,
+        version_id: &str,
+        listing: &oore_contract::AppStoreListing,
+    ) -> AscResult<()> {
+        AppStoreConnect::set_version_listing(self, version_id, listing).await
     }
     async fn enable_phased_release(&self, version_id: &str) -> AscResult<()> {
         AppStoreConnect::enable_phased_release(self, version_id).await

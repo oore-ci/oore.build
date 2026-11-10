@@ -5,6 +5,7 @@ import { ago } from '../seed'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
+import { demoRetention } from './testers'
 import { demoBuildWorkflow, demoSigningError } from '../pipeline-workflows'
 import { demoBuildInsights } from '../data/build-insights'
 import { demoBuildAnalyses } from '../data/build-analyses'
@@ -25,6 +26,7 @@ const createBuildRequestSchema = z.toZod<CreateBuildRequest>()(
     branch: z.string().nullish(),
     commit_sha: z.string().nullish(),
     changelog: z.string().nullish(),
+    store_notes: z.string().nullish(),
     platforms: z.array(z.enum(['android', 'ios', 'macos'])).nullish(),
     trigger_ref: z.string().nullish(),
     workflow: z.string().nullish(),
@@ -137,6 +139,27 @@ function demoRetryableSteps(build: (typeof demoState.builds)[number]) {
   )
 }
 
+/** Queued builds ahead of this one, at a typical eight minutes each. */
+function demoQueue(build: (typeof demoState.builds)[number]) {
+  if (build.status !== 'queued' || build.approval?.state === 'pending') {
+    return undefined
+  }
+  const queued = demoState.builds.filter(
+    (other) =>
+      other.status === 'queued' &&
+      other.approval?.state !== 'pending' &&
+      other.created_at < build.created_at,
+  )
+  const running = demoState.builds.filter(
+    (other) => other.status === 'running',
+  ).length
+  return {
+    ahead: queued.length,
+    running,
+    estimated_wait_seconds: (queued.length + (running > 0 ? 1 : 0)) * 240,
+  }
+}
+
 export const buildHandlers = [
   demoApi.previewBuildChangelog(async ({ request, params }) => {
     await delay(200)
@@ -215,6 +238,13 @@ export const buildHandlers = [
 
     const branch = url.searchParams.get('branch')
     if (branch) builds = builds.filter((b) => b.branch === branch)
+
+    if (url.searchParams.get('mine') === 'true') {
+      const pinned = new Set(demoState.favoriteProjects[persona.userId] ?? [])
+      builds = builds.filter(
+        (b) => b.trigger_actor === persona.email || pinned.has(b.project_id),
+      )
+    }
 
     // Mirrors the daemon's `trigger`: trigger types, or webhook events.
     if (url.searchParams.has('trigger')) {
@@ -380,6 +410,8 @@ export const buildHandlers = [
     return HttpResponse.json({
       build: withBuildContext(build),
       retryable_steps: demoRetryableSteps(build),
+      queue: demoQueue(build),
+      retention: build.status === 'expired' ? null : demoRetention(build.id),
       events: demoState.buildEvents[build.id] ?? [
         {
           id: `evt-auto-${build.id}`,
@@ -452,6 +484,7 @@ export const buildHandlers = [
       branch,
       commit_sha: body.commit_sha,
       changelog: body.changelog,
+      store_notes: body.store_notes,
       workflow: planned.workflow,
       config_snapshot: {},
       queued_at: ago(0),

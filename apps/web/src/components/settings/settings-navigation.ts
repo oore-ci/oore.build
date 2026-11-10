@@ -9,6 +9,7 @@ import {
   Notification03Icon,
   Settings01Icon,
   Store01Icon,
+  UserGroupIcon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
 
@@ -24,7 +25,7 @@ const SETTINGS_GROUPS = [
       {
         title: 'General',
         description: 'Runtime, External Access, and service updates.',
-        to: '/settings/preferences',
+        to: '/settings/general',
         icon: Settings01Icon,
         roles: ADMIN_ROLES,
       },
@@ -38,7 +39,7 @@ const SETTINGS_GROUPS = [
       {
         title: 'Sources',
         description: 'Connected repositories and provider credentials.',
-        to: '/settings/integrations',
+        to: '/settings/sources',
         icon: Link04Icon,
         roles: OPERATOR_ROLES,
       },
@@ -63,7 +64,7 @@ const SETTINGS_GROUPS = [
     items: [
       {
         title: 'Users',
-        description: 'Instance roles and project access.',
+        description: 'Instance roles and app access.',
         to: '/settings/users',
         icon: UserMultiple02Icon,
         roles: ADMIN_ROLES,
@@ -99,6 +100,13 @@ const SETTINGS_GROUPS = [
         description: 'Build and system notification channels.',
         to: '/settings/notifications',
         icon: Notification03Icon,
+        roles: ADMIN_ROLES,
+      },
+      {
+        title: 'Tester groups',
+        description: 'People a build can be sent to in one step.',
+        to: '/settings/testers',
+        icon: UserGroupIcon,
         roles: ADMIN_ROLES,
       },
     ],

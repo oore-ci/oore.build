@@ -569,7 +569,19 @@ macro_rules! release_columns {
          asl.last_error AS store_error, asl.failing_since AS store_error_since, asl.store_status, \
          asl.asc_app_id AS asc_app_id, \
          (SELECT h.reason FROM release_history h WHERE h.release_id = r.id \
-          ORDER BY h.at DESC, h.rowid DESC LIMIT 1) AS state_reason"
+          ORDER BY h.at DESC, h.rowid DESC LIMIT 1) AS state_reason, \
+         CASE WHEN r.state = 'in_review' THEN ( \
+           SELECT CASE WHEN COUNT(d) >= 2 THEN CAST(AVG(d) AS INTEGER) END FROM ( \
+             SELECT (SELECT MIN(h2.at) FROM release_history h2 \
+                     WHERE h2.release_id = h1.release_id AND h2.at > h1.at \
+                       AND h2.to_state <> 'in_review') - h1.at AS d \
+             FROM release_history h1 JOIN releases r2 ON r2.id = h1.release_id \
+             WHERE r2.project_id = r.project_id AND r2.store = r.store AND r2.id <> r.id \
+               AND (r2.track = 'app_store') = (r.track = 'app_store') \
+               AND h1.to_state = 'in_review' \
+               AND (h1.from_state IS NULL OR h1.from_state <> 'in_review') \
+             ORDER BY h1.at DESC LIMIT 5) \
+         ) END AS typical_review_seconds"
     };
 }
 
@@ -636,6 +648,7 @@ pub(crate) fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
         store_error_since: row.try_get("store_error_since").ok().flatten(),
         store_status: row.try_get("store_status").ok().flatten(),
         state_reason: row.try_get("state_reason").ok().flatten(),
+        typical_review_seconds: row.try_get("typical_review_seconds").ok().flatten(),
         auto_rollout: row.get::<i64, _>("auto_rollout") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -1447,6 +1460,13 @@ pub(crate) async fn run_rollout_tick(
         if !due || release.awaiting_approval {
             continue;
         }
+        // A freeze holds scheduled steps too; the step is taken once lifted.
+        if crate::release_freezes::active_freeze(deps.pool, &release.project_id)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
         let Some(fraction) = release.policy.next_step(release.rollout_fraction) else {
             continue;
         };
@@ -1792,6 +1812,19 @@ pub async fn release_action(
         _ => ProjectPermission::ManageReleases,
     };
     require_project_permission(&role, permission)?;
+    // A freeze holds anything that reaches more users; pausing and halting
+    // stay possible.
+    if matches!(
+        action,
+        ReleaseAction::Raise
+            | ReleaseAction::Resume
+            | ReleaseAction::Complete
+            | ReleaseAction::Approve
+            | ReleaseAction::ReleaseNow
+            | ReleaseAction::Resubmit
+    ) {
+        crate::release_freezes::ensure_not_frozen(&state.db, &current.project_id).await?;
+    }
     if request.fraction.is_some() && action != ReleaseAction::Raise {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -2316,6 +2349,65 @@ pub(crate) mod tests {
             expect: None,
             from_store: false,
         }
+    }
+
+    #[tokio::test]
+    async fn a_release_in_review_says_how_long_reviews_usually_take() {
+        let pool = pool().await;
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            let mut tx = pool.begin().await.unwrap();
+            let created = insert_release(
+                &mut tx,
+                NewRelease {
+                    state: ReleaseState::InReview,
+                    ..new_release("production", ReleasePolicy::default())
+                },
+                &user(),
+                None,
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            ids.push(created.release.id);
+        }
+        sqlx::query("DELETE FROM release_history")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Two earlier reviews took one and three hours; one is still open.
+        for (release, from, to) in [(&ids[0], 1_000, 4_600), (&ids[1], 10_000, 20_800)] {
+            for (state, at) in [("in_review", from), ("rolling", to)] {
+                sqlx::query(
+                    "INSERT INTO release_history (id, release_id, to_state, at) VALUES (?1, ?2, ?3, ?4)",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(release)
+                .bind(state)
+                .bind(at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+        sqlx::query(
+            "INSERT INTO release_history (id, release_id, to_state, at) VALUES ('h', ?1, 'in_review', 30000)",
+        )
+        .bind(&ids[2])
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let release = load_release(&pool, &ids[3]).await.unwrap();
+        assert_eq!(release.typical_review_seconds, Some(7_200));
+        // Only releases in review carry it.
+        sqlx::query("UPDATE releases SET state = 'rolling' WHERE id = ?1")
+            .bind(&ids[3])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let release = load_release(&pool, &ids[3]).await.unwrap();
+        assert_eq!(release.typical_review_seconds, None);
     }
 
     async fn history_len(pool: &SqlitePool, release_id: &str) -> i64 {
@@ -3067,6 +3159,7 @@ pub(crate) mod tests {
             store_status: None,
             origin: ReleaseOrigin::Oore,
             state_reason: None,
+            typical_review_seconds: None,
             console_url: None,
             auto_rollout: true,
             created_at: 0,

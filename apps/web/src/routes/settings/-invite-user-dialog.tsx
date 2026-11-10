@@ -97,7 +97,7 @@ export default function InviteUserDialog({
         <DialogHeader>
           <DialogTitle>Invite a user</DialogTitle>
           <DialogDescription>
-            Choose their instance role. Project access can be assigned from a
+            Choose their instance role. App access can be assigned from a
             project’s Settings tab.
           </DialogDescription>
         </DialogHeader>

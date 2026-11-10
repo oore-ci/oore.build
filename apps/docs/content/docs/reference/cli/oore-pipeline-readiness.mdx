@@ -1,0 +1,41 @@
+---
+title: '`oore pipeline readiness`'
+status: implemented
+description: "Check what would stop a pipeline's next store upload before you start a long build."
+---
+
+```text
+oore pipeline readiness <PIPELINE_ID> [--daemon-url <URL>] [--token <TOKEN>] [--json]
+```
+
+The command runs the same store checks as the pipeline page and the Run
+build drawer with `GET /v1/pipelines/{pipeline_id}/publish/readiness`: what
+App Store Connect reports now, such as unanswered age rating questions or
+missing App Review details, and refusals Oore remembers from the store's
+last answer. It needs a signed-in session with read access to the project.
+
+| Option         | Effect                                                               |
+| -------------- | -------------------------------------------------------------------- |
+| `--daemon-url` | Backend URL; otherwise uses environment, CLI config, then loopback.  |
+| `--token`      | Session token; otherwise `OORE_SESSION_TOKEN` or the stored session. |
+| `--json`       | Print the response: `items`, `preflight` and `checked_at`.           |
+
+```text
+1 thing to fix before the next store upload.
+
+✗ App Store: Age rating questions are unanswered
+    Unanswered: messagingAndChat, userGeneratedContent, gambling.
+    Fix it: https://appstoreconnect.apple.com/apps/6450000001/distribution/info
+✓ App Store: App Store Connect API key works
+```
+
+Problems come first: `✗` blocks the submission, `!` may hold it. The
+command exits with status 2 when something blocks, so a script can stop
+before it starts a release build:
+
+```bash
+oore pipeline readiness pipe_123 && oore build run --pipeline pipe_123 --workflow release
+```
+
+A pipeline with no store uploads turned on prints that there is nothing to
+check.

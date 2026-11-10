@@ -53,10 +53,19 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import type { BuildPlatform } from '@oore/client/models'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  useRecentRuns,
+  useRecentRunsScope,
+  useRecentRunsStore,
+  type RecentRun,
+} from '@/stores/recent-runs-store'
+import { Badge } from '@/components/ui/badge'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { isNearScrollEnd } from '@/lib/scroll'
 import { Stack } from '@/components/layout/stack'
+import { Row } from '@/components/layout/row'
 import { Text } from '@/components/layout/text'
+import { TriggerBuildStoreSection } from '@/components/trigger-build-store-section'
 import { TriggerBuildWorkflowField } from '@/components/trigger-build-workflow-field'
 import {
   choosableWorkflows,
@@ -189,7 +198,7 @@ function TriggerBuildBlockingAlerts({
     return (
       <Alert variant="destructive">
         <AlertDescription className="flex items-center justify-between gap-3">
-          <span>Projects could not be loaded.</span>
+          <span>Apps could not be loaded.</span>
           <Button
             type="button"
             variant="outline"
@@ -207,7 +216,7 @@ function TriggerBuildBlockingAlerts({
     return (
       <Alert variant="destructive">
         <AlertDescription className="flex items-center justify-between gap-3">
-          <span>Pipelines could not be loaded for this project.</span>
+          <span>Pipelines could not be loaded for this app.</span>
           <Button
             type="button"
             variant="outline"
@@ -226,8 +235,8 @@ function TriggerBuildBlockingAlerts({
       {issues.noProjects ? (
         <Alert variant="destructive">
           <AlertDescription>
-            No projects are available for you to run. Ask a maintainer for build
-            access or create a project.
+            No apps are available for you to run. Ask a maintainer for build
+            access or create an app.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -244,7 +253,7 @@ function TriggerBuildBlockingAlerts({
                 Set up a build
               </Link>
             ) : (
-              'Ask a project maintainer to add one.'
+              'Ask an app maintainer to add one.'
             )}
           </AlertDescription>
         </Alert>
@@ -252,8 +261,8 @@ function TriggerBuildBlockingAlerts({
       {issues.sourceMissing ? (
         <Alert variant="destructive">
           <AlertDescription>
-            This project is not linked to a source repository. Ask an owner or
-            admin to repair it in{' '}
+            This app is not linked to a source repository. Ask an owner or admin
+            to repair it in{' '}
             {projectId ? (
               <Link
                 to="/projects/$projectId"
@@ -261,10 +270,10 @@ function TriggerBuildBlockingAlerts({
                 search={{ tab: 'settings' }}
                 className="underline underline-offset-4"
               >
-                project settings
+                app settings
               </Link>
             ) : (
-              'project settings'
+              'app settings'
             )}
             .
           </AlertDescription>
@@ -304,12 +313,80 @@ function TriggerBuildFooter({
   )
 }
 
+/** Drafted notes longer than this show as a short preview until edited. */
+const CHANGELOG_PREVIEW_LINES = 3
+
+/** The first few lines of drafted notes, and how many more there are. */
+export function changelogPreview(markdown: string) {
+  const all = markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+  return {
+    lines: all.slice(0, CHANGELOG_PREVIEW_LINES),
+    more: Math.max(0, all.length - CHANGELOG_PREVIEW_LINES),
+  }
+}
+
+/** The newest commit title in drafted notes, which list newest first. */
+export function latestCommitTitle(markdown: string | undefined) {
+  const first = markdown?.split('\n')[0]?.trim()
+  if (!first?.startsWith('- ') || first.startsWith('- …')) return undefined
+  return first
+    .slice(2)
+    .replace(/ — [^—]*$/, '')
+    .replace(/\\(.)/g, '$1')
+}
+
+function DraftedChangelog({
+  markdown,
+  onEdit,
+  onClear,
+}: {
+  markdown: string
+  onEdit: () => void
+  onClear: () => void
+}) {
+  const { lines, more } = changelogPreview(markdown)
+  return (
+    <Stack gap={2} className="rounded-lg border p-3">
+      <ul className="space-y-1 text-sm">
+        {lines.map((line) => (
+          <li key={line} className="truncate">
+            {line.replace(/^- /, '').replace(/\\(.)/g, '$1')}
+          </li>
+        ))}
+      </ul>
+      <Row gap={2} className="flex-wrap justify-between">
+        <Text variant="caption">
+          {more > 0
+            ? `and ${more} more`
+            : 'From the commits since the last build'}
+        </Text>
+        <Row gap={1}>
+          <Button type="button" variant="ghost" size="sm" onClick={onClear}>
+            Clear
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+            Edit
+          </Button>
+        </Row>
+      </Row>
+    </Stack>
+  )
+}
+
 interface TriggerBuildDrawerProps {
   fixedProjectId?: string
   fixedPipelineId?: string
   fixedPipelineName?: string
   defaultPipelineId?: string
   defaultBranch?: string
+  /**
+   * Values to start from, such as a build being re-run with changes. Pass a
+   * stable object: a new one resets the form.
+   */
+  prefill?: Partial<TriggerBuildForm>
   title?: string
   description?: string
   onBuildCreated?: (buildId: string) => void
@@ -333,6 +410,7 @@ function defaults(
     commit_sha: '',
     workflow: '',
     changelog: undefined,
+    store_notes: '',
   }
 }
 
@@ -342,6 +420,7 @@ export default function TriggerBuildDrawer({
   fixedPipelineName,
   defaultPipelineId,
   defaultBranch,
+  prefill,
   title = 'Run build',
   description = 'Choose a pipeline and branch to build.',
   onBuildCreated,
@@ -370,6 +449,9 @@ export default function TriggerBuildDrawer({
   // A signing refusal for a build with no workflow field to show it on.
   const [signingError, setSigningError] = useState<string>()
   const [pipelineSearch, setPipelineSearch] = useState('')
+  const [showCommit, setShowCommit] = useState(false)
+  const [recentRuns, rememberRun] = useRecentRuns()
+  const recentRunsScope = useRecentRunsScope()
   const updateProjectSearch = useDebouncedCallback(
     (value: string) => setProjectSearch(value.trim()),
     300,
@@ -417,13 +499,36 @@ export default function TriggerBuildDrawer({
   useEffect(() => {
     if (!open) return
 
-    form.reset(
-      defaults(
+    const initial = {
+      ...defaults(
         fixedProjectId,
         fixedPipelineId,
         defaultPipelineId,
         defaultBranch,
       ),
+      ...prefill,
+    }
+    // Start from the last pipeline and branch this person ran here, unless
+    // the page opening the drawer already chose them.
+    const last =
+      defaultPipelineId || defaultBranch || prefill
+        ? undefined
+        : // Read once as the drawer opens, so a run started now does not
+          // reset the form.
+          (useRecentRunsStore.getState().runs[recentRunsScope] ?? []).find(
+            (run) =>
+              (!fixedProjectId || run.projectId === fixedProjectId) &&
+              (!fixedPipelineId || run.pipelineId === fixedPipelineId),
+          )
+    form.reset(
+      last
+        ? {
+            ...initial,
+            project_id: last.projectId,
+            pipeline_id: last.pipelineId,
+            branch: last.branch,
+          }
+        : initial,
     )
   }, [
     defaultBranch,
@@ -432,6 +537,8 @@ export default function TriggerBuildDrawer({
     fixedProjectId,
     form,
     open,
+    prefill,
+    recentRunsScope,
   ])
 
   // Only preselect when there is nothing to choose between; otherwise the
@@ -564,13 +671,11 @@ export default function TriggerBuildDrawer({
     setSigningError(undefined)
     const resolvedProjectId = fixedProjectId ?? data.project_id?.trim() ?? ''
     if (!resolvedProjectId) {
-      form.setError('project_id', { message: 'Project is required' })
+      form.setError('project_id', { message: 'App is required' })
       return
     }
     if (sourceMissing) {
-      toast.error(
-        'Link a repository in project settings before running a build.',
-      )
+      toast.error('Link a repository in app settings before running a build.')
       return
     }
 
@@ -617,12 +722,26 @@ export default function TriggerBuildDrawer({
           commit_sha: commitSha,
           trigger_ref: branch,
           changelog,
+          store_notes: data.store_notes?.trim() || undefined,
           workflow,
           platforms: buildPlatforms(availablePlatforms, data.platforms),
         },
       },
       {
         onSuccess: (result) => {
+          const pipelineName =
+            fixedPipelineName ??
+            pipelines.find((pipeline) => pipeline.id === resolvedPipelineId)
+              ?.name
+          if (branch && pipelineName) {
+            rememberRun({
+              projectId: resolvedProjectId,
+              projectName: activeProject?.name ?? '',
+              pipelineId: resolvedPipelineId,
+              pipelineName,
+              branch,
+            })
+          }
           toast.success(`Build #${result.build.build_number} queued`)
           setOpen(false)
           onBuildCreated?.(result.build.id)
@@ -675,6 +794,7 @@ export default function TriggerBuildDrawer({
           setProjectSearch('')
           setPipelineSearch('')
           setSigningError(undefined)
+          setShowCommit(false)
         }
         setOpen(nextOpen)
       }}
@@ -694,13 +814,31 @@ export default function TriggerBuildDrawer({
             className="flex min-h-0 flex-1 flex-col"
           >
             <div className="flex-1 scroll-fade space-y-4 overflow-y-auto p-4">
+              <RecentRunChips
+                runs={recentRuns.filter(
+                  (run) =>
+                    (!fixedProjectId || run.projectId === fixedProjectId) &&
+                    (!fixedPipelineId || run.pipelineId === fixedPipelineId),
+                )}
+                showProject={!fixedProjectId}
+                showPipeline={!fixedPipelineId}
+                onPick={(run) => {
+                  form.setValue('project_id', run.projectId)
+                  form.setValue('pipeline_id', run.pipelineId)
+                  form.setValue('branch', run.branch)
+                  form.setValue('commit_sha', '')
+                  form.setValue('platforms', [], { shouldDirty: false })
+                  form.setValue('changelog', undefined)
+                  setShowCommit(false)
+                }}
+              />
               {!fixedProjectId ? (
                 <FormField
                   control={form.control}
                   name="project_id"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Project</FormLabel>
+                      <FormLabel>App</FormLabel>
                       <Combobox
                         items={projects}
                         filter={null}
@@ -742,13 +880,13 @@ export default function TriggerBuildDrawer({
                             disabled={projectsQuery.isLoading}
                             placeholder={
                               projectsQuery.isLoading
-                                ? 'Loading projects...'
-                                : 'Search projects...'
+                                ? 'Loading apps...'
+                                : 'Search apps...'
                             }
                           />
                         </FormControl>
                         <ComboboxContent>
-                          <ComboboxEmpty>No matching projects.</ComboboxEmpty>
+                          <ComboboxEmpty>No matching apps.</ComboboxEmpty>
                           <ComboboxList
                             onScroll={(event) => {
                               const list = event.currentTarget
@@ -823,7 +961,7 @@ export default function TriggerBuildDrawer({
                                 ? pipelinesQuery.isLoading
                                   ? 'Loading pipelines...'
                                   : 'Search pipelines...'
-                                : 'Select a project first'
+                                : 'Select an app first'
                             }
                           />
                         </FormControl>
@@ -896,7 +1034,7 @@ export default function TriggerBuildDrawer({
                               ? (activeProject?.default_branch ??
                                 defaultBranch ??
                                 'Enter a branch')
-                              : 'Select a project first'
+                              : 'Select an app first'
                           }
                           autoComplete="off"
                         />
@@ -914,9 +1052,28 @@ export default function TriggerBuildDrawer({
                         </ComboboxList>
                       </ComboboxContent>
                     </Combobox>
-                    <FormDescription>
-                      A commit SHA overrides this branch.
-                    </FormDescription>
+                    <BranchHeadDescription
+                      title={
+                        commitSha?.trim()
+                          ? undefined
+                          : latestCommitTitle(
+                              changelogPreviewQuery.data?.markdown,
+                            )
+                      }
+                      commit={changelogPreviewQuery.data?.target_commit}
+                    />
+                    {!showCommit ? (
+                      <Button
+                        type="button"
+                        variant="link"
+                        size="sm"
+                        className="h-auto self-start px-0"
+                        disabled={!projectId}
+                        onClick={() => setShowCommit(true)}
+                      >
+                        Build a specific commit
+                      </Button>
+                    ) : null}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -939,28 +1096,31 @@ export default function TriggerBuildDrawer({
                 platforms={availablePlatforms}
               />
 
-              <FormField
-                control={form.control}
-                name="commit_sha"
-                render={({ field }) => (
-                  <FormItem>
-                    <OptionalLabel>Commit SHA</OptionalLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="e.g. a1b2c3d4..."
-                        autoComplete="off"
-                        className="font-mono"
-                        disabled={!projectId}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      If set, the runner checks out this exact commit.
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {showCommit ? (
+                <FormField
+                  control={form.control}
+                  name="commit_sha"
+                  render={({ field }) => (
+                    <FormItem>
+                      <OptionalLabel>Commit SHA</OptionalLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. a1b2c3d4..."
+                          autoComplete="off"
+                          className="font-mono"
+                          disabled={!projectId}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        The runner checks out this exact commit instead of the
+                        branch head.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : null}
 
               <FormField
                 control={form.control}
@@ -968,23 +1128,36 @@ export default function TriggerBuildDrawer({
                 render={({ field }) => (
                   <FormItem>
                     <OptionalLabel>What changed?</OptionalLabel>
-                    <FormControl>
-                      <Textarea
-                        {...field}
-                        value={
-                          field.value ??
-                          changelogPreviewQuery.data?.markdown ??
-                          ''
+                    {field.value === undefined &&
+                    changelogPreviewQuery.data?.markdown &&
+                    changelogPreview(changelogPreviewQuery.data.markdown).more >
+                      0 ? (
+                      <DraftedChangelog
+                        markdown={changelogPreviewQuery.data.markdown}
+                        onEdit={() =>
+                          field.onChange(changelogPreviewQuery.data?.markdown)
                         }
-                        disabled={!selectedPipelineId}
-                        placeholder={
-                          selectedPipelineId
-                            ? 'No changes found since the previous build.'
-                            : 'Choose a pipeline to draft release notes from its commits.'
-                        }
-                        rows={5}
+                        onClear={() => field.onChange('')}
                       />
-                    </FormControl>
+                    ) : (
+                      <FormControl>
+                        <Textarea
+                          {...field}
+                          value={
+                            field.value ??
+                            changelogPreviewQuery.data?.markdown ??
+                            ''
+                          }
+                          disabled={!selectedPipelineId}
+                          placeholder={
+                            selectedPipelineId
+                              ? 'No changes found since the previous build.'
+                              : 'Choose a pipeline to draft release notes from its commits.'
+                          }
+                          rows={5}
+                        />
+                      </FormControl>
+                    )}
                     <FormDescription>
                       {!selectedPipelineId
                         ? 'Drafted from commit titles and authors once a pipeline is chosen. Markdown supported.'
@@ -1000,6 +1173,15 @@ export default function TriggerBuildDrawer({
                   </FormItem>
                 )}
               />
+              {selectedPipelineId ? (
+                <TriggerBuildStoreSection
+                  form={form}
+                  pipelineId={selectedPipelineId}
+                  changelogMarkdown={changelogPreviewQuery.data?.markdown}
+                  enabled={open}
+                  filePublishes={chosenWorkflow?.publishes ?? []}
+                />
+              ) : null}
             </div>
             {/* Outside the scroll area so the footer never covers them. */}
             <Stack gap={2} className="shrink-0 px-4 pb-4">
@@ -1072,5 +1254,58 @@ export default function TriggerBuildDrawer({
         </Form>
       </DrawerContent>
     </Drawer>
+  )
+}
+
+function BranchHeadDescription({
+  title,
+  commit,
+}: {
+  title: string | undefined
+  commit: string | undefined
+}) {
+  if (!title || !commit) return null
+  return (
+    <FormDescription className="truncate">
+      Latest: <span className="font-mono">{commit.slice(0, 7)}</span> {title}
+    </FormDescription>
+  )
+}
+
+function RecentRunChips({
+  runs,
+  showProject,
+  showPipeline,
+  onPick,
+}: {
+  runs: Array<RecentRun>
+  showProject: boolean
+  showPipeline: boolean
+  onPick: (run: RecentRun) => void
+}) {
+  if (runs.length === 0 || (!showProject && !showPipeline && runs.length < 2))
+    return null
+  return (
+    <Stack gap={2}>
+      <Text variant="caption">Recent</Text>
+      <Row gap={2} className="flex-wrap">
+        {runs.slice(0, 3).map((run) => (
+          <Badge
+            key={`${run.pipelineId}:${run.branch}`}
+            variant="outline"
+            render={<button type="button" onClick={() => onPick(run)} />}
+            className="max-w-full cursor-pointer truncate"
+          >
+            {[
+              showProject ? run.projectName : undefined,
+              showPipeline ? run.pipelineName : undefined,
+              run.branch,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </Badge>
+        ))}
+      </Row>
+    </Stack>
   )
 }

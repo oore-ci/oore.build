@@ -167,3 +167,27 @@ export function latestAppPerPlatform(artifacts: ReadonlyArray<Artifact>) {
     return artifact ? [{ artifact, label }] : []
   })
 }
+
+/** What an artifact is for, in words a tester or release manager uses. */
+export function artifactPurposeLabel(
+  artifact: Pick<Artifact, 'artifact_type' | 'name'>,
+): string {
+  const name = artifact.name.toLowerCase()
+  const variant = /\bdebug\b|[-_.]debug[-_.]/.test(name)
+    ? 'debug '
+    : /\bprofile\b|[-_.]profile[-_.]/.test(name)
+      ? 'profile '
+      : ''
+  switch (artifact.artifact_type) {
+    case 'apk':
+      return `Android ${variant}app`
+    case 'aab':
+      return 'App Bundle for Google Play, not installable'
+    case 'ipa':
+      return `iOS ${variant}app`
+    case 'app':
+      return 'iOS simulator app'
+    case 'generic':
+      return 'Build file'
+  }
+}

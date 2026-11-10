@@ -56,7 +56,7 @@ function useEntityCrumbLabels() {
   if (integrationId && integration.data) {
     const source = integration.data.integration
     labels.set(
-      `/settings/integrations/${integrationId}`,
+      `/settings/sources/${integrationId}`,
       source.display_name ?? source.provider,
     )
   }

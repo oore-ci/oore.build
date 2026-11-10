@@ -1,22 +1,22 @@
 ---
 title: 'Promote builds between environments'
 status: implemented
-description: 'Define internal, beta and production environments on a project and promote a tested Google Play or TestFlight build between them without rebuilding it.'
+description: 'Define internal, beta and production environments on an app and promote a tested Google Play or TestFlight build between them without rebuilding it.'
 ---
 
-An environment names where a project's releases go: a store, a track, the
+An environment names where an app's releases go: a store, a track, the
 staged rollout for releases promoted into it, and whether a promotion needs an
 approval, and from whom. A build that passed internal testing is promoted to
 beta or production as the same version code, or, on the App Store, as the
 same TestFlight build. Nothing is rebuilt or uploaded again, so what users
 get is exactly what testers checked.
 
-Projects without environments keep working as before: each pipeline's
+Apps without environments keep working as before: each pipeline's
 publish settings decide where its uploads go.
 
 ## What you need
 
-- Project maintainer, instance admin, or instance owner access to add
+- App maintainer, instance admin, or instance owner access to add
   environments and to promote. Developers can ask for a promotion into an
   environment that requires approval. Who approves is set per environment;
   by default it is any maintainer.
@@ -31,7 +31,7 @@ publish settings decide where its uploads go.
 
 ## 1. Add environments
 
-On the project, open the **Environments** tab and select **Add environment**.
+On the app, open the **Environments** tab and select **Add environment**.
 Set **Name**, **Key**, **Store**, and **Track**, turn on **Require approval**
 where someone must sign off (see [Choose who approves](#choose-who-approves)),
 and set the rollout. Add them in promotion
@@ -160,12 +160,12 @@ approval, so the new release does not wait again.
 
 ### Choose who approves
 
-By default any project maintainer approves. To narrow or widen that, edit the
+By default any app maintainer approves. To narrow or widen that, edit the
 environment and, with **Require approval** on, set:
 
 - **Who can approve**: Maintainers, Developers and maintainers, or Only named
   approvers.
-- **Named approvers**: project members who are developers or maintainers. A
+- **Named approvers**: app members who are developers or maintainers. A
   named developer can approve even when developers as a whole cannot.
 
 Someone may approve when their role is allowed, or when they are named. With
@@ -179,7 +179,7 @@ change.
 From the API, set `approvers` when you create or update the environment. It
 replaces the whole set; leaving it out, or sending `null`, keeps the current
 set, and `{}` goes back to any maintainer (so does `"role": "maintainer"` with
-nobody named). Only project members who are developers or maintainers can be
+nobody named). Only app members who are developers or maintainers can be
 named (otherwise `400 invalid_input`), at most 20.
 
 ```bash
@@ -189,7 +189,7 @@ curl -X PATCH "$OORE_URL/v1/projects/$PROJECT_ID/environments/$ENVIRONMENT_ID" \
   -d '{ "approvers": { "role": "maintainer", "user_ids": ["'"$QA_LEAD_ID"'"] } }'
 ```
 
-Someone removed from the project, or changed to the viewer role, stops being
+Someone removed from the app, or changed to the viewer role, stops being
 an approver. If no named approvers are left and no role is set, any
 maintainer approves again.
 
@@ -215,6 +215,9 @@ with the reason `environment deleted` in the audit log.
 - Play Console shows the version code on the target track. For the App
   Store, App Store Connect shows the build in the TestFlight group, or
   attached to the App Store version.
+- The app's **Releases** tab shows the version under **Where each version
+  is** on the target track, and under **Versions** with every store it went
+  to. Each release opens its own page with its history and controls.
 - The audit log has `promotion_requested`, `promotion_approved` and
   `promotion_completed` entries, and a `release_created` entry for the new
   release.

@@ -169,6 +169,28 @@ pub enum ReleaseStatus {
     Halted,
 }
 
+/// One language of a store listing. Absent fields stay as they are in
+/// Play Console.
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Listing {
+    #[serde(skip)]
+    pub language: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<String>,
+}
+
+/// Longest listing fields Play takes.
+pub const MAX_TITLE_CHARS: usize = 30;
+pub const MAX_SHORT_DESCRIPTION_CHARS: usize = 80;
+pub const MAX_FULL_DESCRIPTION_CHARS: usize = 4000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalizedText {
     pub language: String,
@@ -509,6 +531,19 @@ impl<'a> PlayEdits<'a> {
             "read the track",
         )
         .await
+    }
+
+    /// Update one language of the store listing; fields left out stay.
+    pub async fn update_listing(&self, listing: &Listing) -> anyhow::Result<()> {
+        let _: serde_json::Value = play_json(
+            self.http
+                .patch(self.api(&format!("/listings/{}", listing.language)))
+                .bearer_auth(&self.token)
+                .json(listing),
+            "update the store listing",
+        )
+        .await?;
+        Ok(())
     }
 
     /// Replace the track's releases with `release`.

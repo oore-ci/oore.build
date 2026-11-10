@@ -4,7 +4,7 @@ description: 'Stop an Oore user from signing in, then restore the same account w
 status: implemented
 ---
 
-Disable a user's Oore account without deleting the account, its role, or its project history. Disabling immediately revokes the user's active sessions and API tokens.
+Disable a user's Oore account without deleting the account, its role, or its app history. Disabling immediately revokes the user's active sessions and API tokens.
 
 Restoring the user makes the same account active again. Previously revoked sessions and tokens stay revoked.
 
@@ -24,10 +24,10 @@ You cannot disable yourself or the Owner.
 
 The user's status changes to `disabled`. Existing sessions stop working, and non-revoked API tokens owned by the user are revoked.
 
-Disabling is different from removing project access:
+Disabling is different from removing app access:
 
 - **Disable user** stops all Oore access for the account.
-- **Remove access** on a project removes only that project's membership.
+- **Remove access** on an app removes only that app's membership.
 - Neither action deletes builds, artifacts, or audit history.
 
 ## 2. Restore the user
@@ -55,10 +55,10 @@ Oore hides actions for your own account and the Owner. An Admin also cannot mana
 
 Their old session was revoked and cannot be restored. Start a new OIDC or Trusted Proxy sign-in and confirm that the authenticated email still matches the Oore user.
 
-### The user should lose only one project
+### The user should lose only one app
 
-Do not disable the account. Open that project's **Settings** tab and use **Remove access** in the **Access** section.
+Do not disable the account. Open that app's **Settings** tab and use **Remove access** in the **Access** section.
 
 ## Next step
 
-[Review roles and project access](/team/roles) before granting the restored user new permissions.
+[Review roles and app access](/team/roles) before granting the restored user new permissions.

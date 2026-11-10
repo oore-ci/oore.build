@@ -104,7 +104,7 @@ export function ProjectFilter({
     : null
   const options = useMemo(
     () => [
-      { id: '', name: 'All projects' },
+      { id: '', name: 'All apps' },
       ...projects.map(({ id, name }) => ({ id, name })),
     ],
     [projects],
@@ -145,7 +145,7 @@ export function ProjectFilter({
             className={cn('justify-between font-normal', className)}
           />
         }
-        aria-label="Filter by project"
+        aria-label="Filter by app"
       >
         <span className="truncate">
           <ComboboxValue />
@@ -154,13 +154,11 @@ export function ProjectFilter({
       <ComboboxContent>
         <ComboboxInput
           showTrigger={false}
-          placeholder="Search projects"
-          aria-label="Search projects"
+          placeholder="Search apps"
+          aria-label="Search apps"
         />
         <ComboboxEmpty>
-          {projectsQuery.error
-            ? 'Projects could not be loaded.'
-            : 'No projects found.'}
+          {projectsQuery.error ? 'Apps could not be loaded.' : 'No apps found.'}
         </ComboboxEmpty>
         <ComboboxList
           onScroll={(event) => {

@@ -101,9 +101,9 @@ export function ProjectSettingsForm({
         },
       },
       {
-        onSuccess: () => toast.success('Project updated'),
+        onSuccess: () => toast.success('App updated'),
         onError: (error) =>
-          toast.error(`Failed to update project: ${error.message}`),
+          toast.error(`Failed to update app: ${error.message}`),
       },
     )
   }
@@ -263,7 +263,7 @@ export function ProjectSettingsForm({
                         <Button
                           type="button"
                           variant="outline"
-                          render={<Link to="/settings/integrations" />}
+                          render={<Link to="/settings/sources" />}
                           nativeButton={false}
                         >
                           Connect source

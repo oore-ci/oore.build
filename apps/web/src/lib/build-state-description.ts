@@ -33,7 +33,7 @@ export function buildStateSummary(
           tone: 'neutral',
           title: 'Waiting for approval',
           description:
-            'A project maintainer must approve this build before a runner picks it up.',
+            'An app maintainer must approve this build before a runner picks it up.',
         }
   }
 
@@ -61,14 +61,14 @@ export function buildStateSummary(
     case 'scheduled':
       return {
         tone: 'neutral',
-        title: 'Scheduled',
-        description: 'The build has not started yet.',
+        title: 'Picked up by a runner',
+        description: 'The runner is getting ready to start it.',
       }
     case 'assigned':
       return {
         tone: 'neutral',
-        title: 'Assigned to a runner',
-        description: 'Waiting for the runner to start it.',
+        title: 'Starting',
+        description: 'The runner has it and is starting the first step.',
       }
     case 'running':
       return null
@@ -91,6 +91,14 @@ export function buildStateSummary(
         description: 'It ran past the pipeline time limit.',
       }
     case 'canceled':
+      if (build.superseded_by) {
+        return {
+          tone: 'neutral',
+          title: `Replaced by #${build.superseded_by.build_number}`,
+          description:
+            'A newer push to the same branch started a new build, so this one was canceled.',
+        }
+      }
       return {
         tone: 'neutral',
         title: 'Build canceled',

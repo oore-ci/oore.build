@@ -54,7 +54,7 @@ export function describeRedirectPath(path: string): string {
     case 'releases':
       return 'this release'
     case 'projects':
-      return second ? 'this project' : 'Projects'
+      return second ? 'this app' : 'Apps'
     case 'settings':
       return 'Settings'
     default:

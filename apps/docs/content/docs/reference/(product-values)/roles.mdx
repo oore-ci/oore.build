@@ -1,57 +1,57 @@
 ---
 title: 'Roles and permissions'
 status: implemented
-description: 'Instance roles, project roles, effective permissions, and authorization behavior.'
+description: 'Instance roles, app roles, effective permissions, and authorization behavior.'
 ---
 
-Oore combines one instance role with an optional role on each project.
-Instance Owners and Admins have implicit full project access. Developers and
-QA Viewers need explicit project membership.
+Oore combines one instance role with an optional role on each app.
+Instance Owners and Admins have implicit full app access. Developers and
+QA Viewers need explicit app membership.
 
 ## Instance roles
 
-| Role        | Instance access                                                                                   |
-| ----------- | ------------------------------------------------------------------------------------------------- |
-| `owner`     | Full administration and project access; exactly one Owner exists                                  |
-| `admin`     | Full administration and project access, except Owner-only actions                                 |
-| `developer` | Read projects, pipelines, builds, artifacts, runners, and integrations; operate assigned projects |
-| `qa_viewer` | Read assigned project, pipeline, build, artifact, and integration data                            |
+| Role        | Instance access                                                                           |
+| ----------- | ----------------------------------------------------------------------------------------- |
+| `owner`     | Full administration and app access; exactly one Owner exists                              |
+| `admin`     | Full administration and app access, except Owner-only actions                             |
+| `developer` | Read apps, pipelines, builds, artifacts, runners, and integrations; operate assigned apps |
+| `qa_viewer` | Read assigned app, pipeline, build, artifact, and integration data                        |
 
 Developers can manage their API tokens. Owners and Admins can manage users,
 settings, integrations, runners, and audit surfaces. QA Viewers do not receive
 operator write permissions.
 
-## Project roles
+## App roles
 
-| Project role | Effective permissions                                                                            |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| `maintainer` | All project permissions, including settings, deletion, members, pipelines, builds, and artifacts |
-| `developer`  | Read; manage pipelines; trigger or cancel builds; read and write artifacts                       |
-| `viewer`     | Read the project and artifacts                                                                   |
+| App role     | Effective permissions                                                                        |
+| ------------ | -------------------------------------------------------------------------------------------- |
+| `maintainer` | All app permissions, including settings, deletion, members, pipelines, builds, and artifacts |
+| `developer`  | Read; manage pipelines; trigger or cancel builds; read and write artifacts                   |
+| `viewer`     | Read the app and artifacts                                                                   |
 
-Owners and Admins resolve to Maintainer on every project without a membership
+Owners and Admins resolve to Maintainer on every app without a membership
 row. A Developer's explicit membership is capped at Developer. A QA Viewer's
 membership is always capped at Viewer, including if older data contains a
-higher project role.
+higher app role.
 
 ## Effective access
 
-Project permission checks use both layers:
+App permission checks use both layers:
 
 1. Resolve the instance role.
-2. Resolve explicit project membership when the instance role is not Owner or
+2. Resolve explicit app membership when the instance role is not Owner or
    Admin.
-3. Cap the project role at the maximum allowed by the instance role or API
+3. Cap the app role at the maximum allowed by the instance role or API
    token.
-4. Check the action-specific project permission.
+4. Check the action-specific app permission.
 
-A caller with no project access receives `404 not_found`, which avoids leaking
-the project's existence. A caller who can discover the project but lacks the
+A caller with no app access receives `404 not_found`, which avoids leaking
+the app's existence. A caller who can discover the app but lacks the
 requested action receives `403 permission_denied`.
 
 Users also have an account status: `invited`, `active`, or `disabled`.
 Disabling a user revokes sessions and API tokens. Restoring the user does not
 restore those credentials.
 
-For operator tasks, see [Manage roles and project access](/team/roles) and
+For operator tasks, see [Manage roles and app access](/team/roles) and
 [Disable or restore a user](/team/disable-users).

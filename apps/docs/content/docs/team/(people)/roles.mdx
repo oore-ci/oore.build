@@ -1,10 +1,10 @@
 ---
-title: 'Manage roles and project access'
-description: 'Change an instance role and grant, update, or remove access to an Oore project.'
+title: 'Manage roles and app access'
+description: 'Change an instance role and grant, update, or remove access to an Oore app.'
 status: implemented
 ---
 
-Give an existing user the Oore-wide role and project membership their work requires. Instance roles and project roles are separate controls.
+Give an existing user the Oore-wide role and app membership their work requires. Instance roles and app roles are separate controls.
 
 [Oore's security model](/concepts/security) explains how roles fit with
 sign-in, repository trust and secrets.
@@ -12,19 +12,19 @@ sign-in, repository trust and secrets.
 ## What you need
 
 - An Owner or Admin account to change instance roles
-- Maintainer access to a project to manage that project's members
+- Maintainer access to an app to manage that app's members
 - An existing active or invited user
 
 ## Choose the two levels of access
 
-| Level    | Available roles                    | What it controls                                                          |
-| -------- | ---------------------------------- | ------------------------------------------------------------------------- |
-| Instance | Owner, Admin, Developer, QA Viewer | Instance-wide settings and the maximum access a person may receive        |
-| Project  | Maintainer, Developer, Viewer      | Pipelines, builds, artifacts, settings, and membership within one project |
+| Level    | Available roles                    | What it controls                                                      |
+| -------- | ---------------------------------- | --------------------------------------------------------------------- |
+| Instance | Owner, Admin, Developer, QA Viewer | Instance-wide settings and the maximum access a person may receive    |
+| App      | Maintainer, Developer, Viewer      | Pipelines, builds, artifacts, settings, and membership within one app |
 
-Owner and Admin have implicit Maintainer-equivalent access to every project. Do not add them as explicit project members.
+Owner and Admin have implicit Maintainer-equivalent access to every app. Do not add them as explicit app members.
 
-Developer and QA Viewer need explicit membership. A QA Viewer is always limited to Viewer project access, even if a higher project role is requested.
+Developer and QA Viewer need explicit membership. A QA Viewer is always limited to Viewer app access, even if a higher app role is requested.
 
 ## 1. Change an instance role
 
@@ -36,42 +36,42 @@ Developer and QA Viewer need explicit membership. A QA Viewer is always limited 
 
 Only the Owner can promote someone to Admin or change an existing Admin. You cannot change the Owner role or your own role from this menu.
 
-## 2. Grant project access
+## 2. Grant app access
 
-You can add many people at once, either to one project or across several projects.
+You can add many people at once, either to one app or across several apps.
 
-### Add people to one project
+### Add people to one app
 
-1. Open the project and select its **Settings** tab.
+1. Open the app and select its **Settings** tab.
 2. In the **Access** section, select **Add members**.
 3. Pick people from the list, select **Select all eligible**, or paste a list of emails. Emails can be one per line, separated by commas or semicolons, or copied from a mail client (`Name <name@example.com>`). Typing an email and pressing Enter works too.
-4. Choose one **Project role** for everyone:
-   - **Maintainer** manages the project's settings and members as well as its build work.
-   - **Developer** manages pipelines, triggers or cancels builds, and reads or writes artifacts, but cannot manage project settings or membership.
-   - **Viewer** reads the project, builds, logs, and artifacts.
+4. Choose one **App role** for everyone:
+   - **Maintainer** manages the app's settings and members as well as its build work.
+   - **Developer** manages pipelines, triggers or cancels builds, and reads or writes artifacts, but cannot manage app settings or membership.
+   - **Viewer** reads the app, builds, logs, and artifacts.
 5. Select **Add N people**.
 
-A pasted email that has no Oore account yet is shown as **new**. When you are the Owner or an Admin, Oore invites it as a Developer and adds it in the same step. Emails that already belong to the project are listed and skipped. If some additions fail, the dialog stays open with only the failed people selected, so you can retry.
+A pasted email that has no Oore account yet is shown as **new**. When you are the Owner or an Admin, Oore invites it as a Developer and adds it in the same step. Emails that already belong to the app are listed and skipped. If some additions fail, the dialog stays open with only the failed people selected, so you can retry.
 
-### Give people access to several projects
+### Give people access to several apps
 
 1. Open **Settings > Users**.
-2. Select the people in the table, then select **Give project access**. For one person, open their **Actions** menu and choose **Give project access**.
-3. Pick the projects, or select **Select all**.
-4. Choose the **Project role** and select **Add to N projects**.
+2. Select the people in the table, then select **Give app access**. For one person, open their **Actions** menu and choose **Give app access**.
+3. Pick the apps, or select **Select all**.
+4. Choose the **App role** and select **Add to N apps**.
 
-People who are already members of a project keep their current role there. Owners and Admins are skipped because they already see every project, and disabled users are skipped.
+People who are already members of an app keep their current role there. Owners and Admins are skipped because they already see every app, and disabled users are skipped.
 
-To change an existing membership, open its **Actions** menu and choose another project role. To remove it, select **Remove access** and confirm.
+To change an existing membership, open its **Actions** menu and choose another app role. To remove it, select **Remove access** and confirm.
 
 ## Verify the result
 
 - An instance-role change shows `Role updated for <email>`.
-- New project members appear in the **Access** section with both their instance and project roles, and a toast says how many were added.
+- New app members appear in the **Access** section with both their instance and app roles, and a toast says how many were added.
 - A project-role change shows `Access updated for <email>`.
-- Removing access shows `<email> removed from this project`, and the user no longer sees that project's builds, logs, or artifacts.
+- Removing access shows `<email> removed from this project`, and the user no longer sees that app's builds, logs, or artifacts.
 
-The backend remains authoritative. A nonmember receives a privacy-preserving not-found response for the project; a member whose role is too low receives `permission_denied`.
+The backend remains authoritative. A nonmember receives a privacy-preserving not-found response for the app; a member whose role is too low receives `permission_denied`.
 
 ## Troubleshooting
 
@@ -81,11 +81,11 @@ Only the Owner can promote a user to Admin or modify an existing Admin. Sign in 
 
 ### A QA Viewer cannot receive Developer or Maintainer access
 
-QA Viewer is intentionally capped at Viewer for every project. Change the person's instance role first if they need broader project access.
+QA Viewer is intentionally capped at Viewer for every app. Change the person's instance role first if they need broader app access.
 
 ### The user does not appear in the member picker
 
-The user may already have explicit membership, be disabled, or have implicit access as Owner or Admin. Check **Settings > Users** and the existing project member list.
+The user may already have explicit membership, be disabled, or have implicit access as Owner or Admin. Check **Settings > Users** and the existing app member list.
 
 ## Next step
 

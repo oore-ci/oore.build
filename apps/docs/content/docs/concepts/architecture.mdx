@@ -10,12 +10,12 @@ boundary.
 
 ## The control and execution model
 
-| Part                | Responsibility                                                                                             |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Browser client      | Presents setup, projects, builds, team access, and settings for the selected backend.                      |
-| `oore`              | Handles operator work such as setup, diagnostics, recovery, and runner administration.                     |
-| `oored`             | Owns authentication, authorization, projects, pipelines, build state, settings, and storage authorization. |
-| Direct macOS runner | Checks out trusted repositories, runs their commands, signs supported outputs, and uploads artifacts.      |
+| Part                | Responsibility                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------ |
+| Browser client      | Presents setup, apps, builds, team access, and settings for the selected backend.                      |
+| `oore`              | Handles operator work such as setup, diagnostics, recovery, and runner administration.                 |
+| `oored`             | Owns authentication, authorization, apps, pipelines, build state, settings, and storage authorization. |
+| Direct macOS runner | Checks out trusted repositories, runs their commands, signs supported outputs, and uploads artifacts.  |
 
 `oored` is the control plane. Its state belongs to one backend instance and is
 stored in that instance's SQLite database. The Direct macOS runner is the
@@ -55,10 +55,10 @@ storage remain owned by that backend.
 
 - Moving the browser client does not move the backend or its data.
 - Moving a runner does not change which backend authorizes the job.
-- Adding object storage moves artifact bytes, not project or authentication
+- Adding object storage moves artifact bytes, not app or authentication
   state.
 - One browser can select several backends, but those instances do not share
-  users, projects, runners, or artifacts.
+  users, apps, runners, or artifacts.
 - Repository code is trusted to run under the Direct runner account; process
   separation is not hostile-code isolation.
 

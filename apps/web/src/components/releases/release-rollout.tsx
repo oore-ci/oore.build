@@ -10,6 +10,7 @@ import {
   releaseStateLabel,
   releaseStoreError,
   releaseStoreStatus,
+  reviewExpectation,
 } from '@/lib/releases'
 import { cn } from '@/lib/utils'
 import { Row } from '@/components/layout/row'
@@ -71,7 +72,7 @@ function ReleaseStages({
       <Row gap={2} className="justify-between">
         <ReleaseStateBadge release={release} />
         <span className={cn(textVariants({ variant: 'caption' }), 'text-xs')}>
-          Step {current + 1} of {stages.length}
+          {stages[current]}
         </span>
       </Row>
       <ol
@@ -105,7 +106,11 @@ function ReleaseStages({
       <span className={textVariants({ variant: 'caption' })}>
         {blocked
           ? `Blocked before ${next ?? 'the next step'}`
-          : `${now}${next ? ` · then ${next}` : ''}`}
+          : reviewExpectation(release)
+            ? `In review, ${reviewExpectation(release)}`
+            : next
+              ? `Next: ${next}`
+              : now}
       </span>
     </div>
   )

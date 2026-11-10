@@ -1,4 +1,5 @@
 import { createContext, use, useMemo, type ReactNode } from 'react'
+import { buildSourceRef } from '@/lib/build-source'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { Row } from '@/components/layout/row'
 import { Link } from '@tanstack/react-router'
@@ -16,8 +17,15 @@ import {
 } from '@/components/data-table-features'
 import type { SortDirection } from '@/components/data-table-features'
 import { StatusBadge } from '@/components/status-badge'
-import { BuildSourceValue, CELL_STACK } from '@/components/table-values'
-import { relativeTime } from '@/lib/format-utils'
+import {
+  BuildNumberValue,
+  BuildSourceValue,
+  CELL_STACK,
+  EmptyValue,
+} from '@/components/table-values'
+import { BUILD_PLATFORM_LABELS, getBuildPlatforms } from '@/lib/build-platforms'
+import { samePushLeaders } from '@/lib/build-identity'
+import { formatDuration, relativeTime } from '@/lib/format-utils'
 import {
   getStatusPresentation,
   getRunnerPolicyBlockLabel,
@@ -37,7 +45,6 @@ import {
   webhookEventTrigger,
 } from './-build-filter-controls'
 import type { BuildSort } from './-build-sort'
-import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
@@ -73,6 +80,39 @@ function BuildStoreWait({ build }: { build: Build }) {
   )
 }
 
+/** Later builds of one push that fanned out, by build id, to their first build. */
+const SamePushContext = createContext<ReadonlyMap<string, Build>>(new Map())
+
+function SamePushNote({ build }: { build: Build }) {
+  const first = use(SamePushContext).get(build.id)
+  return first ? `Same push as #${first.build_number}` : null
+}
+
+function BuildRunValue({ build }: { build: Build }) {
+  const platforms = getBuildPlatforms(build)
+    .map((platform) => BUILD_PLATFORM_LABELS[platform])
+    .join(', ')
+  const seconds =
+    build.started_at && build.finished_at
+      ? build.finished_at - build.started_at
+      : null
+  if (!platforms && seconds === null) return <EmptyValue />
+  return (
+    <div className={CELL_STACK}>
+      {seconds !== null ? (
+        <span className="tabular-nums">{formatDuration(seconds)}</span>
+      ) : (
+        <EmptyValue />
+      )}
+      {platforms ? (
+        <span className={textVariants({ variant: 'caption' })}>
+          {platforms}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
 const BUILD_TABLE_SORTS = [
   'project_name',
   'status',
@@ -90,7 +130,7 @@ function buildTriggerLabel(build: Build) {
 }
 
 function projectName(build: Build) {
-  return build.context?.project_name ?? 'Unknown project'
+  return build.context?.project_name ?? 'Unknown app'
 }
 
 const columns: Array<DataTableColumnDef<Build>> = [
@@ -98,14 +138,11 @@ const columns: Array<DataTableColumnDef<Build>> = [
     accessorKey: 'build_number',
     header: 'Build',
     cell: ({ row }) => (
-      <Link
-        {...LIST_NAV_ITEM}
-        to="/builds/$buildId"
-        params={{ buildId: row.original.id }}
-        className="font-mono font-medium"
-      >
-        #{row.original.build_number}
-      </Link>
+      <BuildNumberValue
+        build={row.original}
+        navItem
+        note={<SamePushNote build={row.original} />}
+      />
     ),
     enableSorting: false,
   },
@@ -113,7 +150,7 @@ const columns: Array<DataTableColumnDef<Build>> = [
     id: 'project_name',
     accessorFn: projectName,
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Project" />
+      <DataTableColumnHeader column={column} title="App" />
     ),
     cell: ({ row }) => (
       <div className={CELL_STACK}>
@@ -173,15 +210,23 @@ const columns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'branch',
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Branch" />
+      <DataTableColumnHeader column={column} title="Source" />
     ),
     cell: ({ row }) => (
       <BuildSourceValue
-        branch={row.original.branch}
+        branch={buildSourceRef(row.original)}
         commitSha={row.original.commit_sha}
         context={row.original.context}
+        title={row.original.commit_title}
+        author={row.original.commit_author}
       />
     ),
+  },
+  {
+    id: 'run',
+    header: 'Run',
+    cell: ({ row }) => <BuildRunValue build={row.original} />,
+    enableSorting: false,
   },
   {
     accessorKey: 'created_at',
@@ -265,6 +310,7 @@ export function BuildCollection({
     { state: STORE_WAIT_QUERY, limit: 100 },
     { select: selectStoreWaits },
   ).data
+  const samePush = useMemo(() => samePushLeaders(builds), [builds])
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),
     [direction, sort],
@@ -282,46 +328,48 @@ export function BuildCollection({
 
   return (
     <StoreWaitContext value={storeWaits ?? new Map()}>
-      <CollectionFrame
-        ariaLabel="Build queue and history"
-        isBusy={isLoading || isRefreshing}
-      >
-        {error ? (
-          <CollectionError
-            title="Builds could not be loaded"
-            description={error.message}
-            onRetry={onRetry}
-          />
-        ) : null}
+      <SamePushContext value={samePush}>
+        <CollectionFrame
+          ariaLabel="Build queue and history"
+          isBusy={isLoading || isRefreshing}
+        >
+          {error ? (
+            <CollectionError
+              title="Builds could not be loaded"
+              description={error.message}
+              onRetry={onRetry}
+            />
+          ) : null}
 
-        {!isLoading && total === 0 && !error && !isFiltered ? (
-          emptyState
-        ) : (
-          <DataTable
-            table={table}
-            filters={filters}
-            collapseFilters
-            density={density}
-            onDensityChange={setDensity}
-            activeFilterCount={activeFilterCount}
-            onClearFilters={isFiltered ? onClearFilters : undefined}
-            search={{
-              value: query,
-              onChange: onSearch,
-              placeholder: 'Search builds',
-            }}
-            pagination={{ onPageChange, page, pageSize, total }}
-            isLoading={isLoading}
-            emptyMessage={
-              isLoading
-                ? 'Loading builds…'
-                : query
-                  ? `No builds match “${query}”.`
-                  : 'No builds match these filters.'
-            }
-          />
-        )}
-      </CollectionFrame>
+          {!isLoading && total === 0 && !error && !isFiltered ? (
+            emptyState
+          ) : (
+            <DataTable
+              table={table}
+              filters={filters}
+              collapseFilters
+              density={density}
+              onDensityChange={setDensity}
+              activeFilterCount={activeFilterCount}
+              onClearFilters={isFiltered ? onClearFilters : undefined}
+              search={{
+                value: query,
+                onChange: onSearch,
+                placeholder: 'Search builds',
+              }}
+              pagination={{ onPageChange, page, pageSize, total }}
+              isLoading={isLoading}
+              emptyMessage={
+                isLoading
+                  ? 'Loading builds…'
+                  : query
+                    ? `No builds match “${query}”.`
+                    : 'No builds match these filters.'
+              }
+            />
+          )}
+        </CollectionFrame>
+      </SamePushContext>
     </StoreWaitContext>
   )
 }

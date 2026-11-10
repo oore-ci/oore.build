@@ -269,7 +269,18 @@ impl PlanPublish {
             google_play,
             app_store,
             disabled,
+            frozen,
         } = settings;
+        if let Some(reason) = frozen {
+            return EffectivePublish {
+                changelog,
+                google_play: Ok(None),
+                app_store: Ok(None),
+                notes: vec![format!(
+                    "Store uploads are frozen: {reason}. Lift the freeze in Releases to upload again"
+                )],
+            };
+        }
         if disabled {
             return EffectivePublish {
                 changelog,
@@ -3975,6 +3986,7 @@ mod tests {
             google_play: Some(serde_json::from_value(config).unwrap()),
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
         }
     }
 
@@ -4195,6 +4207,7 @@ mod tests {
             google_play: Some(play_settings()),
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
         };
         let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: closed, rollout: 0.07 }\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: Beta }\n";
         let effective = publish_of(yaml, None).apply(settings.clone());
@@ -4265,6 +4278,7 @@ mod tests {
             google_play: None,
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
         });
         let play = effective.google_play.unwrap().unwrap();
         assert_eq!(play.service_account_secret, "PLAY_RELEASE");
@@ -4308,6 +4322,7 @@ mod tests {
             google_play: None,
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
         });
         assert_eq!(
             effective
@@ -4327,6 +4342,7 @@ mod tests {
             google_play: None,
             app_store: None,
             disabled: false,
+            frozen: None,
         };
         let effective = publish_of(PUBLISHING, None).apply(settings);
         let play = effective.google_play.unwrap_err();
@@ -4349,6 +4365,7 @@ mod tests {
             google_play: None,
             app_store: None,
             disabled: false,
+            frozen: None,
         });
         assert_eq!(none.google_play.unwrap(), None);
         assert!(none.app_store.unwrap().is_none());

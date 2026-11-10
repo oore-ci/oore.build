@@ -12,6 +12,7 @@ import { demoStoreVitals } from '../data/store-vitals'
 import type { DemoPersona } from '../personas'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { demoState } from '../state'
+import { demoActiveFreeze, demoFrozenResponse } from './release-freezes'
 
 // The demo reads only the reason and fraction; a policy passes through.
 const releaseActionBodySchema = z.looseObject({
@@ -169,6 +170,20 @@ function releaseActionHandler(action: ReleaseAction) {
         { error: `Cannot ${action} this release`, code: 'forbidden' },
         { status: 403 },
       )
+    const freeze = demoActiveFreeze(release.project_id)
+    if (
+      freeze &&
+      [
+        'raise',
+        'resume',
+        'complete',
+        'approve',
+        'release_now',
+        'resubmit',
+      ].includes(action)
+    ) {
+      return demoFrozenResponse(freeze)
+    }
     const body = releaseActionBodySchema.parse(
       await request.json().catch(() => ({})),
     )

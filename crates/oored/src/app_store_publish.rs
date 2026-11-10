@@ -172,6 +172,18 @@ pub(crate) fn normalize_config(
     {
         errors.push("The release notes directory must be a path inside the repository".to_string());
     }
+    config.listing_dir = config
+        .listing_dir
+        .take()
+        .map(|dir| dir.trim().trim_end_matches('/').to_string())
+        .filter(|dir| !dir.is_empty());
+    if let Some(dir) = &config.listing_dir
+        && (dir.starts_with('/') || dir.split('/').any(|part| part == ".."))
+    {
+        errors.push("The store listing directory must be a path inside the repository".to_string());
+    }
+    // Only an upload carries a listing read from the repository.
+    config.listing.clear();
 
     if config.destination == AppStoreDestination::Testflight {
         config.submit_for_review = false;
@@ -577,6 +589,15 @@ pub(crate) async fn record_upload(
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store publish settings"))?;
     let config = uploaded_config(config, reported);
+    let store_notes: Option<String> =
+        sqlx::query_scalar("SELECT store_notes FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_optional(deps.pool)
+            .await?
+            .flatten();
+    let workflow_groups =
+        crate::signing_identities::job_testflight_groups(deps.pool, build_id).await?;
+    let config = build_overrides(config, store_notes.as_deref(), workflow_groups);
     let ipa = load_uploaded_ipa(deps.pool, build_id).await?;
     let track = settings_track(&config);
     let config_json = serde_json::to_string(&config)?;
@@ -655,6 +676,9 @@ fn uploaded_config(
     {
         config.release_notes = notes.clone();
     }
+    if let Some(listing) = reported.listing.as_ref().filter(|l| !l.is_empty()) {
+        config.listing = listing.clone();
+    }
     let groups: Vec<String> = match &reported.testflight_groups {
         Some(groups) => groups
             .iter()
@@ -681,6 +705,33 @@ fn uploaded_config(
     config.testflight_groups = groups;
     config.submit_for_review = false;
     config.phased_release = false;
+    config
+}
+
+/// What the build itself asked for: release notes written when it was
+/// started replace the first locale's notes (or add `en-US`), and the
+/// workflow settings' TestFlight groups replace the groups of a TestFlight
+/// upload.
+fn build_overrides(
+    mut config: AppStorePublishConfig,
+    store_notes: Option<&str>,
+    workflow_groups: Option<Vec<String>>,
+) -> AppStorePublishConfig {
+    if let Some(notes) = store_notes.map(str::trim).filter(|notes| !notes.is_empty()) {
+        let whats_new: String = notes.chars().take(MAX_WHATS_NEW_CHARS).collect();
+        match config.release_notes.first_mut() {
+            Some(first) => first.whats_new = whats_new,
+            None => config.release_notes.push(AppStoreReleaseNote {
+                locale: "en-US".to_string(),
+                whats_new,
+            }),
+        }
+    }
+    if let Some(groups) = workflow_groups
+        && config.destination == AppStoreDestination::Testflight
+    {
+        config.testflight_groups = groups;
+    }
     config
 }
 
@@ -1245,6 +1296,14 @@ async fn distribute_app_store(
             .await
         {
             warn!(%error, locale = %note.locale, "failed to set App Store notes");
+            notes_warning = Some(error.0);
+        }
+    }
+    // The listing from the repository; a refused field must not stop the
+    // submission, so it becomes a warning like the notes.
+    for listing in &config.listing {
+        if let Err(error) = asc.set_version_listing(&version_id, listing).await {
+            warn!(%error, locale = %listing.locale, "failed to set the App Store listing");
             notes_warning = Some(error.0);
         }
     }
@@ -2254,6 +2313,44 @@ impl ReleaseStoreClient for StoreRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_and_groups_chosen_for_the_build_win() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::Testflight,
+            testflight_groups: vec!["Everyone".into()],
+            release_notes: vec![
+                AppStoreReleaseNote {
+                    locale: "en-GB".into(),
+                    whats_new: "Saved".into(),
+                },
+                AppStoreReleaseNote {
+                    locale: "de-DE".into(),
+                    whats_new: "Gespeichert".into(),
+                },
+            ],
+            ..AppStorePublishConfig::default()
+        };
+        let config = build_overrides(
+            saved.clone(),
+            Some("  Faster sync  "),
+            Some(vec!["QA".into()]),
+        );
+        assert_eq!(config.release_notes[0].whats_new, "Faster sync");
+        assert_eq!(config.release_notes[1].whats_new, "Gespeichert");
+        assert_eq!(config.testflight_groups, vec!["QA"]);
+
+        let untouched = build_overrides(saved.clone(), Some("  "), None);
+        assert_eq!(untouched, saved);
+
+        let store = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            ..AppStorePublishConfig::default()
+        };
+        let config = build_overrides(store, Some("New"), Some(vec!["QA".into()]));
+        assert_eq!(config.release_notes[0].locale, "en-US");
+        assert!(config.testflight_groups.is_empty());
+    }
     use crate::app_store_connect_keys::tests::{insert_shared_key, insert_signing, signing_pool};
 
     #[tokio::test]
@@ -2873,6 +2970,7 @@ mod tests {
                 .map(|groups| groups.iter().map(|group| group.to_string()).collect()),
             held_for_review: false,
             release_notes: None,
+            listing: None,
         }
     }
 
@@ -2936,6 +3034,25 @@ mod tests {
             uploaded_config(saved.clone(), &reported("app_store", None)),
             saved
         );
+    }
+
+    #[test]
+    fn the_reported_listing_goes_with_the_version() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            listing_dir: Some("fastlane/metadata".to_string()),
+            ..testflight(&[])
+        };
+        let listing = vec![oore_contract::AppStoreListing {
+            locale: "en-US".to_string(),
+            keywords: Some("shop".to_string()),
+            ..Default::default()
+        }];
+        let report = RunnerPublishResult {
+            listing: Some(listing.clone()),
+            ..reported("app_store", None)
+        };
+        assert_eq!(uploaded_config(saved, &report).listing, listing);
     }
 
     #[test]
@@ -3058,6 +3175,14 @@ mod tests {
             _: &str,
         ) -> AscResult<()> {
             self.record(format!("version notes {version_id} {locale}"));
+            Ok(())
+        }
+        async fn set_version_listing(
+            &self,
+            version_id: &str,
+            listing: &oore_contract::AppStoreListing,
+        ) -> AscResult<()> {
+            self.record(format!("version listing {version_id} {}", listing.locale));
             Ok(())
         }
         async fn enable_phased_release(&self, version_id: &str) -> AscResult<()> {

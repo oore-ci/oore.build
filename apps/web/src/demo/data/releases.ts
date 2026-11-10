@@ -12,6 +12,9 @@ export const RELEASE_IDS = {
   shopTestflight: 'rel-demo-007',
   shopAppStore: 'rel-demo-008',
   adminProduction: 'rel-demo-009',
+  paymentsAppStore: 'rel-demo-010',
+  paymentsTestflight: 'rel-demo-011',
+  adminClosed: 'rel-demo-012',
 } as const
 
 const DEFAULT_POLICY = {
@@ -270,7 +273,92 @@ export const demoReleases: Array<DemoRelease> = [
     created_at: ago(3600 * 20),
     updated_at: ago(3600 * 20),
   },
+  {
+    // Rejected in App Review: the reviewer's words and what to do next.
+    id: RELEASE_IDS.paymentsAppStore,
+    project_id: PROJECT_IDS.nativePayments,
+    build_id: BUILD_IDS.succeeded6,
+    build_number: 44,
+    artifact_id: null,
+    platform: 'ios',
+    store: 'app_store',
+    track: 'app_store',
+    package_name: 'build.oore.demo.payments',
+    version_name: '3.2.0',
+    version_code: 44,
+    state: 'rejected',
+    state_reason:
+      'Guideline 2.1 - Performance - App Completeness. We were unable to sign in with the demo account you provided: the app showed "Something went wrong" after tapping Continue. Please check the account works, or include a video of sign-in, and resubmit.',
+    store_status: 'REJECTED',
+    console_url:
+      'https://appstoreconnect.apple.com/apps/6450000003/distribution/ios/version/inflight',
+    rollout_fraction: 0,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: DEFAULT_POLICY,
+    awaiting_approval: false,
+    created_at: ago(86400 * 2),
+    updated_at: ago(3600 * 6),
+  },
+  {
+    // A TestFlight build close to Apple's 90 day limit.
+    id: RELEASE_IDS.paymentsTestflight,
+    project_id: PROJECT_IDS.nativePayments,
+    build_id: null,
+    build_number: null,
+    artifact_id: null,
+    platform: 'ios',
+    store: 'app_store',
+    track: 'Beta',
+    package_name: 'build.oore.demo.payments',
+    version_name: '3.1.0',
+    version_code: 39,
+    state: 'complete',
+    rollout_fraction: 1,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: { ...DEFAULT_POLICY, steps: [1] },
+    awaiting_approval: false,
+    created_at: ago(86400 * 84),
+    updated_at: ago(86400 * 84 - 3600),
+  },
+  {
+    // In Google's review, which usually takes this app a few hours.
+    id: RELEASE_IDS.adminClosed,
+    project_id: PROJECT_IDS.internalAdmin,
+    build_id: BUILD_IDS.succeeded2,
+    build_number: 89,
+    artifact_id: null,
+    platform: 'android',
+    store: 'google_play',
+    track: 'closed',
+    package_name: 'build.oore.demo.admin',
+    version_name: '1.9.0',
+    version_code: 89,
+    state: 'in_review',
+    typical_review_seconds: 3600 * 5,
+    rollout_fraction: 0,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: DEFAULT_POLICY,
+    awaiting_approval: false,
+    created_at: ago(3600 * 2),
+    updated_at: ago(3600 * 2),
+  },
 ]
+
+// Oore schedules the rollouts it started; the daemon sends auto_rollout on
+// every release.
+for (const release of demoReleases) release.auto_rollout ??= true
 
 export const demoReleaseHistory = {
   [RELEASE_IDS.adminProduction]: [

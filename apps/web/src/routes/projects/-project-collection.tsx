@@ -24,17 +24,56 @@ import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 import { Row } from '@/components/layout/row'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { StarIcon } from '@hugeicons/core-free-icons'
+import { Button } from '@/components/ui/button'
+import { useToggleFavorite } from '@/hooks/use-personal'
+import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 
-export type ProjectSort = 'created_at' | 'updated_at' | 'name'
+export type ProjectSort = 'activity' | 'created_at' | 'updated_at' | 'name'
 
 const PROJECT_TABLE_SORTS = [
   'name',
   'updated_at',
 ] satisfies ReadonlyArray<ProjectSort>
 
-function ProjectIdentity({ project }: { project: Project }) {
+/** Pinned apps sort first and their releases reach your inbox. */
+function PinButton({ project }: { project: Project }) {
+  const toggle = useToggleFavorite()
+  const pinned = toggle.isPending ? !project.is_favorite : project.is_favorite
   return (
-    <Row gap={3} className="min-w-0">
+    <Button
+      aria-label={pinned ? `Unpin ${project.name}` : `Pin ${project.name}`}
+      aria-pressed={pinned}
+      title={pinned ? 'Pinned: sorts first' : 'Pin to keep it at the top'}
+      size="icon-sm"
+      variant="ghost"
+      onClick={() => toggle.mutate(project)}
+      className={pinned ? 'text-warning' : 'text-muted-foreground/60'}
+    >
+      <HugeiconsIcon
+        icon={StarIcon}
+        className={pinned ? 'fill-current' : undefined}
+      />
+    </Button>
+  )
+}
+
+function projectFacts(project: Project) {
+  const platforms = project.platforms
+    .map((platform) => BUILD_PLATFORM_LABELS[platform])
+    .join(', ')
+  return [
+    platforms || null,
+    project.live_version ? `Live ${project.live_version}` : null,
+  ].filter(Boolean)
+}
+
+function ProjectIdentity({ project }: { project: Project }) {
+  const facts = projectFacts(project)
+  return (
+    <Row gap={2} className="min-w-0">
+      <PinButton project={project} />
       <RepositoryAvatar
         fullName={project.repository_full_name ?? project.name}
         avatarUrl={project.repository_avatar_url}
@@ -54,6 +93,7 @@ function ProjectIdentity({ project }: { project: Project }) {
           className={cn(textVariants({ variant: 'caption' }), 'block truncate')}
         >
           {project.repository_full_name ?? 'Local repository'}
+          {facts.length > 0 ? ` · ${facts.join(' · ')}` : ''}
         </span>
       </span>
     </Row>
@@ -133,7 +173,7 @@ function getProjectColumns(
     {
       accessorKey: 'name',
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title="Project" />
+        <DataTableColumnHeader column={column} title="App" />
       ),
       cell: ({ row }) => <ProjectIdentity project={row.original} />,
       enableHiding: false,
@@ -283,10 +323,10 @@ export function ProjectCollection({
   })
 
   return (
-    <CollectionFrame ariaLabel="Projects" isBusy={isLoading || isRefreshing}>
+    <CollectionFrame ariaLabel="Apps" isBusy={isLoading || isRefreshing}>
       {error ? (
         <CollectionError
-          title="Projects could not be loaded"
+          title="Apps could not be loaded"
           description={error.message}
           onRetry={onRetry}
         />
@@ -300,11 +340,11 @@ export function ProjectCollection({
           search={{
             value: query,
             onChange: onSearch,
-            placeholder: 'Search projects',
+            placeholder: 'Search apps',
           }}
           pagination={{ onPageChange, page, pageSize, total }}
           isLoading={isLoading}
-          emptyMessage={isLoading ? 'Loading projects…' : undefined}
+          emptyMessage={isLoading ? 'Loading apps…' : undefined}
         />
       )}
     </CollectionFrame>

@@ -45,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Mono } from '@/components/layout/mono'
@@ -362,6 +363,32 @@ export function WorkflowSettingsDrawer({
                 )}
               />
 
+              {shown?.summary?.platforms.includes('ios') ? (
+                <FormField
+                  control={form.control}
+                  name="testflight_groups"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>TestFlight groups</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder="Follow the file and the pipeline"
+                          disabled={disabled}
+                          autoComplete="off"
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        Names of TestFlight groups, separated by commas. When
+                        this workflow uploads to TestFlight, these groups get
+                        the build instead of the ones the file or the pipeline
+                        name.
+                      </FormDescription>
+                    </FormItem>
+                  )}
+                />
+              ) : null}
+
               {conflict ? (
                 <Alert variant="destructive">
                   <HugeiconsIcon icon={Alert02Icon} size={16} />
@@ -407,7 +434,7 @@ export function WorkflowSettingsDrawer({
                     <FormDescription>
                       {canChangeApproval
                         ? 'Replaces the pipeline’s approval policy for this workflow.'
-                        : 'Only project maintainers and instance admins can change which builds wait for approval.'}
+                        : 'Only app maintainers and instance admins can change which builds wait for approval.'}
                     </FormDescription>
                   </FormItem>
                 )}
@@ -416,7 +443,7 @@ export function WorkflowSettingsDrawer({
               {!canWrite ? (
                 <Text variant="muted">
                   You can view these settings. Changing them needs pipeline
-                  write access in this project.
+                  write access in this app.
                 </Text>
               ) : null}
 

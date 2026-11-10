@@ -1,0 +1,38 @@
+---
+title: 'Your inbox and notifications'
+description: 'Pin apps, see approvals and your failed builds in your inbox, and choose browser, email and weekly digest notifications for yourself.'
+status: implemented
+---
+
+Team channels under **Settings > Notifications** post for everyone. Each person also has their own inbox and settings, which change nothing for anyone else.
+
+## Pin your apps
+
+Select the star next to an app on **Apps**. Pinned apps sort first, their release changes reach your inbox, and **Mine** on Builds and Home includes their builds.
+
+## Your inbox
+
+The bell at the top of every page lists, for the last seven days:
+
+- Builds waiting for your approval, in apps where you are a maintainer
+- Builds you started (from Oore, the CLI or the API) that failed
+- Release changes of apps you pinned: in review, approved, rejected, refused by the store, rolling out, paused, halted, live or failed
+
+Opening the bell marks everything as seen in that browser. Instance-wide problems stay under **Needs attention** on Home; the bell links there.
+
+## Choose what reaches you
+
+Open **Notification settings** from the bell, the user menu or quick open. Under **What reaches you**, choose whether builds you start notify you always, only when they fail, or never, and whether approvals and releases of pinned apps do.
+
+Under **How it reaches you**:
+
+- **Browser notifications** show while Oore is open in a tab you are not looking at. Your browser asks for permission the first time.
+- **Email** goes to the address you sign in with, through the first enabled email channel under **Settings > Notifications**. Without one, the switch is off and admins get a link to add one.
+
+## Weekly digest
+
+Turn on **Email me a weekly digest** for a Monday morning (UTC) email with each app's builds, success rate, slowest pipeline and releases, plus signing that expires within 30 days. It covers the apps you pinned, or every app you can see if you pin none. **Email it to me now** sends this week's so far.
+
+## Mine and Everyone
+
+Builds and Home show **Mine** (builds you started and builds of apps you pinned) or **Everyone**. With more than five apps, they start on **Mine**. Your choice is remembered in that browser.

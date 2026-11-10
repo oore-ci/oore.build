@@ -3188,6 +3188,46 @@ pub async fn register_pipeline_ios_device(
         ));
     }
 
+    register_device_for_pipeline(
+        &state,
+        &pipeline_id,
+        &udid,
+        &name,
+        &platform,
+        &auth.0.user_id,
+        &auth.0.email,
+    )
+    .await
+    .map(Json)
+}
+
+/// Whether the pipeline can register devices with Apple: iOS signing with
+/// an App Store Connect key.
+pub(crate) async fn can_register_devices(state: &AppState, pipeline_id: &str) -> bool {
+    match load_ios_settings(&state.db, pipeline_id).await {
+        Ok(Some(settings)) => matches!(
+            load_api_credentials(&state.db, &settings, &state.encryption_key).await,
+            Ok(Some(_))
+        ),
+        _ => false,
+    }
+}
+
+/// Register a device with Apple for a pipeline's signing and refresh its
+/// profiles, for the settings page and for a phone registering itself from
+/// the install page.
+pub(crate) async fn register_device_for_pipeline(
+    state: &AppState,
+    pipeline_id: &str,
+    udid: &str,
+    name: &str,
+    platform: &str,
+    actor_user_id: &str,
+    actor_email: &str,
+) -> Result<RegisterIosDeviceResponse, (StatusCode, Json<ApiError>)> {
+    let pool = state.db.clone();
+    let pipeline_id = pipeline_id.to_string();
+    let udid = udid.to_string();
     let settings = load_ios_settings(&pool, &pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to load iOS signing settings");
         api_err(
@@ -3222,7 +3262,7 @@ pub async fn register_pipeline_ios_device(
     };
 
     let client = reqwest::Client::new();
-    let remote = apple_api::register_device(&client, &creds, &udid, &name, &platform).await?;
+    let remote = apple_api::register_device(&client, &creds, &udid, name, platform).await?;
 
     let now = now_unix();
     let existing = sqlx::query_as::<_, IosDeviceRow>(
@@ -3258,7 +3298,7 @@ pub async fn register_pipeline_ios_device(
         .bind(&remote.platform)
         .bind(&remote.status)
         .bind(now)
-        .bind(&auth.0.user_id)
+        .bind(actor_user_id)
         .bind(&row_id)
         .execute(&pool)
         .await
@@ -3285,7 +3325,7 @@ pub async fn register_pipeline_ios_device(
         .bind(&remote.platform)
         .bind(&remote.status)
         .bind(now)
-        .bind(&auth.0.user_id)
+        .bind(actor_user_id)
         .execute(&pool)
         .await
         .map_err(|e| {
@@ -3303,12 +3343,12 @@ pub async fn register_pipeline_ios_device(
         "udid": &udid,
         "device_name": &remote.name,
         "platform": &remote.platform,
-        "actor": &auth.0.email,
+        "actor": actor_email,
     })
     .to_string();
     let _ = write_audit_log(
         &pool,
-        Some(&auth.0.user_id),
+        Some(actor_user_id),
         "pipeline_ios_device_registered",
         "pipeline",
         Some(&pipeline_id),
@@ -3326,7 +3366,7 @@ pub async fn register_pipeline_ios_device(
             &state.encryption_key,
             &pipeline_id,
             &settings,
-            &auth.0.user_id,
+            actor_user_id,
             &creds,
         )
         .await
@@ -3335,7 +3375,7 @@ pub async fn register_pipeline_ios_device(
                 profile_sync_triggered = true;
                 let details = serde_json::json!({
                     "pipeline_id": &pipeline_id,
-                    "actor": &auth.0.email,
+                    "actor": actor_email,
                     "trigger": "device_register",
                     "updated_profiles": updated_profiles,
                     "warnings_count": sync_warnings.len(),
@@ -3343,7 +3383,7 @@ pub async fn register_pipeline_ios_device(
                 .to_string();
                 let _ = write_audit_log(
                     &pool,
-                    Some(&auth.0.user_id),
+                    Some(actor_user_id),
                     "pipeline_ios_signing_sync",
                     "pipeline",
                     Some(&pipeline_id),
@@ -3354,7 +3394,7 @@ pub async fn register_pipeline_ios_device(
             Err((status, err)) => {
                 warn!(
                     pipeline_id = %pipeline_id,
-                    actor = %auth.0.email,
+                    actor = %actor_email,
                     code = %err.code,
                     error = %err.error,
                     http_status = %status,
@@ -3374,11 +3414,11 @@ pub async fn register_pipeline_ios_device(
         added_at: existing.map(|r| r.added_at).unwrap_or(now),
         last_synced_at: Some(now),
     };
-    Ok(Json(RegisterIosDeviceResponse {
+    Ok(RegisterIosDeviceResponse {
         pipeline_id,
         device,
         profile_sync_triggered,
-    }))
+    })
 }
 
 pub async fn sync_pipeline_ios_signing(

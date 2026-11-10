@@ -15,7 +15,7 @@ GitLab can reach Oore.
 
 - External Access configured for the Oore instance.
 - An Oore instance owner or admin account.
-- A GitLab account that can read the projects you want Oore to discover.
+- A GitLab account that can read the apps you want Oore to discover.
 
 ## 1. Open GitLab setup
 
@@ -44,7 +44,7 @@ Oore verifies the token before storing the source.
 
 ## 3. Sync the source
 
-Open the saved source and select **Sync projects**. Oore follows GitLab
+Open the saved source and select **Sync apps**. Oore follows GitLab
 pagination and removes repositories that the account can no longer see.
 
 ## 4. Add a repository webhook
@@ -72,8 +72,8 @@ saved source details.
 
 ## Verify the result
 
-The GitLab source is active, **Sync projects** lists the expected repository,
-and **New project** can select it. GitLab's webhook test should reach the
+The GitLab source is active, **Sync apps** lists the expected repository,
+and **New app** can select it. GitLab's webhook test should reach the
 repository-specific URL without an authentication error.
 
 ## Troubleshooting
@@ -95,4 +95,4 @@ token from another repository is intentionally rejected.
 
 ## Next step
 
-[Create a project](/build/projects/create) from the synced repository.
+[Create an app](/build/projects/create) from the synced repository.

@@ -144,6 +144,8 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'v2.5.1',
     commit_sha: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
     changelog: 'Fixes the checkout total on iPad.',
+    store_notes:
+      '• The checkout total is right on iPad again\n• Faster loading of your order history',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     exit_code: 0,
@@ -729,6 +731,58 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
       created_at: ago(age),
       updated_at: ago(age - 360 - ((index * 97 + projectIndex * 61) % 340)),
     })
+  }
+}
+
+// ── What each build is: commit title, author and app version ────
+const DEMO_COMMIT_TITLES = [
+  'Fix saved addresses on checkout',
+  'Add order tracking map',
+  'Bump flutter_stripe to 11.2',
+  'Cache product images offline',
+  'Show delivery slots in local time',
+  'Fix crash when the cart is empty',
+  'Add Hindi translations',
+  'Speed up the home feed',
+  'Retry payments after a timeout',
+  'Tidy up the settings screen',
+  'Support dark mode in receipts',
+  'Fix login on Android 15',
+]
+const DEMO_AUTHORS = new Map([
+  ['octocat', 'Mona Lisa'],
+  ['mina-patel', 'Mina Patel'],
+  ['jordan-kim', 'Jordan Kim'],
+  ['priya-shah', 'Priya Shah'],
+])
+const DEMO_VERSION_NAMES = new Map<string, string>([
+  [PROJECT_IDS.flutterShop, '2.5.1'],
+  [PROJECT_IDS.internalAdmin, '1.8.2'],
+  [PROJECT_IDS.nativePayments, '3.2.0'],
+])
+
+// A runner reports these after checkout, so queued builds have none.
+for (const build of demoBuilds) {
+  if (!build.started_at) continue
+  build.commit_title ??=
+    DEMO_COMMIT_TITLES[build.build_number % DEMO_COMMIT_TITLES.length]
+  build.commit_author ??=
+    DEMO_AUTHORS.get(build.trigger_actor ?? '') ?? 'Mina Patel'
+  build.version_name ??= DEMO_VERSION_NAMES.get(build.project_id) ?? '1.0.0'
+  build.version_code ??= build.build_number
+}
+
+// A push to the same branch replaced each canceled history build.
+for (const build of demoBuilds) {
+  if (build.status !== 'canceled' || !build.id.startsWith('build-demo-history'))
+    continue
+  const newer = demoBuilds.find(
+    (candidate) =>
+      candidate.pipeline_id === build.pipeline_id &&
+      candidate.build_number === build.build_number + 1,
+  )
+  if (newer) {
+    build.superseded_by = { id: newer.id, build_number: newer.build_number }
   }
 }
 

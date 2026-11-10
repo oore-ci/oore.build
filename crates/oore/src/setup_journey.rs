@@ -2512,6 +2512,59 @@ fn profile_label(profile: InstallProfile) -> &'static str {
     }
 }
 
+/// Asks which folder holds the app, so setup ends in the browser with the
+/// app ready to add. `None` when skipped, not interactive, or not an app.
+fn ask_for_first_app(web_url: &str, terminal: Terminal) -> anyhow::Result<Option<Url>> {
+    if !terminal.is_interactive() {
+        return Ok(None);
+    }
+    loop {
+        let answer = match terminal.input(
+            "Which folder is your Flutter app in? Press Enter to skip.",
+            None,
+            false,
+        )? {
+            PromptResult::Submitted(answer) => answer,
+            PromptResult::Cancelled => return Ok(None),
+        };
+        let answer = answer.trim();
+        if answer.is_empty() {
+            return Ok(None);
+        }
+        match first_app_url(web_url, Path::new(answer)) {
+            Ok(url) => return Ok(Some(url)),
+            Err(error) => terminal.note("That folder will not work", format!("{error:#}"))?,
+        }
+    }
+}
+
+/// The web UI's Add your app drawer, filled in with a local repository.
+fn first_app_url(web_url: &str, folder: &Path) -> anyhow::Result<Url> {
+    let folder = match folder.strip_prefix("~") {
+        Ok(rest) => dirs::home_dir()
+            .context("could not find your home folder")?
+            .join(rest),
+        Err(_) => folder.to_path_buf(),
+    };
+    let folder = fs::canonicalize(&folder)
+        .with_context(|| format!("{} does not exist", folder.display()))?;
+    anyhow::ensure!(
+        folder.join(".git").exists(),
+        "{} is not a Git repository",
+        folder.display()
+    );
+    anyhow::ensure!(
+        folder.join("pubspec.yaml").is_file(),
+        "{} has no pubspec.yaml",
+        folder.display()
+    );
+    let mut url = Url::parse(web_url)?.join("/projects")?;
+    url.query_pairs_mut()
+        .append_pair("openCreate", "1")
+        .append_pair("repo", &folder.to_string_lossy());
+    Ok(url)
+}
+
 async fn print_ready(
     manifest: &InstallManifest,
     manifest_path: &Path,
@@ -2565,6 +2618,17 @@ async fn print_ready(
                 "Complete setup is ready.\n\nRun this on your computer and keep it open:\n  {tunnel}\n\nThen open Oore:\n  {web_url}\n\nRun `oore status` to inspect the instance."
             )
         } else {
+            if status.runtime_mode == RuntimeMode::Local
+                && let Some(app_url) = ask_for_first_app(&web_url, terminal)?
+            {
+                if !super::open_browser(app_url.as_str()) {
+                    terminal.note("Browser did not open", format!("Open\n  {app_url}"))?;
+                }
+                terminal.outro(
+                    "Complete setup is ready.\n\nOore opened with your app ready to add. Select Add app, and Oore proposes the first build.\n\nRun `oore status` to inspect the instance.",
+                )?;
+                return Ok(());
+            }
             format!(
                 "Complete setup is ready.\n\nOpen Oore:\n  {web_url}\n\nRun `oore status` to inspect the instance."
             )
@@ -2610,4 +2674,27 @@ async fn print_ready(
     };
     terminal.outro(message)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod first_app_tests {
+    use super::*;
+
+    #[test]
+    fn a_flutter_repository_opens_the_add_app_drawer() {
+        let dir = std::env::temp_dir().join(format!("oore-first-app-{}", std::process::id()));
+        fs::create_dir_all(dir.join(".git")).unwrap();
+        let url = first_app_url("http://127.0.0.1:8787", &dir);
+        assert!(url.unwrap_err().to_string().contains("pubspec.yaml"));
+        fs::write(dir.join("pubspec.yaml"), "name: coin\n").unwrap();
+        let url = first_app_url("http://127.0.0.1:8787", &dir).unwrap();
+        assert_eq!(url.path(), "/projects");
+        let repo = url
+            .query_pairs()
+            .find(|(key, _)| key == "repo")
+            .map(|(_, value)| value.into_owned())
+            .unwrap();
+        assert_eq!(Path::new(&repo), fs::canonicalize(&dir).unwrap());
+        let _ = fs::remove_dir_all(dir);
+    }
 }

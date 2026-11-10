@@ -6,7 +6,7 @@ description: 'Queue a build of a pipeline, optionally naming the workflow to run
 
 ```text
 oore build run --pipeline <ID> [--workflow NAME] [--branch BRANCH] [--commit SHA]
-               [--platform PLATFORM]... [--daemon-url <URL>] [--token <TOKEN>] [--json]
+               [--platform PLATFORM]... [--notes TEXT] [--daemon-url <URL>] [--token <TOKEN>] [--json]
 ```
 
 The command looks up the pipeline's project, then queues a build with
@@ -21,6 +21,7 @@ It needs a signed-in session (`oore login`, `--token`, or
 | `--branch BRANCH`     | The branch to build. Defaults to the project's default branch.                                              |
 | `--commit SHA`        | The exact commit to build, instead of the branch head.                                                      |
 | `--platform PLATFORM` | Build only `android`, `ios` or `macos`. Repeat for several. Defaults to every platform the build plans.     |
+| `--notes TEXT`        | What's new in this release. Sent to Google Play and the App Store instead of the pipeline's release notes.  |
 | `--daemon-url`        | Backend URL; otherwise uses environment, CLI config, then loopback.                                         |
 | `--token`             | Session token; otherwise `OORE_SESSION_TOKEN` or the stored session.                                        |
 | `--json`              | Print the queued build as JSON.                                                                             |

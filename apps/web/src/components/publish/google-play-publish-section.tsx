@@ -150,9 +150,11 @@ const formSchema = z
     release_notes: z.enum(['none', 'changelog', 'repo_files']),
     release_notes_locale: z.string().trim(),
     release_notes_dir: z.string().trim(),
+    listing_dir: z.string().trim(),
     package_name: z.string().trim(),
     upload_mapping: z.boolean(),
     in_app_update_priority: PRIORITY_VALUES,
+    preflight: z.enum(['auto', 'block', 'warn', 'off']),
   })
   .superRefine((values, ctx) => {
     if (
@@ -191,6 +193,17 @@ const formSchema = z
         path: ['release_notes_dir'],
         message:
           'Enter the repository directory that holds <locale>.txt files.',
+      })
+    }
+    if (
+      values.listing_dir.startsWith('/') ||
+      values.listing_dir.split('/').includes('..')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['listing_dir'],
+        message:
+          'Use a path inside the repository, such as fastlane/metadata/android.',
       })
     }
     if (
@@ -245,11 +258,13 @@ function toFormValues(
     release_notes: config?.release_notes ?? 'changelog',
     release_notes_locale: config?.release_notes_locale ?? 'en-US',
     release_notes_dir: config?.release_notes_dir ?? '',
+    listing_dir: config?.listing_dir ?? '',
     package_name: config?.package_name ?? '',
     upload_mapping: config?.upload_mapping ?? true,
     in_app_update_priority:
       PRIORITY_VALUES.safeParse(String(config?.in_app_update_priority)).data ??
       'none',
+    preflight: config?.preflight ?? 'auto',
   } satisfies FormValues
 }
 
@@ -265,14 +280,23 @@ function toConfig(values: FormValues): GooglePlayPublishConfig {
     release_notes_locale: values.release_notes_locale || 'en-US',
     release_notes_dir:
       values.release_notes === 'repo_files' ? values.release_notes_dir : null,
+    listing_dir: values.listing_dir || null,
     package_name: values.package_name || null,
     upload_mapping: values.upload_mapping,
     in_app_update_priority:
       values.in_app_update_priority === 'none'
         ? null
         : Number(values.in_app_update_priority),
+    preflight: values.preflight,
   }
 }
+
+const PREFLIGHT_LEVELS = {
+  auto: 'Automatic',
+  block: 'Stop the upload',
+  warn: 'Warn only',
+  off: 'Off',
+} as const
 
 /** One sentence describing what the saved settings will do to a build. */
 const EFFECT_FIELDS = [
@@ -427,7 +451,7 @@ function ServiceAccountField({
             {!value
               ? 'Store the whole service account JSON key file as a secret, then choose it here.'
               : scope
-                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides a project secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
+                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides an app secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
                 : savedPresent
                   ? `Uses ${value} from a scope you can’t list.`
                   : `No secret named ${value} is visible to this pipeline. The upload step will fail until you add it.`}
@@ -712,6 +736,30 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
     <Stack gap={4}>
       <FormField
         control={form.control}
+        name="listing_dir"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Store listing from the repository</FormLabel>
+            <FormControl>
+              <Input
+                className="font-mono"
+                placeholder="fastlane/metadata/android"
+                spellCheck={false}
+                {...field}
+              />
+            </FormControl>
+            <FormDescription>
+              Optional. fastlane’s layout: en-US/title.txt,
+              short_description.txt, full_description.txt and video.txt. Sent
+              with every upload; files you leave out stay as they are in Play
+              Console. Screenshots are not uploaded.
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
         name="package_name"
         render={({ field }) => (
           <FormItem>
@@ -782,6 +830,39 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 aria-label="Upload the R8 mapping file"
               />
             </FormControl>
+          </FormItem>
+        )}
+      />
+      <FormField
+        control={form.control}
+        name="preflight"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Pre-flight checks</FormLabel>
+            <FormControl>
+              <RadioGroup
+                value={field.value}
+                onValueChange={field.onChange}
+                className="flex flex-wrap gap-x-6 gap-y-2"
+              >
+                {Object.entries(PREFLIGHT_LEVELS).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <RadioGroupItem value={value} />
+                    {label}
+                  </label>
+                ))}
+              </RadioGroup>
+            </FormControl>
+            <FormDescription>
+              Before the release is committed, Google Play validates it, which
+              catches a version code Play already has or a track the service
+              account cannot release to. Automatic warns until a release from
+              this pipeline has been accepted, then stops a refused release so
+              nothing half-published reaches Play.
+            </FormDescription>
           </FormItem>
         )}
       />

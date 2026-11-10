@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { QrCode } from '@/components/qr-code'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { Copy01Icon, Share08Icon } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
@@ -179,6 +180,11 @@ export default function ArtifactShareMenu({
                   {createdToken.download_url}
                 </AlertDescription>
               </Alert>
+              <QrCode
+                value={createdToken.download_url}
+                label={`Code that downloads ${artifact.name}`}
+                className="mx-auto"
+              />
               <Row gap={2} className={textVariants({ variant: 'caption' })}>
                 <span>Expires {relativeTime(createdToken.expires_at)}</span>
                 {createdToken.single_use ? (

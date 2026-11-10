@@ -72,6 +72,8 @@ export function useBuilds<TData = ListBuildsResponse>(
     branch?: string
     trigger?: string
     actor?: string
+    /** Builds the caller started or of apps the caller pinned. */
+    mine?: boolean
     created_after?: number
     created_before?: number
     q?: string

@@ -45,7 +45,7 @@ const RESOURCE_TYPE_OPTIONS = {
   all: 'All resources',
   user: 'User',
   build: 'Build',
-  project: 'Project',
+  project: 'App',
   pipeline: 'Pipeline',
   integration: 'Source',
   instance_settings: 'Settings',

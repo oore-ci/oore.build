@@ -14,6 +14,7 @@ test('live events map to the query tags they make stale', () => {
   ])
   assert.deepEqual(tagsForLiveEvent({ type: 'release', release: {} }), [
     'Releases',
+    'Inbox',
   ])
   assert.ok(tagsForLiveEvent({ type: 'build', build: {} }).includes('Builds'))
   assert.deepEqual(tagsForLiveEvent({ type: 'ready', ready: {} }), [])
@@ -36,6 +37,21 @@ test('only scoped generated queries with a matching tag are invalidated', () => 
     false,
   )
   assert.equal(queryHasTag({ queryKey: ['setup-status'] }, tags), false)
+})
+
+test('build and release events refresh the inbox but not other user queries', () => {
+  const tags = new Set(tagsForLiveEvent({ type: 'build', build: {} }))
+  assert.equal(
+    queryHasTag(
+      { queryKey: ['i1', { _id: 'getInbox', tags: ['Users'] }] },
+      tags,
+    ),
+    true,
+  )
+  assert.equal(
+    queryHasTag({ queryKey: ['i1', { _id: 'getMe', tags: ['Users'] }] }, tags),
+    false,
+  )
 })
 
 test('reconnect backoff doubles and caps at 30 seconds', () => {

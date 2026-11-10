@@ -1931,6 +1931,15 @@
             }
           },
           {
+            "name": "mine",
+            "in": "query",
+            "description": "Only builds you started or builds of apps you pinned.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "created_after",
             "in": "query",
             "description": "Only builds created at or after this Unix time in seconds",
@@ -2120,6 +2129,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BuildInsightsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/trends": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get build trends",
+        "description": "Tests that failed and then passed on the same commit, and build steps whose median run time grew, across apps the caller can read.",
+        "operationId": "get_build_trends",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Window length in days: 7, 14, 30 (default) or 90",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Build trends",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildTrendsResponse"
                 }
               }
             }
@@ -2411,6 +2469,54 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/failure-hint": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Get a failed build's likely cause",
+        "description": "The log line that explains a failed build, with the likely cause and fix. No hint for a build that did not fail or whose log has no line that stands out.",
+        "operationId": "get_build_failure_hint",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Failure hint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildFailureHintResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/feedback": {
       "get": {
         "tags": [
@@ -2626,6 +2732,133 @@
           },
           "500": {
             "description": "The screenshot could not be read from artifact storage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/installs": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List installs of a build",
+        "description": "Who downloaded this build's files through an install page, share link\nor latest-build link.",
+        "operationId": "list_build_installs",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Installs, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListArtifactInstallsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/keep": {
+      "put": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Keep a build's files",
+        "description": "Retention cleanup skips a kept build until it is unkept.",
+        "operationId": "keep_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Kept"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Stop keeping a build's files",
+        "operationId": "unkeep_build",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No longer kept"
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2983,6 +3216,129 @@
         ]
       }
     },
+    "/v1/builds/{build_id}/shares": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List sends of a build to tester groups",
+        "operationId": "list_build_shares",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sends, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListBuildSharesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Send a build to a tester group",
+        "description": "Emails each member an install link and sends a browser notification to\nmembers who turned them on. Members without access to the app are\nlisted with no_access and are not sent anything.",
+        "operationId": "send_build_to_group",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendBuildToGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildShare"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Build or group not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Build has not succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/builds/{build_id}/sizes": {
       "get": {
         "tags": [
@@ -3117,6 +3473,53 @@
         ]
       }
     },
+    "/v1/device-registrations/{registration_id}": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Get a device registration",
+        "operationId": "get_device_registration",
+        "parameters": [
+          {
+            "name": "registration_id",
+            "in": "path",
+            "description": "Registration ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Registration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistration"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -3173,6 +3576,45 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/feedback/recent": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List recent tester feedback",
+        "description": "Feedback on builds of apps I can see, newest first.",
+        "operationId": "list_recent_feedback",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "How far back, 1 to 30 days. Default 7.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Feedback",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListRecentFeedbackResponse"
                 }
               }
             }
@@ -4521,6 +4963,46 @@
         ]
       }
     },
+    "/v1/latest-links/{link_id}": {
+      "delete": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Delete a latest-build install link",
+        "operationId": "delete_latest_install_link",
+        "parameters": [
+          {
+            "name": "link_id",
+            "in": "path",
+            "description": "Link ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/operator-incidents": {
       "get": {
         "tags": [
@@ -5042,6 +5524,84 @@
         ]
       }
     },
+    "/v1/pipelines/{pipeline_id}/device-registrations": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Start registering an iPhone or iPad",
+        "description": "Returns a profile url to open on the device. Installing the profile\nsends its UDID back and registers it on the pipeline's Apple team.",
+        "operationId": "create_device_registration",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeviceRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceRegistration"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Pipeline cannot register devices",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Needs an HTTPS public URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/pipelines/{pipeline_id}/ios-signing": {
       "get": {
         "tags": [
@@ -5236,6 +5796,119 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SyncPipelineIosSigningResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines/{pipeline_id}/latest-links": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List latest-build install links of a pipeline",
+        "operationId": "list_latest_install_links",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListLatestInstallLinksResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Create a latest-build install link",
+        "description": "A permanent link that always opens the newest successful build of the\npipeline for one platform, optionally on one branch. The url is only\nreturned here.",
+        "operationId": "create_latest_install_link",
+        "parameters": [
+          {
+            "name": "pipeline_id",
+            "in": "path",
+            "description": "Pipeline ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateLatestInstallLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestInstallLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -6136,7 +6809,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "Sort by created_at, updated_at, or name",
+            "description": "Sort by activity (pinned apps, then newest build), created_at, updated_at, or name",
             "required": false,
             "schema": {
               "type": "string"
@@ -6209,6 +6882,53 @@
           },
           "400": {
             "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/sample": {
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create a sample Flutter app",
+        "description": "Local Only instances: runs `flutter create` in the backend's data\nfolder, commits it to a new Git repository and adds it as an app named\n\"Sample app\", so a first build works before any code of your own.",
+        "operationId": "create_sample_project",
+        "responses": {
+          "201": {
+            "description": "Sample app created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateProjectResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin role and Local Only mode required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Flutter or Git could not create the sample",
             "content": {
               "application/json": {
                 "schema": {
@@ -6366,6 +7086,74 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/app-detection": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Detect the app in the repository",
+        "description": "Reads `pubspec.yaml`, the platform folders and Oore config files on\nthe project's default branch through its source provider, so the web\nUI can propose the app's first pipelines.",
+        "operationId": "detect_project_app",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What Oore found in the repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectAppDetection"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read permission required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or project source not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source provider request failed",
             "content": {
               "application/json": {
                 "schema": {
@@ -6898,6 +7686,75 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/favorite": {
+      "put": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Pin an app",
+        "description": "Pins the app for the signed-in person: it sorts first in the app\nlist, and its store releases reach their notifications.",
+        "operationId": "add_project_favorite",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Pinned"
+          },
+          "404": {
+            "description": "Project not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Unpin an app",
+        "operationId": "remove_project_favorite",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Unpinned"
           }
         },
         "security": [
@@ -8553,6 +9410,138 @@
           },
           "400": {
             "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/release-freezes": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "List release freezes",
+        "description": "The instance-wide freeze and the freezes of apps the caller can read. While a freeze holds an app, store uploads are skipped, promotions and rollout changes that reach more users are refused, and scheduled rollout steps wait.",
+        "operationId": "list_release_freezes",
+        "responses": {
+          "200": {
+            "description": "Release freezes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListReleaseFreezesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Freeze releases",
+        "description": "Freeze one app (maintainer) or every app (instance owner or admin, no project_id). Freezing again replaces the reason.",
+        "operationId": "set_release_freeze",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetReleaseFreezeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The freeze",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseFreeze"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/release-freezes/{freeze_id}": {
+      "delete": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Lift a release freeze",
+        "operationId": "delete_release_freeze",
+        "parameters": [
+          {
+            "name": "freeze_id",
+            "in": "path",
+            "description": "Freeze ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Lifted"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Freeze not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -11275,6 +12264,66 @@
           },
           "403": {
             "description": "Repository path does not match the assigned job",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/identity": {
+      "post": {
+        "tags": [
+          "Runners"
+        ],
+        "summary": "Report build identity",
+        "description": "Runner reports the commit title and author and the app version once\nit has checked out the build's source.",
+        "operationId": "report_build_identity",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportBuildIdentityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Identity stored"
+          },
+          "403": {
+            "description": "The build is not assigned to this runner",
             "content": {
               "application/json": {
                 "schema": {
@@ -14147,6 +15196,231 @@
         ]
       }
     },
+    "/v1/tester-groups": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "List tester groups",
+        "operationId": "list_tester_groups",
+        "responses": {
+          "200": {
+            "description": "Groups",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListTesterGroupsResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Create a tester group",
+        "operationId": "create_tester_group",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TesterGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TesterGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/tester-groups/{group_id}": {
+      "put": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Update a tester group",
+        "operationId": "update_tester_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TesterGroupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TesterGroup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or admin only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name already used",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Delete a tester group",
+        "operationId": "delete_tester_group",
+        "parameters": [
+          {
+            "name": "group_id",
+            "in": "path",
+            "description": "Group ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "403": {
+            "description": "Owner or admin only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/users": {
       "get": {
         "tags": [
@@ -14321,6 +15595,158 @@
           },
           "401": {
             "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/digest": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get my weekly digest",
+        "operationId": "get_weekly_digest",
+        "responses": {
+          "200": {
+            "description": "The last 7 days of my apps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyDigest"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/digest/send": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Email my weekly digest now",
+        "operationId": "send_weekly_digest",
+        "responses": {
+          "202": {
+            "description": "Queued"
+          },
+          "409": {
+            "description": "No email channel to send through",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/inbox": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get my inbox",
+        "description": "Approvals I can give, my failed builds and release changes of apps I\npinned, from the last 7 days.",
+        "operationId": "get_inbox",
+        "responses": {
+          "200": {
+            "description": "Inbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InboxResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/users/me/notification-preferences": {
+      "get": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Get my notification preferences",
+        "operationId": "get_notification_preferences",
+        "responses": {
+          "200": {
+            "description": "Notification preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Update my notification preferences",
+        "operationId": "update_notification_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationPreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Saved preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationPreferencesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
             "content": {
               "application/json": {
                 "schema": {
@@ -14522,6 +15948,140 @@
                 }
               }
             }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/config": {
+      "get": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Get browser push settings",
+        "operationId": "get_web_push_config",
+        "parameters": [
+          {
+            "name": "endpoint",
+            "in": "query",
+            "description": "This browser's push endpoint, to report whether it is subscribed.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "VAPID public key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebPushConfig"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/subscriptions": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Subscribe this browser to push notifications",
+        "operationId": "subscribe_web_push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPushSubscriptionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Subscribed"
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/test": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Send a test push notification to my browsers",
+        "operationId": "send_test_web_push",
+        "responses": {
+          "202": {
+            "description": "Sent"
+          },
+          "502": {
+            "description": "No browser accepted it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/web-push/unsubscribe": {
+      "post": {
+        "tags": [
+          "Testers"
+        ],
+        "summary": "Unsubscribe a browser from push notifications",
+        "operationId": "unsubscribe_web_push",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebPushUnsubscribeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Unsubscribed"
           }
         },
         "security": [
@@ -15102,6 +16662,48 @@
           "app_store"
         ]
       },
+      "AppStoreListing": {
+        "type": "object",
+        "description": "One language of an App Store listing, read from the repository. Absent\nfields are left as they are in App Store Connect.",
+        "required": [
+          "locale"
+        ],
+        "properties": {
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "keywords": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "locale": {
+            "type": "string"
+          },
+          "marketing_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "promotional_text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "support_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
       "AppStorePublishConfig": {
         "type": "object",
         "description": "App Store publishing settings for a pipeline, stored as the `app_store`\npublish target. Uploads use the App Store Connect API key from the\npipeline's iOS signing settings and require the `app_store` export method.",
@@ -15127,6 +16729,20 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "listing": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppStoreListing"
+            },
+            "description": "The listing the runner read from `listing_dir` for this upload."
+          },
+          "listing_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A repository directory with the store listing in fastlane's layout,\n`<locale>/description.txt`, `keywords.txt`, `promotional_text.txt`,\n`marketing_url.txt` and `support_url.txt`, such as\n`fastlane/metadata`. Each submitted version gets it."
           },
           "phased_release": {
             "type": "boolean",
@@ -15399,6 +17015,34 @@
               "null"
             ],
             "format": "int64"
+          }
+        }
+      },
+      "ArtifactInstall": {
+        "type": "object",
+        "description": "Someone installing one of a build's artifacts.",
+        "required": [
+          "artifact_id",
+          "via",
+          "installed_at"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string"
+          },
+          "installed_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "via": {
+            "type": "string",
+            "description": "How it was installed: `install_page`, `share_link` or `latest_link`."
           }
         }
       },
@@ -15772,11 +17416,25 @@
               "null"
             ]
           },
+          "commit_author": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The built commit's author name, reported with `commit_title`."
+          },
           "commit_sha": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "commit_title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The first line of the built commit's message. The runner reports it\nafter checkout, so a queued build has none."
           },
           "config_snapshot": {
             "type": "object"
@@ -15884,6 +17542,24 @@
               "$ref": "#/components/schemas/StepResult"
             }
           },
+          "store_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Release notes written for this build's store uploads."
+          },
+          "superseded_by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildReference",
+                "description": "The newer build that canceled this one, when a push to the same\nbranch replaced it."
+              }
+            ]
+          },
           "trigger_actor": {
             "type": [
               "string",
@@ -15908,6 +17584,21 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "The store version code (Android versionCode, iOS build number) the\nbuild makes."
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app version the build makes, from `pubspec.yaml`."
           },
           "workflow": {
             "type": [
@@ -16191,6 +17882,28 @@
               "$ref": "#/components/schemas/BuildEvent"
             }
           },
+          "queue": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildQueueEstimate",
+                "description": "Where a queued build stands: builds ahead of it and a rough wait."
+              }
+            ]
+          },
+          "retention": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildRetention",
+                "description": "How long retention keeps this finished build and why."
+              }
+            ]
+          },
           "retryable_steps": {
             "type": "array",
             "items": {
@@ -16239,6 +17952,65 @@
           },
           "to_status": {
             "type": "string"
+          }
+        }
+      },
+      "BuildFailureHint": {
+        "type": "object",
+        "description": "The first line of a failed build's log that explains the failure, with\nthe likely cause.",
+        "required": [
+          "line",
+          "sequence",
+          "category",
+          "cause"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "`gradle`, `xcode`, `cocoapods`, `signing`, `dart`, `flutter`,\n`network`, `disk` or `other`."
+          },
+          "cause": {
+            "type": "string",
+            "description": "What probably went wrong, in plain words."
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What usually fixes it."
+          },
+          "line": {
+            "type": "string",
+            "description": "The log line, trimmed."
+          },
+          "sequence": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Its sequence in the build log, to jump to it."
+          },
+          "step": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The step whose log the line is in."
+          }
+        }
+      },
+      "BuildFailureHintResponse": {
+        "type": "object",
+        "properties": {
+          "hint": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildFailureHint",
+                "description": "Absent when the build did not fail or no line stood out."
+              }
+            ]
           }
         }
       },
@@ -16524,6 +18296,34 @@
           "macos"
         ]
       },
+      "BuildQueueEstimate": {
+        "type": "object",
+        "description": "A queued build's place in line, from the builds queued before it and\neach pipeline's median build time.",
+        "required": [
+          "ahead",
+          "running"
+        ],
+        "properties": {
+          "ahead": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Queued builds that a runner takes first."
+          },
+          "estimated_wait_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Rough seconds until a runner takes this build; absent with no history."
+          },
+          "running": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Builds running now."
+          }
+        }
+      },
       "BuildQueueSnapshot": {
         "type": "object",
         "description": "Builds waiting or running right now.",
@@ -16558,6 +18358,23 @@
           }
         }
       },
+      "BuildReference": {
+        "type": "object",
+        "description": "Another build, by id and number.",
+        "required": [
+          "id",
+          "build_number"
+        ],
+        "properties": {
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          }
+        }
+      },
       "BuildReleaseOutcome": {
         "type": "string",
         "description": "The furthest-behind store release of a build, in words a build list can\nshow beside the build status.",
@@ -16570,6 +18387,119 @@
           "live",
           "failed"
         ]
+      },
+      "BuildRetention": {
+        "type": "object",
+        "description": "Why retention keeps a finished build, and until when.",
+        "required": [
+          "kept",
+          "kept_by_release",
+          "kept_by_status"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the age limit removes it, in unix seconds. Absent when it is\nkept or there is no age limit; count and size limits can remove it\nsooner."
+          },
+          "kept": {
+            "type": "boolean",
+            "description": "Someone chose to keep this build; retention never removes it."
+          },
+          "kept_by_release": {
+            "type": "boolean",
+            "description": "A release keeps it: one still in progress, or the version live on a\nstore track."
+          },
+          "kept_by_status": {
+            "type": "boolean",
+            "description": "Its outcome is one the retention policy keeps."
+          }
+        }
+      },
+      "BuildShare": {
+        "type": "object",
+        "description": "A build sent to a tester group, with who installed it since.",
+        "required": [
+          "id",
+          "build_id",
+          "group_id",
+          "group_name",
+          "sent_at",
+          "recipients"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "group_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipients": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildShareRecipient"
+            }
+          },
+          "sent_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sent_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "BuildShareRecipient": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email",
+          "no_access"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "installed_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "First install of this build by this person."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "no_access": {
+            "type": "boolean",
+            "description": "The person cannot open this app, so the email could not include it."
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
       },
       "BuildSizeBaseline": {
         "type": "object",
@@ -16748,6 +18678,34 @@
             "format": "int64"
           },
           "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BuildTrendsResponse": {
+        "type": "object",
+        "required": [
+          "window_days",
+          "flaky_tests",
+          "slower_steps"
+        ],
+        "properties": {
+          "flaky_tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FlakyTest"
+            },
+            "description": "Most occurrences first, at most 20."
+          },
+          "slower_steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SlowerStep"
+            },
+            "description": "Largest slowdown first, at most 10."
+          },
+          "window_days": {
             "type": "integer",
             "format": "int64"
           }
@@ -17158,6 +19116,13 @@
             },
             "description": "Optional one-run platform selection. Omitted builds every platform configured by the pipeline."
           },
+          "store_notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What's new in this release, as testers and store users read it. It\nreplaces the pipeline's Google Play and App Store release notes for\nthe build's uploads (Play's notes language, App Store's first\nlocale). Omitted uses the pipeline's notes."
+          },
           "trigger_ref": {
             "type": [
               "string",
@@ -17181,6 +19146,36 @@
         "properties": {
           "build": {
             "$ref": "#/components/schemas/Build"
+          }
+        }
+      },
+      "CreateDeviceRegistrationRequest": {
+        "type": "object",
+        "properties": {
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A name for the device in Apple's list, such as `Asha's iPhone`."
+          }
+        }
+      },
+      "CreateLatestInstallLinkRequest": {
+        "type": "object",
+        "required": [
+          "platform"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only builds from this branch. Empty or absent means any branch."
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BuildPlatform"
           }
         }
       },
@@ -17252,6 +19247,13 @@
               "null"
             ],
             "description": "Webhook: HMAC secret for signing payloads. Slack: bot token with\n`users:read.email`, used to mention the triggering user. Optional."
+          },
+          "slack_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slack channel ID for one updating message per release (Slack only).\nNeeds a bot token with `chat:write` that is in the channel."
           },
           "slack_mentions": {
             "type": "array",
@@ -17696,6 +19698,170 @@
         "properties": {
           "deleted": {
             "type": "boolean"
+          }
+        }
+      },
+      "DeviceRegistration": {
+        "type": "object",
+        "description": "Registering an iPhone for a pipeline's ad hoc builds from the install\npage: the phone installs a profile that reports its UDID.",
+        "required": [
+          "id",
+          "pipeline_id",
+          "state",
+          "created_at",
+          "expires_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "device_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "profile_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Open this on the iPhone, in Safari."
+          },
+          "state": {
+            "$ref": "#/components/schemas/DeviceRegistrationState"
+          }
+        }
+      },
+      "DeviceRegistrationState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "registered",
+          "failed",
+          "expired"
+        ]
+      },
+      "DigestApp": {
+        "type": "object",
+        "required": [
+          "project_id",
+          "name",
+          "builds",
+          "succeeded",
+          "failed",
+          "releases"
+        ],
+        "properties": {
+          "builds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestRelease"
+            }
+          },
+          "slowest_pipeline": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DigestPipeline"
+              }
+            ]
+          },
+          "succeeded": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "DigestExpiry": {
+        "type": "object",
+        "required": [
+          "name",
+          "project_name",
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          }
+        }
+      },
+      "DigestPipeline": {
+        "type": "object",
+        "required": [
+          "name",
+          "median_seconds"
+        ],
+        "properties": {
+          "median_seconds": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "DigestRelease": {
+        "type": "object",
+        "required": [
+          "version",
+          "store",
+          "track",
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "store": {
+            "type": "string"
+          },
+          "track": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
           }
         }
       },
@@ -18255,6 +20421,67 @@
           }
         }
       },
+      "FlakyTest": {
+        "type": "object",
+        "description": "A test that failed and then passed on the same commit, so the failure\nwas not the code's.",
+        "required": [
+          "project_id",
+          "project_name",
+          "pipeline_id",
+          "pipeline_name",
+          "suite",
+          "name",
+          "occurrences",
+          "failed_build_id",
+          "failed_build_number",
+          "passed_build_id",
+          "passed_build_number",
+          "last_seen_at"
+        ],
+        "properties": {
+          "failed_build_id": {
+            "type": "string"
+          },
+          "failed_build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "last_seen_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "occurrences": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Times it failed and then passed on the same commit in the window."
+          },
+          "passed_build_id": {
+            "type": "string"
+          },
+          "passed_build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "suite": {
+            "type": "string"
+          }
+        }
+      },
       "FrontendPairRequest": {
         "type": "object",
         "required": [
@@ -18581,6 +20808,13 @@
             "description": "In-app update priority, 0 to 5.",
             "minimum": 0
           },
+          "listing_dir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A repository directory with the store listing in fastlane's layout,\n`<locale>/title.txt`, `short_description.txt`,\n`full_description.txt` and `video.txt`, such as\n`fastlane/metadata/android`. Sent with every upload."
+          },
           "package_name": {
             "type": [
               "string",
@@ -18842,6 +21076,78 @@
           },
           "track": {
             "type": "string"
+          }
+        }
+      },
+      "InboxItem": {
+        "type": "object",
+        "description": "Something for this person: an approval they can give, a build of theirs\nthat failed, or a change to a release of an app they pinned.",
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "detail",
+          "project_id",
+          "project_name",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "build_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/InboxItemKind"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "release_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "InboxItemKind": {
+        "type": "string",
+        "enum": [
+          "approval",
+          "failed_build",
+          "release"
+        ]
+      },
+      "InboxResponse": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InboxItem"
+            },
+            "description": "Newest first, from the last 7 days."
           }
         }
       },
@@ -19315,6 +21621,70 @@
           "file"
         ]
       },
+      "LatestInstallLink": {
+        "type": "object",
+        "description": "A link that always installs the newest succeeded build of a pipeline,\noptionally only from one branch.",
+        "required": [
+          "id",
+          "project_id",
+          "pipeline_id",
+          "platform",
+          "prefix",
+          "created_at",
+          "use_count"
+        ],
+        "properties": {
+          "branch": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "platform": {
+            "$ref": "#/components/schemas/BuildPlatform"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The full link. Only returned when the link is created; later lists\nshow `prefix` only."
+          },
+          "use_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ListApiTokensResponse": {
         "type": "object",
         "required": [
@@ -19358,6 +21728,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ArtifactDownloadTokenSummary"
+            }
+          }
+        }
+      },
+      "ListArtifactInstallsResponse": {
+        "type": "object",
+        "required": [
+          "installs"
+        ],
+        "properties": {
+          "installs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ArtifactInstall"
             }
           }
         }
@@ -19439,6 +21823,20 @@
           }
         }
       },
+      "ListBuildSharesResponse": {
+        "type": "object",
+        "required": [
+          "shares"
+        ],
+        "properties": {
+          "shares": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildShare"
+            }
+          }
+        }
+      },
       "ListBuildsResponse": {
         "type": "object",
         "required": [
@@ -19493,6 +21891,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListLatestInstallLinksResponse": {
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "properties": {
+          "links": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LatestInstallLink"
+            }
           }
         }
       },
@@ -19673,6 +22085,20 @@
           }
         }
       },
+      "ListRecentFeedbackResponse": {
+        "type": "object",
+        "required": [
+          "feedback"
+        ],
+        "properties": {
+          "feedback": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RecentFeedback"
+            }
+          }
+        }
+      },
       "ListReleaseActivityResponse": {
         "type": "object",
         "required": [
@@ -19683,6 +22109,20 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ReleaseActivityEvent"
+            }
+          }
+        }
+      },
+      "ListReleaseFreezesResponse": {
+        "type": "object",
+        "required": [
+          "freezes"
+        ],
+        "properties": {
+          "freezes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseFreeze"
             }
           }
         }
@@ -19803,6 +22243,20 @@
           "total": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ListTesterGroupsResponse": {
+        "type": "object",
+        "required": [
+          "groups"
+        ],
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TesterGroup"
+            }
           }
         }
       },
@@ -19972,6 +22426,13 @@
             ],
             "description": "Project this channel is scoped to. Absent means the channel receives\nevents from every project, plus instance-wide events such as runner\noffline."
           },
+          "slack_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Slack channel ID, such as `C0123ABCD`, the bot token posts release\nupdates to (Slack only). With it, each release gets one message that\nOore edits as the release moves, with details in its thread."
+          },
           "slack_mentions": {
             "type": "array",
             "items": {
@@ -20088,6 +22549,65 @@
           "delivered",
           "failed"
         ]
+      },
+      "NotificationPreferences": {
+        "type": "object",
+        "description": "One person's notification choices. Instance channels are unaffected.",
+        "required": [
+          "my_builds",
+          "approvals",
+          "followed_releases",
+          "email",
+          "browser",
+          "weekly_digest"
+        ],
+        "properties": {
+          "approvals": {
+            "type": "boolean",
+            "description": "Builds waiting for an approval this person can give."
+          },
+          "browser": {
+            "type": "boolean",
+            "description": "Show these as browser notifications while Oore is open."
+          },
+          "email": {
+            "type": "boolean",
+            "description": "Send these by email, using the instance's email channel server."
+          },
+          "followed_releases": {
+            "type": "boolean",
+            "description": "Store release changes of the apps this person pinned."
+          },
+          "my_builds": {
+            "$ref": "#/components/schemas/PersonalBuildEvents",
+            "description": "Builds this person started."
+          },
+          "weekly_digest": {
+            "type": "boolean",
+            "description": "A weekly summary email on Monday morning (UTC)."
+          }
+        }
+      },
+      "NotificationPreferencesResponse": {
+        "type": "object",
+        "required": [
+          "preferences",
+          "email_available",
+          "email_address"
+        ],
+        "properties": {
+          "email_address": {
+            "type": "string",
+            "description": "Where personal email goes."
+          },
+          "email_available": {
+            "type": "boolean",
+            "description": "An enabled email channel exists, so Oore can send personal email."
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/NotificationPreferences"
+          }
+        }
       },
       "OidcCallbackResponse": {
         "type": "object",
@@ -20266,6 +22786,15 @@
         "enum": [
           "open",
           "resolved"
+        ]
+      },
+      "PersonalBuildEvents": {
+        "type": "string",
+        "description": "Which of their own builds a person hears about.",
+        "enum": [
+          "off",
+          "failed",
+          "all"
         ]
       },
       "Pipeline": {
@@ -20886,6 +23415,16 @@
             ],
             "description": "`false` stops every store upload for the workflow. Unset follows\nthe file and the pipeline's Publish settings."
           },
+          "testflight_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "TestFlight groups the workflow's builds go to, replacing the file's\nand the pipeline's groups. Only used when the upload goes to\nTestFlight."
+          },
           "updated_at": {
             "type": [
               "integer",
@@ -21176,7 +23715,9 @@
           "created_at",
           "updated_at",
           "current_user_role",
-          "auto_add_pipelines"
+          "auto_add_pipelines",
+          "is_favorite",
+          "platforms"
         ],
         "properties": {
           "auto_add_pipelines": {
@@ -21208,8 +23749,34 @@
           "id": {
             "type": "string"
           },
+          "is_favorite": {
+            "type": "boolean",
+            "description": "The signed-in person pinned this app; pinned apps sort first."
+          },
+          "last_build_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "When the app's newest build started, for sorting by activity."
+          },
+          "live_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Version of the newest store release that is rolling out or complete."
+          },
           "name": {
             "type": "string"
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms its pipelines build."
           },
           "repository_avatar_url": {
             "type": [
@@ -21245,6 +23812,47 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "ProjectAppDetection": {
+        "type": "object",
+        "description": "What Oore found in an app's repository on its default branch, to propose\nits first pipelines.",
+        "required": [
+          "reference",
+          "flutter",
+          "platforms",
+          "config_files"
+        ],
+        "properties": {
+          "app_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The `name` in `pubspec.yaml`."
+          },
+          "config_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Valid Oore config files found, such as `.oore.yaml`."
+          },
+          "flutter": {
+            "type": "boolean",
+            "description": "The repository has a `pubspec.yaml` that depends on Flutter."
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platform folders found, such as `android/` and `ios/`."
+          },
+          "reference": {
+            "type": "string",
+            "description": "The branch or commit Oore read."
           }
         }
       },
@@ -21303,6 +23911,10 @@
           },
           "project": {
             "$ref": "#/components/schemas/Project"
+          },
+          "setup": {
+            "$ref": "#/components/schemas/ProjectSetupProgress",
+            "description": "The steps after the first install that the app has done."
           }
         }
       },
@@ -21552,6 +24164,29 @@
           "viewer"
         ]
       },
+      "ProjectSetupProgress": {
+        "type": "object",
+        "description": "What an app has set up beyond its first build, for the checklist that\nfollows the first install.",
+        "required": [
+          "release_signing",
+          "store_publishing",
+          "testers"
+        ],
+        "properties": {
+          "release_signing": {
+            "type": "boolean",
+            "description": "A pipeline signs release builds, or the app's signing library holds\nan identity."
+          },
+          "store_publishing": {
+            "type": "boolean",
+            "description": "A pipeline uploads to Google Play or App Store Connect."
+          },
+          "testers": {
+            "type": "boolean",
+            "description": "Someone has viewer access to the app, as testers do."
+          }
+        }
+      },
       "PromotionDecisionRequest": {
         "type": "object",
         "properties": {
@@ -21640,6 +24275,31 @@
           "version": {
             "type": "string",
             "description": "Installed release version from the install root's `VERSION` file."
+          }
+        }
+      },
+      "RecentFeedback": {
+        "type": "object",
+        "description": "Recent tester feedback across apps the caller can see.",
+        "required": [
+          "feedback",
+          "project_id",
+          "project_name",
+          "build_number"
+        ],
+        "properties": {
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "feedback": {
+            "$ref": "#/components/schemas/BuildFeedback"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
           }
         }
       },
@@ -21964,6 +24624,14 @@
             "type": "string",
             "description": "Play track, or TestFlight group / `app_store`."
           },
+          "typical_review_seconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "How long store review usually takes for this app on this store, in\nseconds: the average of its last five finished reviews (App Store\nand TestFlight counted apart). Only on releases in review, and absent\nuntil the app has finished two reviews."
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
@@ -22146,6 +24814,46 @@
           }
         }
       },
+      "ReleaseFreeze": {
+        "type": "object",
+        "description": "Store submissions and promotions are held, for one app or the whole\ninstance.",
+        "required": [
+          "id",
+          "reason",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Absent for a freeze of the whole instance."
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
       "ReleaseHealth": {
         "type": "string",
         "enum": [
@@ -22307,6 +25015,37 @@
         "properties": {
           "access_token": {
             "type": "string"
+          }
+        }
+      },
+      "ReportBuildIdentityRequest": {
+        "type": "object",
+        "description": "What a runner found out about a build after checkout.",
+        "properties": {
+          "commit_author": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "commit_title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "version_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },
@@ -22809,6 +25548,13 @@
           "status": {
             "$ref": "#/components/schemas/RunnerStatus"
           },
+          "toolchain": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerToolchainCheck"
+            },
+            "description": "What the runner found when it checked its build tools, as\n`oore doctor` would. Empty for runners that do not report them."
+          },
           "updated_at": {
             "type": "integer",
             "format": "int64"
@@ -23218,6 +25964,13 @@
             "type": "boolean",
             "description": "The build's workflow has publishing turned off in the pipeline's\nworkflow settings, so nothing uploads, whatever the file says."
           },
+          "frozen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A release freeze holds store uploads; its reason. Nothing uploads\nuntil it is lifted."
+          },
           "google_play": {
             "oneOf": [
               {
@@ -23245,6 +25998,16 @@
           "held_for_review": {
             "type": "boolean",
             "description": "Google Play only took the edit with `changesNotSentForReview=true`:\nthe release waits in Play Console until someone sends it for review."
+          },
+          "listing": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AppStoreListing"
+            },
+            "description": "App Store uploads: the store listing read from the repository\n(`listing_dir`), applied to the version Oore submits."
           },
           "package_name": {
             "type": "string"
@@ -23440,6 +26203,58 @@
           }
         }
       },
+      "RunnerToolchainCheck": {
+        "type": "object",
+        "description": "One build tool a runner checked, such as Xcode or the Android SDK.",
+        "required": [
+          "id",
+          "label",
+          "status"
+        ],
+        "properties": {
+          "detail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version or path found, or what is wrong."
+          },
+          "fix": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "How to fix a missing tool, often a command to run on the runner."
+          },
+          "id": {
+            "type": "string",
+            "description": "Stable id, such as `xcode` or `android_sdk`."
+          },
+          "label": {
+            "type": "string",
+            "description": "What people call the tool, such as \"Android SDK\"."
+          },
+          "platforms": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildPlatform"
+            },
+            "description": "Platforms that need it. Empty when every build does."
+          },
+          "status": {
+            "$ref": "#/components/schemas/RunnerToolchainStatus"
+          }
+        }
+      },
+      "RunnerToolchainStatus": {
+        "type": "string",
+        "description": "The outcome of one build tool check on a runner.",
+        "enum": [
+          "ok",
+          "missing",
+          "warning"
+        ]
+      },
       "RuntimeMode": {
         "type": "string",
         "enum": [
@@ -23627,6 +26442,42 @@
           "updated_at": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "SendBuildToGroupRequest": {
+        "type": "object",
+        "required": [
+          "group_id"
+        ],
+        "properties": {
+          "group_id": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to test, up to 1000 characters. Shown in the email."
+          }
+        }
+      },
+      "SetReleaseFreezeRequest": {
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app to freeze; absent freezes the whole instance."
+          },
+          "reason": {
+            "type": "string"
           }
         }
       },
@@ -24211,6 +27062,52 @@
           "member_id": {
             "type": "string",
             "description": "Slack member ID, such as `U0123ABCD`."
+          }
+        }
+      },
+      "SlowerStep": {
+        "type": "object",
+        "description": "A build step whose run time grew over the window.",
+        "required": [
+          "project_id",
+          "project_name",
+          "pipeline_id",
+          "pipeline_name",
+          "step",
+          "before_seconds",
+          "after_seconds",
+          "builds"
+        ],
+        "properties": {
+          "after_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Median seconds in the second half of the window."
+          },
+          "before_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Median seconds in the first half of the window."
+          },
+          "builds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Succeeded builds the medians come from."
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "project_name": {
+            "type": "string"
+          },
+          "step": {
+            "type": "string"
           }
         }
       },
@@ -24856,6 +27753,79 @@
           }
         }
       },
+      "TesterGroup": {
+        "type": "object",
+        "description": "A named set of people a build can be sent to, such as QA or design.",
+        "required": [
+          "id",
+          "name",
+          "members",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "members": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TesterGroupMember"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "TesterGroupMember": {
+        "type": "object",
+        "required": [
+          "user_id",
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "TesterGroupRequest": {
+        "type": "object",
+        "required": [
+          "name",
+          "member_user_ids"
+        ],
+        "properties": {
+          "member_user_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 80 characters, unique on the instance."
+          }
+        }
+      },
       "TriggerConfig": {
         "type": "object",
         "required": [
@@ -25188,6 +28158,13 @@
             ],
             "description": "New HMAC secret (webhook) or bot token (slack). Omit to keep existing;\npass empty string to clear."
           },
+          "slack_channel_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "New Slack channel ID for release updates. Omit to keep existing; pass\nan empty string to clear."
+          },
           "slack_mentions": {
             "type": [
               "array",
@@ -25436,6 +28413,15 @@
               "boolean",
               "null"
             ]
+          },
+          "testflight_groups": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -26042,6 +29028,56 @@
           "environment"
         ]
       },
+      "WebPushConfig": {
+        "type": "object",
+        "description": "Web push for the installed tester portal.",
+        "required": [
+          "public_key",
+          "subscribed"
+        ],
+        "properties": {
+          "public_key": {
+            "type": "string",
+            "description": "VAPID public key, base64url, for `PushManager.subscribe`."
+          },
+          "subscribed": {
+            "type": "boolean",
+            "description": "Whether this browser endpoint is subscribed for the caller."
+          }
+        }
+      },
+      "WebPushSubscriptionRequest": {
+        "type": "object",
+        "required": [
+          "endpoint",
+          "p256dh",
+          "auth"
+        ],
+        "properties": {
+          "auth": {
+            "type": "string",
+            "description": "The subscription's `auth` secret, base64url."
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "p256dh": {
+            "type": "string",
+            "description": "The subscription's `p256dh` key, base64url."
+          }
+        }
+      },
+      "WebPushUnsubscribeRequest": {
+        "type": "object",
+        "required": [
+          "endpoint"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          }
+        }
+      },
       "WebhookResponse": {
         "type": "object",
         "required": [
@@ -26056,6 +29092,39 @@
           },
           "ok": {
             "type": "boolean"
+          }
+        }
+      },
+      "WeeklyDigest": {
+        "type": "object",
+        "description": "What the weekly digest says for this person: their apps' last 7 days.",
+        "required": [
+          "period_start",
+          "period_end",
+          "apps",
+          "expiring"
+        ],
+        "properties": {
+          "apps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestApp"
+            }
+          },
+          "expiring": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DigestExpiry"
+            },
+            "description": "Signing certificates and profiles that expire in the next 30 days."
+          },
+          "period_end": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "period_start": {
+            "type": "integer",
+            "format": "int64"
           }
         }
       }
@@ -26171,6 +29240,10 @@
     {
       "name": "System",
       "description": "Daemon runtime and metrics."
+    },
+    {
+      "name": "Testers",
+      "description": "Getting builds to testers: latest-build install links, tester groups, sends, installs, feedback, device registration and browser push."
     },
     {
       "name": "Scoped Download Tokens",

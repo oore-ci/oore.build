@@ -10,9 +10,9 @@ const MAX_RECONNECT_DELAY_MS = 30_000
 export function tagsForLiveEvent(event: LiveEvent): Array<string> {
   switch (event.type) {
     case 'build':
-      return ['Builds', 'Projects', 'Artifacts']
+      return ['Builds', 'Apps', 'Artifacts', INBOX_TAG]
     case 'release':
-      return ['Releases']
+      return ['Releases', INBOX_TAG]
     case 'runner':
       return ['Runners']
     default:
@@ -20,9 +20,17 @@ export function tagsForLiveEvent(event: LiveEvent): Array<string> {
   }
 }
 
+/**
+ * The personal inbox has the Users tag, which also covers queries that no
+ * build or release changes, so it is matched by operation instead.
+ */
+const INBOX_TAG = 'Inbox'
+const INBOX_OPERATION = 'getInbox'
+
 export const ALL_LIVE_TAGS = [
+  INBOX_TAG,
   'Builds',
-  'Projects',
+  'Apps',
   'Artifacts',
   'Releases',
   'Runners',
@@ -33,9 +41,10 @@ export function queryHasTag(query: Pick<Query, 'queryKey'>, tags: Set<string>) {
   // SAFETY: generated keys are `[instanceId, { _id, baseUrl, tags? }]`;
   // other keys have no object at index 1, so `tags` reads as undefined.
   const params = query.queryKey[1] as
-    | { tags?: ReadonlyArray<string> }
+    | { _id?: string; tags?: ReadonlyArray<string> }
     | null
     | undefined
+  if (tags.has(INBOX_TAG) && params?._id === INBOX_OPERATION) return true
   return params?.tags?.some((tag) => tags.has(tag)) ?? false
 }
 

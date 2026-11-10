@@ -63,7 +63,13 @@ Install only the tools that this Runner needs:
 - Install Xcode for iOS or macOS builds.
 - Add the required credentials for signed artifacts.
 
-Missing build tools do not block Runner setup. Oore reports the missing tool on each affected build.
+Missing build tools do not block Runner setup. The Runner checks its tools
+when it starts and every 15 minutes, as `oore doctor --all` would: Git,
+Flutter, a JDK and the Android SDK, Xcode and its first launch, and
+CocoaPods. **Settings > Runners** shows what each Runner can build under
+**Can build**. Select a platform it cannot build to see each missing tool
+with the command that fixes it. Home shows the same for a new instance, and
+adding an app shows it beside each proposed pipeline.
 
 ## Verify the result
 
