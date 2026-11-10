@@ -96,21 +96,18 @@ function demoTrends(days: number): BuildTrendsResponse {
         last_seen_at: ago(3 * DAY),
       },
     ],
-    slower_steps:
-      days >= 14
-        ? [
-            {
-              project_id: PROJECT_IDS.flutterShop,
-              project_name: 'Shop',
-              pipeline_id: PIPELINE_IDS.shopIos,
-              pipeline_name: 'iOS release',
-              step: 'flutter build ipa',
-              before_seconds: 412,
-              after_seconds: 598,
-              builds: 24,
-            },
-          ]
-        : [],
+    slower_steps: [
+      {
+        project_id: PROJECT_IDS.flutterShop,
+        project_name: 'Shop',
+        pipeline_id: PIPELINE_IDS.shopIos,
+        pipeline_name: 'iOS release',
+        step: 'flutter build ipa',
+        before_seconds: 412,
+        after_seconds: 598,
+        builds: 24,
+      },
+    ],
   }
 }
 
