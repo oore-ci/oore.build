@@ -16,7 +16,8 @@ export default function RuntimeUpdateNotice() {
   const [open, setOpen] = useState(false)
   const updates = useRuntimeUpdates()
   const updateCount =
-    Number(updates.frontendOffered) + Number(updates.backendOffered)
+    Number(updates.frontendOffered || updates.frontendBehind) +
+    Number(updates.backendOffered)
 
   return (
     <>
