@@ -7,6 +7,7 @@ import {
   HotfixButton,
 } from '@/components/releases/release-recovery'
 import { ReleaseActions } from '@/components/releases/release-actions'
+import { ReleaseFreezeNotice } from '@/components/releases/release-freeze'
 import { PromoteReleaseButton } from '@/components/environments/promote-release-button'
 import {
   ReleaseRollout,
@@ -103,6 +104,7 @@ export function ReleasePanel({
 
   return (
     <Stack gap={4}>
+      <ReleaseFreezeNotice projectId={ordered[0].project_id} />
       {ordered.map((release) => (
         <ReleaseCard
           key={release.id}
@@ -377,9 +379,12 @@ function RejectionNotice({ release }: { release: Release }) {
             pipeline_id: build.pipeline_id,
             branch: build.branch ?? '',
             workflow: build.workflow ?? '',
+            // Rebuild only for the store that rejected it, so a resubmit to
+            // Apple does not also upload a new Android build to Play.
+            platforms: [apple ? ('ios' as const) : ('android' as const)],
           }
         : undefined,
-    [build],
+    [build, apple],
   )
   return (
     <Alert variant="default" className="border-destructive/40">

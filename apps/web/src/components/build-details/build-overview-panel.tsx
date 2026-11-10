@@ -571,7 +571,8 @@ export function BuildOverviewPanel({
           <BuildTestersSection
             buildId={build.id}
             buildNumber={build.build_number}
-            canSend={canShare}
+            // The daemon only sends succeeded builds (409 otherwise).
+            canSend={canShare && build.status === 'succeeded'}
           />
         ) : null}
         <ChecksSection

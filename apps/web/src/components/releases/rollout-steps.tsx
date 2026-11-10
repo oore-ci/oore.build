@@ -42,6 +42,10 @@ export function RolloutSteps({
     (step) => step <= release.rollout_fraction + 1e-9,
   ).length
   const current = Math.max(0, reached - 1)
+  // An exact rollout ("Update rollout" to 35%) can sit between two steps.
+  const offStep =
+    reached > 0 && Math.abs(steps[current] - release.rollout_fraction) > 1e-9
+  const nowAt = formatRolloutPercent(release.rollout_fraction)
   const halted = release.state === 'halted' || release.state === 'paused'
   const width = 100 / steps.length
   const points = steps.flatMap((step, index) => [
@@ -101,7 +105,13 @@ export function RolloutSteps({
               </span>
               {isCurrent ? (
                 <span className="font-medium text-primary">
-                  {halted ? 'stopped here' : 'you are here'}
+                  {offStep
+                    ? halted
+                      ? `stopped at ${nowAt}`
+                      : `now ${nowAt}`
+                    : halted
+                      ? 'stopped here'
+                      : 'you are here'}
                 </span>
               ) : isNext && release.next_step_at ? (
                 <span>{stepTime(release.next_step_at)}</span>

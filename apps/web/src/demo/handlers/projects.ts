@@ -104,10 +104,12 @@ function hasProjectMembership(projectId: string, userId: string): boolean {
   return !!demoState.projectRoles[projectId]?.[userId]
 }
 
-function hasRepository(repositoryId: string): boolean {
-  return Object.values(demoState.repositories).some((repositories) =>
-    repositories?.some((repository) => repository.id === repositoryId),
-  )
+function findRepository(repositoryId: string) {
+  for (const repositories of Object.values(demoState.repositories)) {
+    const repository = repositories?.find(({ id }) => id === repositoryId)
+    if (repository) return repository
+  }
+  return undefined
 }
 
 export const projectHandlers = [
@@ -447,7 +449,10 @@ export const projectHandlers = [
     if (forbidden) return forbidden
     const persona = getDemoPersonaFromRequest(request)
     const body = createProjectRequestSchema.parse(await request.json())
-    if (body.repository_id && !hasRepository(body.repository_id)) {
+    const repository = body.repository_id
+      ? findRepository(body.repository_id)
+      : undefined
+    if (body.repository_id && !repository) {
       return HttpResponse.json(
         { error: 'Repository not found', code: 'not_found' },
         { status: 404 },
@@ -458,7 +463,11 @@ export const projectHandlers = [
       name: body.name,
       description: body.description,
       repository_id: body.repository_id,
-      default_branch: body.default_branch ?? 'main',
+      // The daemon joins these from the repository row.
+      repository_full_name: repository?.full_name,
+      repository_avatar_url: repository?.avatar_url,
+      default_branch:
+        body.default_branch ?? repository?.default_branch ?? 'main',
       settings: {},
       auto_add_pipelines: body.auto_add_pipelines ?? true,
       created_by: persona.userId,
@@ -494,13 +503,20 @@ export const projectHandlers = [
       )
     }
     const repositoryId = z.string().safeParse(body.repository_id)
-    if (repositoryId.success && !hasRepository(repositoryId.data)) {
+    const repository = repositoryId.success
+      ? findRepository(repositoryId.data)
+      : undefined
+    if (repositoryId.success && !repository) {
       return HttpResponse.json(
         { error: 'Repository not found', code: 'not_found' },
         { status: 404 },
       )
     }
     Object.assign(project, body, { updated_at: ago(0) })
+    if (repository) {
+      project.repository_full_name = repository.full_name
+      project.repository_avatar_url = repository.avatar_url
+    }
     return HttpResponse.json({ project })
   }),
 
