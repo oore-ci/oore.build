@@ -129,6 +129,12 @@ async fn notification_http_client(url: &url::Url) -> anyhow::Result<reqwest::Cli
         .map_err(|_| anyhow::anyhow!("failed to initialize notification HTTP client"))
 }
 
+/// The channel event a release event sends, if any.
+#[cfg(test)]
+pub(crate) fn release_event_type_name(kind: ReleaseEventKind) -> Option<&'static str> {
+    release_event_type(kind)
+}
+
 /// Release kinds that notify, mapped to their event filter names.
 fn release_event_type(kind: ReleaseEventKind) -> Option<&'static str> {
     match kind {
