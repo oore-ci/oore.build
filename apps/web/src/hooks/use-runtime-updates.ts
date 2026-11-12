@@ -23,6 +23,8 @@ import {
 } from '@/lib/api-client/client'
 import {
   backendRunsRelease,
+  compareReleaseVersions,
+  frontendBehindBackend,
   normalizeVersion,
   planCoordinatedUpdate,
   releaseIsOffered,
@@ -111,7 +113,14 @@ async function waitUntil(
   throw new Error(timeoutMessage)
 }
 
+/**
+ * Waits for the backend to come back ready on `target` or a newer release,
+ * and returns the release it runs. The backend updater installs the newest
+ * release, which can be newer than `target` when one was published during
+ * the update; the frontend then follows the backend.
+ */
 async function waitForBackendRelease(client: OoreClient, target: string) {
+  let landed = target
   await waitUntil(
     async () => {
       const status = await getRuntimeUpdateStatus({ client }).catch(() => null)
@@ -123,17 +132,23 @@ async function waitForBackendRelease(client: OoreClient, target: string) {
         .then((data) => readinessSchema.parse(data))
         .catch(() => null)
       if (!ready?.ok) return false
-      if (!backendRunsRelease(ready, target)) {
-        const running = normalizeVersion(ready.version) || 'an unknown version'
+      const running = normalizeVersion(ready.version)
+      if (
+        !running ||
+        compareReleaseVersions(running, target) < 0 ||
+        !backendRunsRelease(ready, running)
+      ) {
         throw new Error(
-          `The backend finished on ${running} instead of ${target}. The frontend was not updated.`,
+          `The backend finished on ${running || 'an unknown version'} instead of ${target}. The frontend was not updated.`,
         )
       }
+      landed = running
       return true
     },
     BACKEND_UPDATE_TIMEOUT,
     `The backend did not report ${target} as ready in time. Check Settings for its update status.`,
   )
+  return landed
 }
 
 async function waitForFrontendRelease(token: string, target: string) {
@@ -277,12 +292,22 @@ export function useRuntimeUpdates() {
   const frontendSearch = backend.channel
     ? new URLSearchParams({ channel: backend.channel })
     : undefined
+  /** Pins a frontend update to one release, so it cannot pass the backend. */
+  const pinnedFrontendSearch = (version: string) => {
+    const search = new URLSearchParams(frontendSearch)
+    search.set('version', version)
+    return search
+  }
 
+  // Keyed by both installed versions, so the check reruns as soon as either
+  // half of an update lands instead of up to five minutes later.
   const frontendReleaseKey = [
     instanceKey,
     'runtime-update',
     'frontend-release',
     backend.channel ?? null,
+    frontendHealth.data?.version ?? null,
+    backend.version ?? null,
   ]
   const frontendRelease = useQuery({
     queryKey: frontendReleaseKey,
@@ -388,8 +413,16 @@ export function useRuntimeUpdates() {
   })
 
   const startFrontendUpdate = useMutation({
+    // A frontend behind the backend catches up to the backend's release, not
+    // past it.
     mutationFn: () =>
-      localUpdateRequest<RuntimeUpdateStatus>(token!, 'POST', frontendSearch),
+      localUpdateRequest<RuntimeUpdateStatus>(
+        token!,
+        'POST',
+        frontendBehindBackend(frontendHealth.data, backend) && backend.version
+          ? pinnedFrontendSearch(normalizeVersion(backend.version))
+          : frontendSearch,
+      ),
     onSuccess: () => {
       void queryClient.invalidateQueries({
         queryKey: [instanceKey, 'runtime-update'],
@@ -420,6 +453,7 @@ export function useRuntimeUpdates() {
     frontendRelease.data,
     frontendHealth.data,
   )
+  const frontendBehind = frontendBehindBackend(frontendHealth.data, backend)
   const backendOffered = releaseIsOffered(backendRelease.data, backend)
   const coordinatedPlan = planCoordinatedUpdate({
     frontend: frontendRelease.data,
@@ -439,25 +473,33 @@ export function useRuntimeUpdates() {
       if (coordinatedPlan.kind !== 'ready') {
         throw new Error(coordinatedPlan.reason)
       }
-      const { target } = coordinatedPlan
+      let target = coordinatedPlan.target
       // Backend first: the running frontend's client must never be newer
       // than the API it talks to.
       if (coordinatedPlan.backend) {
         coordinated.setStep('backend', target)
         await startBackendUpdate({ client })
         await queryClient.invalidateQueries({ queryKey: backendUpdateKey })
-        await waitForBackendRelease(client, target)
+        target = await waitForBackendRelease(client, target)
         await queryClient.refetchQueries({
           queryKey: backendHealthOptions.queryKey,
           exact: true,
         })
       }
-      if (coordinatedPlan.frontend) {
+      const frontendVersion = normalizeVersion(
+        frontendHealth.data?.version ?? frontendRelease.data?.version,
+      )
+      if (
+        coordinatedPlan.frontend ||
+        compareReleaseVersions(frontendVersion, target) < 0
+      ) {
         coordinated.setStep('frontend', target)
+        // Pinned to the backend's release: a newer release published since
+        // the backend updated must not carry the frontend past it.
         await localUpdateRequest<RuntimeUpdateStatus>(
           token!,
           'POST',
-          frontendSearch,
+          pinnedFrontendSearch(target),
         )
         await waitForFrontendRelease(token!, target)
         // The page still runs the previous bundle; load the one just installed.
@@ -487,6 +529,7 @@ export function useRuntimeUpdates() {
     startBackendUpdate: startBackendUpdateMutation,
     frontendOffered,
     backendOffered,
+    frontendBehind,
     coordinatedPlan,
     coordinatedStep: coordinated.step,
     coordinatedTarget: coordinated.target,

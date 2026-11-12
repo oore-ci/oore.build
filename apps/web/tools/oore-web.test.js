@@ -12,6 +12,7 @@ import {
   parseSystemctlShow,
   parseUpdateArgs,
   parseVersion,
+  pinnedReleaseManifest,
   releasesSinceInstalled,
   restoreWebUpdateState,
   spaFileResponse,
@@ -304,4 +305,22 @@ test('the update changelog covers every release since the installed version', ()
     ).releases,
     [],
   )
+})
+
+test('a pinned release installs that exact version from its GitHub release', () => {
+  const release = pinnedReleaseManifest('alpha', REPO, 'v0.1.50-alpha.8')
+  assert.equal(release.tag, 'v0.1.50-alpha.8')
+  assert.equal(release.version, '0.1.50-alpha.8')
+  assert.equal(
+    release.download_base_url,
+    `https://github.com/${REPO}/releases/download/v0.1.50-alpha.8`,
+  )
+})
+
+test('a pinned release must be on the requested channel', () => {
+  assert.throws(
+    () => pinnedReleaseManifest('stable', REPO, '0.1.50-alpha.8'),
+    /not on the stable channel/,
+  )
+  assert.throws(() => pinnedReleaseManifest('alpha', REPO, 'latest'))
 })
