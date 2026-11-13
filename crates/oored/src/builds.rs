@@ -886,7 +886,7 @@ fn build_search_condition(query: &str, bind_values: &mut Vec<String>) -> String 
              AND lower(sproj.name) LIKE ?{contains} ESCAPE '\\')"
         ),
     ];
-    let number = needle.strip_prefix('#').unwrap_or(needle);
+    let number = needle.trim_prefix('#');
     if number.bytes().all(|b| b.is_ascii_digit())
         && let Ok(number) = number.parse::<u64>()
     {
@@ -1426,9 +1426,8 @@ async fn workflow_binding(
             })
             .ok()
     });
-    let (signing, app_store) = plan
-        .map(|plan| (plan.signing, plan.publish.needs_app_store_export()))
-        .unwrap_or_default();
+    let (signing, app_store) =
+        plan.map_or_default(|plan| (plan.signing, plan.publish.needs_app_store_export()));
     crate::signing_identities::resolve_workflow_binding(
         pool,
         project_id,

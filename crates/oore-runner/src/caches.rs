@@ -309,17 +309,13 @@ impl RunnerCaches {
         let state = self.load_state();
         let lockfiles = find_lockfiles(workspace);
         let mut observation = CacheObservation::default();
-        let size = state
-            .stats
-            .as_ref()
-            .map(|stats| {
-                format!(
-                    " ({} of {} used)",
-                    format_bytes(stats.total_bytes),
-                    format_bytes(self.max_bytes)
-                )
-            })
-            .unwrap_or_default();
+        let size = state.stats.as_ref().map_or_default(|stats| {
+            format!(
+                " ({} of {} used)",
+                format_bytes(stats.total_bytes),
+                format_bytes(self.max_bytes)
+            )
+        });
         observation.lines.push(format!(
             "Dependency caches at {}{size}",
             self.root.display()
@@ -457,12 +453,11 @@ impl RunnerCaches {
         // ones this build used so eviction sees them as recent.
         let pub_root = self.root.join("pub/hosted");
         if let Ok(hosts) = fs::read_dir(&pub_root) {
+            let used_now = fs::FileTimes::new().set_modified(std::time::SystemTime::now());
             for host in hosts.flatten() {
                 for (name, version) in &observation.pub_packages {
                     let dir = host.path().join(format!("{name}-{version}"));
-                    if let Ok(file) = fs::File::open(&dir) {
-                        let _ = file.set_modified(std::time::SystemTime::now());
-                    }
+                    let _ = fs::set_times(&dir, used_now);
                 }
             }
         }
@@ -840,8 +835,7 @@ fn stop_gradle_daemons(gradle_home: &Path) {
             let name = log.file_name();
             let Some(pid) = name
                 .to_str()
-                .and_then(|name| name.strip_prefix("daemon-"))
-                .and_then(|rest| rest.strip_suffix(".out.log"))
+                .and_then(|name| name.strip_circumfix("daemon-", ".out.log"))
                 .and_then(|pid| pid.parse::<i32>().ok())
                 .filter(|pid| *pid > 1)
             else {
@@ -1047,6 +1041,33 @@ sdks:
             hosted_pub_packages(lock),
             [("args".to_string(), "2.5.0".to_string())]
         );
+    }
+
+    #[test]
+    fn a_successful_build_marks_its_pub_packages_as_recently_used() {
+        let dir = temp_dir("pub-used");
+        let caches = caches(&dir, GIB);
+        let hosted = dir.join("caches/pub/hosted/pub.dev");
+        let used = hosted.join("args-2.5.0");
+        let unused = hosted.join("path-1.9.0");
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(86_400);
+        for package in [&used, &unused] {
+            write(&package.join("lib.dart"), b"library;");
+            fs::set_times(package, fs::FileTimes::new().set_modified(past)).unwrap();
+        }
+        let modified = |path: &Path| fs::metadata(path).unwrap().modified().unwrap();
+        let observation = CacheObservation {
+            pub_packages: vec![("args".to_string(), "2.5.0".to_string())],
+            ..CacheObservation::default()
+        };
+
+        // A failed build marks nothing.
+        caches.record(&observation, false, 1);
+        assert_eq!(modified(&used), modified(&unused));
+
+        caches.record(&observation, true, 1);
+        assert!(modified(&used) > modified(&unused));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

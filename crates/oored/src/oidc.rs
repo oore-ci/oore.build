@@ -93,8 +93,7 @@ pub async fn discover_provider(issuer_url: &str) -> Result<DiscoveredProvider, O
     // Extract supported scopes (optional, default to empty)
     let scopes_supported = provider_metadata
         .scopes_supported()
-        .map(|scopes| scopes.iter().map(|s| s.to_string()).collect())
-        .unwrap_or_default();
+        .map_or_default(|scopes| scopes.iter().map(|s| s.to_string()).collect());
 
     // Extract the validated issuer (as returned by the provider)
     let issuer = provider_metadata.issuer().to_string();

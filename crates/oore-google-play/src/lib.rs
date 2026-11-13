@@ -881,9 +881,8 @@ fn metric_value(row: &serde_json::Value, metric: &str) -> Option<f64> {
 }
 
 fn parse_vitals_rate(response: &serde_json::Value, daily: &str, rolling: &str) -> PlayVitalsRate {
-    let mut rows: Vec<(ReportingDate, Option<f64>, Option<f64>)> = response["rows"]
-        .as_array()
-        .map(|rows| {
+    let mut rows: Vec<(ReportingDate, Option<f64>, Option<f64>)> =
+        response["rows"].as_array().map_or_default(|rows| {
             rows.iter()
                 .filter_map(|row| {
                     let date: ReportingDate =
@@ -891,8 +890,7 @@ fn parse_vitals_rate(response: &serde_json::Value, daily: &str, rolling: &str) -
                     Some((date, metric_value(row, daily), metric_value(row, rolling)))
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     rows.sort_by_key(|(date, _, _)| (date.year, date.month, date.day));
     PlayVitalsRate {
         rate_28d: rows.iter().rev().find_map(|(_, _, rolling)| *rolling),
@@ -961,23 +959,20 @@ fn parse_error_issues(response: &serde_json::Value) -> Vec<PlayErrorIssue> {
             .unwrap_or(0)
     };
     let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
-    response["errorIssues"]
-        .as_array()
-        .map(|issues| {
-            issues
-                .iter()
-                .map(|issue| PlayErrorIssue {
-                    kind: text(&issue["type"]),
-                    cause: text(&issue["cause"]),
-                    location: text(&issue["location"]),
-                    reports: count(&issue["errorReportCount"]),
-                    users: count(&issue["distinctUsers"]),
-                    last_report_time: issue["lastErrorReportTime"].as_str().map(str::to_string),
-                    url: issue["issueUri"].as_str().map(str::to_string),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    response["errorIssues"].as_array().map_or_default(|issues| {
+        issues
+            .iter()
+            .map(|issue| PlayErrorIssue {
+                kind: text(&issue["type"]),
+                cause: text(&issue["cause"]),
+                location: text(&issue["location"]),
+                reports: count(&issue["errorReportCount"]),
+                users: count(&issue["distinctUsers"]),
+                last_report_time: issue["lastErrorReportTime"].as_str().map(str::to_string),
+                url: issue["issueUri"].as_str().map(str::to_string),
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]

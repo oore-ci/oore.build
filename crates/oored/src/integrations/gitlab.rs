@@ -711,8 +711,7 @@ pub(crate) async fn fetch_repository_avatar(
 
     let path_segments = parsed_avatar_url
         .path_segments()
-        .map(Iterator::collect::<Vec<_>>)
-        .unwrap_or_default();
+        .map_or_default(Iterator::collect::<Vec<_>>);
     let group_id = path_segments
         .windows(3)
         .find(|segments| segments[0] == "group" && segments[1] == "avatar")

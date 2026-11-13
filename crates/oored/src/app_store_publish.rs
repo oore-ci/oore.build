@@ -1251,9 +1251,7 @@ async fn distribute_testflight(
     asc.add_build_to_groups(build_id, &group_ids).await?;
 
     let names = config.testflight_groups.join(", ");
-    let suffix = notes_warning
-        .map(|warning| format!(" (notes not set: {warning})"))
-        .unwrap_or_default();
+    let suffix = notes_warning.map_or_default(|warning| format!(" (notes not set: {warning})"));
     if selected.iter().any(|group| !group.is_internal) {
         // A retry after a partial failure must not submit a second time.
         if !beta_review_already_submitted(beta.external.as_deref()) {
@@ -1328,9 +1326,7 @@ async fn distribute_app_store(
         config.earliest_release_date.as_deref(),
     )
     .await?;
-    let suffix = notes_warning
-        .map(|warning| format!(" (notes not set: {warning})"))
-        .unwrap_or_default();
+    let suffix = notes_warning.map_or_default(|warning| format!(" (notes not set: {warning})"));
 
     step.stage = Some(Stage::Review);
     step.next_poll_in = POLL_REVIEW_SECS;
@@ -2142,8 +2138,7 @@ pub(crate) async fn promote_with(
     // settings, as an upload's would.
     let saved = load_config(pool, &link.pipeline_id)
         .await?
-        .map(|(config, _)| config)
-        .unwrap_or_default();
+        .map_or_default(|(config, _)| config);
     let mut config = AppStorePublishConfig {
         enabled: true,
         uses_non_exempt_encryption: uploaded.uses_non_exempt_encryption,
@@ -2319,6 +2314,8 @@ impl ReleaseStoreClient for StoreRouter {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     #[test]
@@ -2867,14 +2864,14 @@ mod tests {
             beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), 60),
             BetaReadiness::Wait
         );
-        assert!(matches!(
+        assert_matches!(
             beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), EXPORT_COMPLIANCE_WAIT_SECS + 1),
             BetaReadiness::Blocked(reason) if reason.contains("Export compliance")
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             beta_readiness(&detail("PROCESSING_EXCEPTION"), 0),
             BetaReadiness::Failed(_)
-        ));
+        );
         assert_eq!(
             beta_readiness(&detail("READY_FOR_BETA_TESTING"), 0),
             BetaReadiness::Ready
@@ -3635,7 +3632,7 @@ mod tests {
         let Err(error) = failed else {
             panic!("the promotion succeeded");
         };
-        assert!(matches!(error, EnvironmentError::Store(_)));
+        assert_matches!(error, EnvironmentError::Store(_));
         assert_eq!(error.into_api().0, axum::http::StatusCode::BAD_GATEWAY);
         let list = environments::list_environments(
             &pool,
@@ -3953,7 +3950,7 @@ mod tests {
             app_store_environment("beta", "External", false, vec![1.0], true),
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(result, Err(EnvironmentError::Invalid(_)));
 
         let beta = environments::create_environment(
             &pool,
@@ -3974,7 +3971,7 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(result, Err(EnvironmentError::Invalid(_)));
         // Moving an App Store environment off the app_store track clears nothing
         // silently: the combination is refused.
         let production = environments::create_environment(
@@ -3996,6 +3993,6 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(result, Err(EnvironmentError::Invalid(_)));
     }
 }

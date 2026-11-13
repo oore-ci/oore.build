@@ -136,19 +136,16 @@ fn version_is_submitted(state: &str) -> bool {
 /// `reviewSubmissions/{id}/items` response. Items for other things (in-app
 /// events, custom product pages) come back as `None`.
 fn submission_item_versions(items: &Value) -> Vec<Option<String>> {
-    items["data"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| {
-                    item.pointer("/relationships/appStoreVersion/data/id")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    items["data"].as_array().map_or_default(|items| {
+        items
+            .iter()
+            .map(|item| {
+                item.pointer("/relationships/appStoreVersion/data/id")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            })
+            .collect()
+    })
 }
 
 /// An App Store version as the version list shows it.
@@ -528,13 +525,10 @@ impl<'a> AppStoreConnect<'a> {
                 )],
             )
             .await?;
-        Ok(detail
-            .data
-            .map(|detail| AscBetaDetail {
-                internal: attr_str(&detail, "internalBuildState"),
-                external: attr_str(&detail, "externalBuildState"),
-            })
-            .unwrap_or_default())
+        Ok(detail.data.map_or_default(|detail| AscBetaDetail {
+            internal: attr_str(&detail, "internalBuildState"),
+            external: attr_str(&detail, "externalBuildState"),
+        }))
     }
 
     pub async fn set_beta_whats_new(
@@ -1177,8 +1171,7 @@ impl<'a> AppStoreConnect<'a> {
             .await?;
         Ok(declaration
             .data
-            .map(|declaration| unanswered_age_rating_questions(&declaration.attributes))
-            .unwrap_or_default())
+            .map_or_default(|declaration| unanswered_age_rating_questions(&declaration.attributes)))
     }
 
     /// The review contact fields the version leaves empty.

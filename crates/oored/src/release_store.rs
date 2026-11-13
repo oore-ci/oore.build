@@ -199,8 +199,7 @@ impl PlayReleaseStoreClient {
                 user_fraction,
                 release_notes: template
                     .as_ref()
-                    .map(|release| release.release_notes.clone())
-                    .unwrap_or_default(),
+                    .map_or_default(|release| release.release_notes.clone()),
                 in_app_update_priority: template.and_then(|release| release.in_app_update_priority),
             };
             edits.update_track(&to_track, &release).await

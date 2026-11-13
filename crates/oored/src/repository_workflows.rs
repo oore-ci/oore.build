@@ -186,8 +186,7 @@ fn preview(path: String, raw: &str) -> RepositoryWorkflowPreview {
             errors: if error.starts_with("YAML parse error:") {
                 let location = error
                     .rfind(" at line ")
-                    .map(|index| &error[index..])
-                    .unwrap_or_default();
+                    .map_or_default(|index| &error[index..]);
                 vec![format!(
                     "YAML is invalid{location}; check its syntax and value types"
                 )]

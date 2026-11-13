@@ -425,8 +425,7 @@ fn clear_abandoned_claims(install_root: &Path) -> anyhow::Result<()> {
         let name = entry.file_name();
         let Some(pid) = name
             .to_string_lossy()
-            .strip_prefix(ACTIVE_REQUEST_PREFIX)
-            .and_then(|rest| rest.strip_suffix(".json"))
+            .strip_circumfix(ACTIVE_REQUEST_PREFIX, ".json")
             .and_then(|pid| pid.parse::<u32>().ok())
         else {
             continue;

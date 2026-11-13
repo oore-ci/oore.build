@@ -593,7 +593,7 @@ fn unpack_archive_from(
             "release archive contains too many entries"
         );
         let path = normalized_archive_path(&entry.path().context("invalid archive path")?)?;
-        if path.as_os_str().is_empty() {
+        if path.is_empty() {
             continue;
         }
         anyhow::ensure!(
@@ -826,7 +826,7 @@ fn read_owned_metadata(install_root: &Path, name: &str) -> anyhow::Result<String
     );
     let value =
         fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
-    let value = value.strip_suffix('\n').unwrap_or(&value);
+    let value = value.trim_suffix('\n');
     anyhow::ensure!(
         !value.is_empty() && !value.contains(['\n', '\r']) && value == value.trim(),
         "installed release metadata must contain one non-empty line: {}",

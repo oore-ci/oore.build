@@ -359,17 +359,15 @@ async fn newest_artifact(
 }
 
 fn install_page(title: &str, detail: &str, button: Option<(&str, &str)>) -> Response {
-    let button = button
-        .map(|(href, label)| {
-            format!(
-                "<a href=\"{}\" style=\"display:inline-block;margin-top:20px;padding:12px 22px;\
+    let button = button.map_or_default(|(href, label)| {
+        format!(
+            "<a href=\"{}\" style=\"display:inline-block;margin-top:20px;padding:12px 22px;\
                  border-radius:999px;background:#c2410c;color:#fff;text-decoration:none;\
                  font-weight:600\">{}</a>",
-                html_escape(href),
-                html_escape(label)
-            )
-        })
-        .unwrap_or_default();
+            html_escape(href),
+            html_escape(label)
+        )
+    });
     let body = format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\
@@ -465,8 +463,7 @@ pub async fn open_latest_link(
         "Build #{build_number}{}. The newest build of this link, every time you open it.",
         branch
             .as_deref()
-            .map(|branch| format!(" from {branch}"))
-            .unwrap_or_default()
+            .map_or_default(|branch| format!(" from {branch}"))
     );
     let label = match link.platform {
         ArtifactInstallPlatform::Ios => "Install on this iPhone",

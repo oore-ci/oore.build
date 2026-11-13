@@ -160,8 +160,7 @@ pub(crate) fn parse_analyzer_output(
                 Some(location) => {
                     let (line, column) = location
                         .range
-                        .map(|range| (range.start.line, range.start.column))
-                        .unwrap_or_default();
+                        .map_or_default(|range| (range.start.line, range.start.column));
                     (location.file, line, column)
                 }
                 None => (String::new(), 0, 0),
