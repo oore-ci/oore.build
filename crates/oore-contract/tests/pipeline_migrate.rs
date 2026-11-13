@@ -308,8 +308,8 @@ fn generated_files_say_they_were_generated() {
         "{}",
         migration.yaml
     );
-    assert!(matches!(
+    std::assert_matches!(
         parse_repository_config(&migration.yaml),
         Ok(RepositoryConfig::V2(_))
-    ));
+    );
 }

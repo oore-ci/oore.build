@@ -1937,9 +1937,7 @@ impl ConfigV2 {
             let Ok(plan) = self.plan(workflow, None) else {
                 continue;
             };
-            let scope = workflow
-                .map(|name| format!("workflow {name}: "))
-                .unwrap_or_default();
+            let scope = workflow.map_or_default(|name| format!("workflow {name}: "));
             for error in [
                 &plan.publish.play.as_ref().and_then(|p| p.error.clone()),
                 &plan
@@ -2241,9 +2239,7 @@ impl ConfigV2 {
             .select_workflow(workflow)
             .map_err(|error| vec![error])?;
         let workflow_spec = selected_workflow.map(|(_, spec)| spec);
-        let prefix = selected_workflow
-            .map(|(name, _)| format!("workflows.{name}."))
-            .unwrap_or_default();
+        let prefix = selected_workflow.map_or_default(|(name, _)| format!("workflows.{name}."));
         let mut errors = Vec::new();
 
         // Vars: the workflow's replace the top-level ones by name.

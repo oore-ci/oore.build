@@ -1779,7 +1779,7 @@ fn save_cli_config(cfg: &CliConfigFile) -> anyhow::Result<PathBuf> {
     let path = resolve_cli_config_path()?;
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create CLI config directory {}", parent.display()))?;
@@ -3213,8 +3213,7 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
     if let Some(error) = params.get("error") {
         let desc = params
             .get("error_description")
-            .map(|d| format!(": {}", d))
-            .unwrap_or_default();
+            .map_or_default(|d| format!(": {}", d));
         let error_page = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
             <!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
@@ -4876,7 +4875,7 @@ fn write_runner_config(path: &Path, config: &RunnerConfig) -> anyhow::Result<()>
 
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).with_context(|| {
         format!(
@@ -5708,14 +5707,13 @@ fn add_managed_runner_service_check(checks: &mut Vec<DoctorCheckResult>) {
 }
 
 fn android_sdk_root() -> Option<PathBuf> {
-    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
-        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
-        .collect::<Vec<_>>();
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from));
     #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
-    }
+    let roots = roots.chain(
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk")),
+    );
     roots
         .into_iter()
         .find(|path| path.join("platform-tools/adb").is_file())
@@ -6091,7 +6089,7 @@ fn read_trimmed_file(path: &Path) -> Option<String> {
 
 fn parse_semver_loose(raw: &str) -> anyhow::Result<semver::Version> {
     let trimmed = raw.trim();
-    let trimmed = trimmed.strip_prefix('v').unwrap_or(trimmed);
+    let trimmed = trimmed.trim_prefix('v');
     semver::Version::parse(trimmed).with_context(|| format!("invalid semver version: {raw}"))
 }
 
@@ -6495,8 +6493,8 @@ async fn check_daemon_running(client: &reqwest::Client, daemon_url: &str) -> boo
 }
 
 fn lsof_name_matches_socket(name: &str, listen: SocketAddr) -> bool {
-    let name = name.strip_prefix("TCP ").unwrap_or(name);
-    let name = name.strip_suffix(" (LISTEN)").unwrap_or(name);
+    let name = name.trim_prefix("TCP ");
+    let name = name.trim_suffix(" (LISTEN)");
     if name == listen.to_string() {
         return true;
     }

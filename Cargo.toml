@@ -22,6 +22,9 @@ unsafe_op_in_unsafe_fn = "deny"
 redundant_clone = "warn"
 undocumented_unsafe_blocks = "deny"
 
+[workspace.lints.cargo]
+unused_dependencies = "warn"
+
 [workspace.dependencies]
 anyhow = "1.0"
 async-stream = "0.3"

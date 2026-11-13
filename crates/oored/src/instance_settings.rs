@@ -252,8 +252,7 @@ pub async fn load_effective_external_access_network_settings(
         let allowed_origins = row
             .try_get::<String, _>("allowed_origins_json")
             .ok()
-            .map(|value| parse_db_allowed_origins(&value))
-            .unwrap_or_default();
+            .map_or_default(|value| parse_db_allowed_origins(&value));
 
         return Ok(EffectiveExternalAccessNetworkSettings {
             public_url,
@@ -313,8 +312,7 @@ pub async fn load_effective_trusted_proxy_settings(
         let trusted_proxy_cidrs = row
             .try_get::<String, _>("trusted_proxy_cidrs_json")
             .ok()
-            .map(|value| parse_db_trusted_proxy_cidrs(&value))
-            .unwrap_or_default();
+            .map_or_default(|value| parse_db_trusted_proxy_cidrs(&value));
         let setup_owner_email = row
             .try_get::<Option<String>, _>("setup_owner_email")
             .ok()

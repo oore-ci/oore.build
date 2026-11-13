@@ -98,13 +98,12 @@ fn release_notes(
         GooglePlayReleaseNotesSource::Changelog => Ok(changelog
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(|text| {
+            .map_or_default(|text| {
                 vec![LocalizedText {
                     language: config.release_notes_locale.clone(),
                     text: truncate_release_notes(text),
                 }]
-            })
-            .unwrap_or_default()),
+            })),
         GooglePlayReleaseNotesSource::RepoFiles => {
             let relative = config
                 .release_notes_dir
@@ -360,7 +359,7 @@ pub(crate) async fn publish_to_google_play(
         let version_code = edits.upload_bundle(&bundle).await?;
         staged_log.push(format!(
             "[oore-publish] Uploaded {} as versionCode {version_code}",
-            bundle.strip_prefix(workspace).unwrap_or(&bundle).display()
+            bundle.trim_prefix(workspace).display()
         ));
         match &mapping {
             Some(path) => {

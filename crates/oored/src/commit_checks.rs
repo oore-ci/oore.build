@@ -216,13 +216,12 @@ fn snapshot_platforms(snapshot: &serde_json::Value) -> Vec<String> {
         .get("selected_platforms")
         .or_else(|| snapshot.pointer("/ui_execution_config/platforms"))
         .and_then(|value| value.as_array())
-        .map(|values| {
+        .map_or_default(|values| {
             values
                 .iter()
                 .filter_map(|value| value.as_str().map(str::to_string))
                 .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        });
     if listed.is_empty() {
         vec!["android".to_string()]
     } else {
@@ -956,28 +955,26 @@ fn platform_reports(
         .iter()
         .map(|platform| {
             let budgets = platform_budgets(ctx, platform);
-            let platform_violations: Vec<PlatformViolation<'_>> = sizes
-                .map(|sizes| {
-                    budgets
-                        .iter()
-                        .flat_map(|applied| {
-                            check_budget(sizes, applied.budget)
-                                .into_iter()
-                                .filter(|violation| {
-                                    budget_belongs_to(
-                                        &violation.artifact_type,
-                                        &violation.name,
-                                        platform,
-                                    )
-                                })
-                                .map(|violation| PlatformViolation {
-                                    violation,
-                                    budget: *applied,
-                                })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let platform_violations: Vec<PlatformViolation<'_>> = sizes.map_or_default(|sizes| {
+                budgets
+                    .iter()
+                    .flat_map(|applied| {
+                        check_budget(sizes, applied.budget)
+                            .into_iter()
+                            .filter(|violation| {
+                                budget_belongs_to(
+                                    &violation.artifact_type,
+                                    &violation.name,
+                                    platform,
+                                )
+                            })
+                            .map(|violation| PlatformViolation {
+                                violation,
+                                budget: *applied,
+                            })
+                    })
+                    .collect()
+            });
             let mode = strictest_mode(&platform_violations);
             // The budget fails the check, never the build.
             let over_budget = mode == SizeBudgetMode::Fail && !platform_violations.is_empty();

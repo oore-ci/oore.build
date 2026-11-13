@@ -354,8 +354,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+        .map_or_default(|s| s.trim().to_string());
 
     let xcode_version = std::process::Command::new("xcodebuild")
         .arg("-version")
@@ -567,7 +566,7 @@ fn refreshed_runner_service_ack(
 fn write_runner_service_ack(path: &Path, ack: &RunnerServiceAck) -> anyhow::Result<()> {
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .context("runner service acknowledgement path has no parent")?;
     fs::create_dir_all(parent).with_context(|| {
         format!(
@@ -971,14 +970,13 @@ fn fixed_system_executable(name: &str) -> Option<PathBuf> {
 }
 
 fn find_apksigner() -> PathBuf {
-    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
-        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
-        .collect::<Vec<_>>();
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from));
     #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
-    }
+    let roots = roots.chain(
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk")),
+    );
 
     for root in roots {
         let build_tools = root.join("build-tools");
@@ -1476,7 +1474,7 @@ fn parse_flutter_machine_version(stdout: &str) -> Option<String> {
 fn check_host_flutter(requested: &str, found: Result<String, String>) -> Result<String, String> {
     // FVM writes `3.47.7@beta` for a release from a channel.
     let pinned = requested.split('@').next().unwrap_or(requested).trim();
-    let pinned = pinned.strip_prefix('v').unwrap_or(pinned);
+    let pinned = pinned.trim_prefix('v');
     let is_version = pinned.starts_with(|c: char| c.is_ascii_digit());
     match (is_version, found) {
         (true, Ok(found)) if found == pinned => Ok(format!(
@@ -2000,7 +1998,7 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("security command failed: {stderr}");
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(String::from_utf8_lossy_owned(output.stdout))
 }
 
 fn cleanup_ios_signing_state(journal: &IosCleanupJournal) -> anyhow::Result<()> {
@@ -2125,6 +2123,7 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
 fn is_missing_legacy_oore_keychain(path: &str) -> bool {
     let path = Path::new(path);
     if path.exists() {
@@ -2225,9 +2224,7 @@ fn choose_ios_export_method(help_text: &str, export_method: IosExportMethod) -> 
 
 fn resolve_ios_export_method(export_method: IosExportMethod) -> String {
     let help_text = match Command::new("xcodebuild").arg("-help").output() {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).into_owned()
-        }
+        Ok(output) if output.status.success() => String::from_utf8_lossy_owned(output.stdout),
         _ => String::new(),
     };
     choose_ios_export_method(&help_text, export_method).to_string()
@@ -2279,9 +2276,9 @@ fn write_export_options_plist(
         provisioning_dict.push_str("</string>\n");
     }
 
-    let signing_cert_entry = signing_identity_sha1
-        .map(|sha1| format!("  <key>signingCertificate</key>\n  <string>{sha1}</string>\n"))
-        .unwrap_or_default();
+    let signing_cert_entry = signing_identity_sha1.map_or_default(|sha1| {
+        format!("  <key>signingCertificate</key>\n  <string>{sha1}</string>\n")
+    });
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3575,8 +3572,7 @@ fn heartbeat_capabilities(
     let mut capabilities = capabilities.clone();
     let (stats, vm_images) = cache_report
         .lock()
-        .map(|report| (report.stats.clone(), report.vm_images.clone()))
-        .unwrap_or_default();
+        .map_or_default(|report| (report.stats.clone(), report.vm_images.clone()));
     if let (Some(object), Some(stats)) = (capabilities.as_object_mut(), stats)
         && let Ok(value) = serde_json::to_value(stats)
     {
@@ -6053,28 +6049,26 @@ async fn execute_build_steps(
                 &step_start_marker("vm-start", "Start a clean Tart VM for this build"),
             )
             .await;
-            let shares = caches
-                .map(|caches| {
-                    caches
-                        .mounts()
-                        .into_iter()
-                        .map(|mount| tart::HostShare {
-                            name: mount.name,
-                            env: mount.env,
-                            // Every VM build runs from the same guest path, so
-                            // Xcode names DerivedData the same for every
-                            // project; keep one saved copy per project.
-                            host_dir: if mount.name == "derived-data" {
-                                mount.host_dir.join(hex::encode(
-                                    &Sha256::digest(job.project_id.as_bytes())[..16],
-                                ))
-                            } else {
-                                mount.host_dir
-                            },
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let shares = caches.map_or_default(|caches| {
+                caches
+                    .mounts()
+                    .into_iter()
+                    .map(|mount| tart::HostShare {
+                        name: mount.name,
+                        env: mount.env,
+                        // Every VM build runs from the same guest path, so
+                        // Xcode names DerivedData the same for every
+                        // project; keep one saved copy per project.
+                        host_dir: if mount.name == "derived-data" {
+                            mount.host_dir.join(hex::encode(
+                                &Sha256::digest(job.project_id.as_bytes())[..16],
+                            ))
+                        } else {
+                            mount.host_dir
+                        },
+                    })
+                    .collect::<Vec<_>>()
+            });
             let result = start_build_vm(
                 job,
                 client,
@@ -9273,8 +9267,7 @@ async fn reserve_artifact(
             let code = resp
                 .json::<oore_contract::ApiError>()
                 .await
-                .map(|error| error.code)
-                .unwrap_or_default();
+                .map_or_default(|error| error.code);
             if code == "invalid_artifact_type" {
                 println!(
                     "  Daemon does not accept the aab artifact type yet; uploading {name} as generic"
@@ -9667,10 +9660,7 @@ mod ios_signing_lock_tests {
         ));
         let held = super::IosSigningLock::acquire_at(&path).unwrap();
         let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-        assert!(matches!(
-            other.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
-        ));
+        std::assert_matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock));
         drop(held);
         other.try_lock().unwrap();
         let _ = std::fs::remove_file(&path);

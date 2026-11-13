@@ -242,7 +242,7 @@ pub(crate) fn parse_dart_json_report(raw: &str) -> Option<RunnerTestReport> {
                             .and_then(|test| suites.get(&test.suite_id))
                             .cloned()
                             .unwrap_or_default(),
-                        name: test.map(|test| test.name.clone()).unwrap_or_default(),
+                        name: test.map_or_default(|test| test.name.clone()),
                         message: join_nonempty(&messages),
                         stack_trace: join_nonempty(&stacks),
                         duration_ms: test.map(|test| (time - test.started_ms).max(0)),
