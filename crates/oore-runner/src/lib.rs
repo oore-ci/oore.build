@@ -970,14 +970,13 @@ fn fixed_system_executable(name: &str) -> Option<PathBuf> {
 }
 
 fn find_apksigner() -> PathBuf {
-    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
-        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
-        .collect::<Vec<_>>();
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from));
     #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
-    }
+    let roots = roots.chain(
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk")),
+    );
 
     for root in roots {
         let build_tools = root.join("build-tools");
@@ -2124,6 +2123,7 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
 fn is_missing_legacy_oore_keychain(path: &str) -> bool {
     let path = Path::new(path);
     if path.exists() {
