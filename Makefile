@@ -219,7 +219,7 @@ lint-rust-full:
 
 rust-target-size:
 	@du -sh target 2>/dev/null || echo "target directory does not exist"
-	@du -sh target/debug/deps target/debug/incremental target/debug/build 2>/dev/null || true
+	@du -sh target/debug/build target/debug/incremental 2>/dev/null || true
 
 clean-rust-debug-dry-run:
 	cargo clean --profile dev --dry-run

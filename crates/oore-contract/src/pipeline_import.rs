@@ -157,8 +157,7 @@ pub fn import_form_settings(yaml: &str, context: ImportContext<'_>) -> Result<Fo
     let after_build = plan.commands(StepPhase::PostBuild);
     let base_build: Vec<String> = context
         .execution
-        .map(|base| trimmed(&base.commands.build))
-        .unwrap_or_default();
+        .map_or_default(|base| trimmed(&base.commands.build));
     let (build_commands, post_build) = if !base_build.is_empty()
         && after_build.starts_with(&base_build)
     {
@@ -181,12 +180,10 @@ pub fn import_form_settings(yaml: &str, context: ImportContext<'_>) -> Result<Fo
     // file does not build keep the inputs the form has for them.
     let mut platform_commands = context
         .execution
-        .map(|base| base.platform_commands.clone())
-        .unwrap_or_default();
+        .map_or_default(|base| base.platform_commands.clone());
     let mut platform_build_args = context
         .execution
-        .map(|base| base.platform_build_args.clone())
-        .unwrap_or_default();
+        .map_or_default(|base| base.platform_build_args.clone());
     for step in plan.steps_in(StepPhase::Build) {
         let Some(platform) = &step.platform else {
             continue;

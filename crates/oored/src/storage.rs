@@ -226,10 +226,7 @@ fn validate_s3_transport_url(value: &str) -> anyhow::Result<()> {
     let host = parsed
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("S3 endpoint URL must include a host"))?;
-    let loopback_host = host
-        .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .unwrap_or(host);
+    let loopback_host = host.strip_circumfix('[', ']').unwrap_or(host);
 
     match parsed.scheme() {
         "https" => Ok(()),
@@ -380,7 +377,7 @@ impl LocalStorageClient {
             }
         }
 
-        if rel.as_os_str().is_empty() {
+        if rel.is_empty() {
             return Err(anyhow::anyhow!("invalid artifact key path"));
         }
 

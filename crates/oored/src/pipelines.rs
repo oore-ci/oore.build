@@ -1098,7 +1098,7 @@ fn workflow_summaries(config: &RepositoryConfig) -> Vec<PipelineWorkflowSummary>
             PipelineWorkflowSummary {
                 name: name.to_string(),
                 platforms,
-                triggers: on.map(TriggerSpec::describe).unwrap_or_default(),
+                triggers: on.map_or_default(TriggerSpec::describe),
                 uses_pipeline_triggers: on.is_none(),
                 publishes,
                 signing,

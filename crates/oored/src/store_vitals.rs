@@ -579,18 +579,15 @@ fn parse_xcode_metrics(document: &Value) -> Vec<StoreVital> {
             (device.contains("all") as u8) * 2
                 + (percentile.contains("50") || percentile.contains("typical")) as u8
         })?;
-        let points: Vec<StoreVitalPoint> = dataset["points"]
-            .as_array()
-            .map(|points| {
-                points
-                    .iter()
-                    .map(|point| StoreVitalPoint {
-                        label: point["version"].as_str().unwrap_or_default().to_string(),
-                        value: point["value"].as_f64(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let points: Vec<StoreVitalPoint> = dataset["points"].as_array().map_or_default(|points| {
+            points
+                .iter()
+                .map(|point| StoreVitalPoint {
+                    label: point["version"].as_str().unwrap_or_default().to_string(),
+                    value: point["value"].as_f64(),
+                })
+                .collect()
+        });
         Some(StoreVital {
             kind,
             value: points.iter().rev().find_map(|point| point.value),

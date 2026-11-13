@@ -1798,7 +1798,7 @@ pub async fn release_action(
     let action: ReleaseAction = action
         .parse()
         .map_err(|_| api_err(StatusCode::NOT_FOUND, "not_found", "Unknown release action"))?;
-    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let request = body.map_or_default(|Json(request)| request);
     let current = load_release(&state.db, &release_id)
         .await
         .map_err(ReleaseError::into_api)?;
@@ -2214,6 +2214,7 @@ pub async fn list_release_activity(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::assert_matches;
     use std::sync::Mutex;
 
     use super::*;
@@ -2682,7 +2683,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(raise_paused, Err(ReleaseError::Conflict(_))));
+        assert_matches!(raise_paused, Err(ReleaseError::Conflict(_)));
 
         transition_release(
             deps,
@@ -2701,7 +2702,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(complete_halted, Err(ReleaseError::Conflict(_))));
+        assert_matches!(complete_halted, Err(ReleaseError::Conflict(_)));
 
         transition_release(
             deps,
@@ -2726,7 +2727,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(lower, Err(ReleaseError::Invalid(_))));
+        assert_matches!(lower, Err(ReleaseError::Invalid(_)));
         let complete = transition_release(
             deps,
             &release.id,
@@ -2787,7 +2788,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(blocked, Err(ReleaseError::Conflict(_))));
+        assert_matches!(blocked, Err(ReleaseError::Conflict(_)));
     }
 
     #[tokio::test]
@@ -2843,7 +2844,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(blocked, Err(ReleaseError::Conflict(_))));
+        assert_matches!(blocked, Err(ReleaseError::Conflict(_)));
         run_rollout_tick(deps, now_unix() + 365 * 86_400, 100)
             .await
             .unwrap();
@@ -2972,7 +2973,7 @@ pub(crate) mod tests {
             Some("scheduled rollout step"),
         )
         .await;
-        assert!(matches!(stale, Err(ReleaseError::Conflict(_))));
+        assert_matches!(stale, Err(ReleaseError::Conflict(_)));
         assert_eq!(store.changes.lock().unwrap().len(), 2);
         let after = load_release(&pool, &release.id).await.unwrap();
         assert_eq!(after.state, ReleaseState::Halted);

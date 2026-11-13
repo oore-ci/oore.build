@@ -1332,8 +1332,7 @@ impl TartVm {
         let stderr = self
             .run_stderr
             .lock()
-            .map(|text| text.trim().to_string())
-            .unwrap_or_default();
+            .map_or_default(|text| text.trim().to_string());
         Some(format!("tart run exited with {status}: {stderr}"))
     }
 

@@ -349,16 +349,13 @@ pub(crate) async fn refresh(
             return Err((status, body));
         }
     };
-    let previous_seen: HashMap<String, i64> = previous
-        .as_ref()
-        .map(|cache| {
-            cache
-                .files
-                .iter()
-                .map(|file| (file.path.clone(), file.seen_at))
-                .collect()
-        })
-        .unwrap_or_default();
+    let previous_seen: HashMap<String, i64> = previous.as_ref().map_or_default(|cache| {
+        cache
+            .files
+            .iter()
+            .map(|file| (file.path.clone(), file.seen_at))
+            .collect()
+    });
     let now = now_unix();
     write_cache(
         pool,

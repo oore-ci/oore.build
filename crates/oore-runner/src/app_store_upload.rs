@@ -342,7 +342,7 @@ fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
         }
         // A bare "Validation failed" says nothing; show everything altool
         // returned so Apple's reason is in the log wherever it put it.
-        let mut raw = result.map(|value| value.to_string()).unwrap_or_default();
+        let mut raw = result.map_or_default(|value| value.to_string());
         if !stderr.trim().is_empty() {
             raw = format!("{raw} {}", stderr.trim());
         }
@@ -657,8 +657,7 @@ pub(crate) fn read_listing_dir(
         }
         let locale = path
             .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().to_string());
         if locale.is_empty() || locale == "default" || locale == "review_information" {
             continue;
         }
@@ -744,7 +743,7 @@ pub(crate) fn preflight_findings(workspace: &Path) -> Vec<String> {
                 continue;
             };
             if png_has_alpha(&bytes) == Some(true) {
-                let shown = path.strip_prefix(workspace).unwrap_or(&path);
+                let shown = path.trim_prefix(workspace);
                 findings.push(format!(
                     "App icon {} has an alpha channel; App Store Connect refuses app icons with transparency",
                     shown.display()

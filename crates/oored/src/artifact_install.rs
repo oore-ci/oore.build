@@ -316,10 +316,10 @@ fn install_platform(
 #[test]
 fn app_bundles_and_other_non_device_artifacts_are_not_installable() {
     let empty = Value::Object(Default::default());
-    assert!(matches!(
+    std::assert_matches!(
         install_platform("apk", &empty),
         Ok(ArtifactInstallPlatform::Android)
-    ));
+    );
     for artifact_type in ["aab", "app", "generic"] {
         let (status, Json(error)) = install_platform(artifact_type, &empty).unwrap_err();
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);

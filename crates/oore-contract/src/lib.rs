@@ -576,7 +576,7 @@ pub fn local_recovery_socket_path(
 ) -> std::io::Result<PathBuf> {
     let parent = database_path
         .parent()
-        .filter(|path| !path.as_os_str().is_empty())
+        .filter(|path| !path.is_empty())
         .unwrap_or_else(|| Path::new("."));
     let preferred = parent
         .join(LOCAL_RECOVERY_SOCKET_DIR)

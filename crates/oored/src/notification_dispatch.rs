@@ -508,18 +508,16 @@ fn signing_mattermost_payload(
 fn signing_email_html(payload: &serde_json::Value, link: Option<&str>) -> (String, String) {
     let subject = signing_summary(payload, "", |value| value.to_string())
         .split_once(' ')
-        .map(|(_, rest)| rest.to_string())
-        .unwrap_or_default();
+        .map_or_default(|(_, rest)| rest.to_string());
     let summary = html_escape(&subject);
     let advice = signing_advice(payload);
     let button = link
-        .map(|link| {
+        .map_or_default(|link| {
             format!(
                 r#"<p><a href="{}" style="display: inline-block; background: #111827; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">Replace it</a></p>"#,
                 html_escape(link)
             )
-        })
-        .unwrap_or_default();
+        });
     let html = format!(
         r#"<!DOCTYPE html>
 <html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1138,12 +1136,10 @@ fn release_summary(payload: &serde_json::Value, bold: &str, escape: fn(&str) -> 
     };
     let track = release["track"]
         .as_str()
-        .map(|track| format!(" on `{}`", escape(track)))
-        .unwrap_or_default();
+        .map_or_default(|track| format!(" on `{}`", escape(track)));
     let percent = release["rollout_percent"]
         .as_f64()
-        .map(format_percent)
-        .unwrap_or_default();
+        .map_or_default(format_percent);
     let subject = format!("{bold}{project}{version}{bold}");
 
     match payload["event"].as_str().unwrap_or_default() {
@@ -1307,14 +1303,13 @@ fn feedback_email_html(payload: &serde_json::Value, link: Option<&str>) -> (Stri
         .collect::<Vec<_>>()
         .join(" · ");
     let button = link
-        .map(|link| {
+        .map_or_default(|link| {
             format!(
                 r#"
   <p style="margin-bottom: 0;"><a href="{}" style="display: inline-block; background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">View feedback</a></p>"#,
                 html_escape(link)
             )
-        })
-        .unwrap_or_default();
+        });
     let html = format!(
         r#"<!DOCTYPE html>
 <html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1994,7 +1989,7 @@ async fn bounded_notification_error_body(mut response: reqwest::Response) -> Str
         }
     }
 
-    String::from_utf8_lossy(&body).into_owned()
+    String::from_utf8_lossy_owned(body)
 }
 
 // ── Email notification functions ─────────────────────────────────
@@ -2236,22 +2231,20 @@ fn release_email_html(payload: &serde_json::Value) -> (String, String) {
         .unwrap_or(summary);
     let reason = payload["release"]["reason"]
         .as_str()
-        .map(|reason| {
+        .map_or_default(|reason| {
             format!(
                 "<p>Reason: {}</p>",
                 html_escape(reason).replace('\n', "<br>")
             )
-        })
-        .unwrap_or_default();
+        });
     let console = payload["release"]["console_url"]
         .as_str()
-        .map(|url| {
+        .map_or_default(|url| {
             format!(
                 r#"<p><a href="{}">Open in the store console</a></p>"#,
                 html_escape(url)
             )
-        })
-        .unwrap_or_default();
+        });
     let color = match payload["event"].as_str().unwrap_or_default() {
         "release.rollout_halted" | "release.release_failed" | "release.release_rejected" => {
             "#dc2626"

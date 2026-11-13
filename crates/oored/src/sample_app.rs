@@ -54,8 +54,7 @@ async fn run(program: &str, args: &[&str], dir: &Path) -> Result<(), String> {
     Err(format!(
         "{program} {} failed{}",
         args.first().copied().unwrap_or_default(),
-        last.map(|line| format!(": {}", line.trim()))
-            .unwrap_or_default()
+        last.map_or_default(|line| format!(": {}", line.trim()))
     ))
 }
 
