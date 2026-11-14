@@ -7,11 +7,11 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApprovalPolicy, Build, BuildApproval, BuildApprovalRequest, BuildApprovalResponse,
     BuildApprovalState, BuildChangelogPreviewResponse, BuildContext, BuildDetailResponse,
-    BuildEvent, BuildPlatform, BuildStatus, CancelBuildResponse, ConcurrencyPolicy,
-    CreateBuildRequest, CreateBuildResponse, DEFAULT_BUILD_TIMEOUT_MINUTES,
-    ListBuildActorsResponse, ListBuildsResponse, PipelineExecutionConfig, RepositoryConfig,
-    RerunBuildResponse, RunnerPolicyBlockReason, ScheduleTrigger, TriggerConfig, TriggerEvent,
-    TriggerSpec, scheduling_labels,
+    BuildEvent, BuildPlatform, BuildReference, BuildReleaseOutcome, BuildStatus,
+    CancelBuildResponse, ConcurrencyPolicy, CreateBuildRequest, CreateBuildResponse,
+    DEFAULT_BUILD_TIMEOUT_MINUTES, ListBuildActorsResponse, ListBuildsResponse,
+    PipelineExecutionConfig, RepositoryConfig, RerunBuildResponse, RunnerPolicyBlockReason,
+    ScheduleTrigger, TriggerConfig, TriggerEvent, TriggerSpec, scheduling_labels,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -75,7 +75,16 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
             reason: row.try_get("approval_reason").ok().flatten(),
         });
 
+    let release_outcome = row
+        .try_get::<Option<String>, _>("release_states")
+        .ok()
+        .flatten()
+        .and_then(|states| {
+            BuildReleaseOutcome::summarize(states.split(',').filter_map(|state| state.parse().ok()))
+        });
+
     Build {
+        release_outcome,
         id: row.get("id"),
         project_id: row.get("project_id"),
         pipeline_id: row.get("pipeline_id"),
@@ -92,11 +101,27 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         trigger_ref: row.get("trigger_ref"),
         commit_sha: row.get("commit_sha"),
         branch: row.get("branch"),
+        commit_title: row.try_get("commit_title").ok().flatten(),
+        commit_author: row.try_get("commit_author").ok().flatten(),
+        version_name: row.try_get("version_name").ok().flatten(),
+        version_code: row.try_get("version_code").ok().flatten(),
+        superseded_by: row
+            .try_get::<Option<String>, _>("superseded_by_build_id")
+            .ok()
+            .flatten()
+            .zip(
+                row.try_get::<Option<i64>, _>("superseded_by_build_number")
+                    .ok()
+                    .flatten(),
+            )
+            .map(|(id, build_number)| BuildReference { id, build_number }),
         changelog: row.get("changelog"),
+        store_notes: row.try_get("store_notes").ok().flatten(),
         source_build_id: row.get("source_build_id"),
         retry_steps: crate::step_retry::retry_steps_from_snapshot(&config_snapshot),
         approval,
         workflow: snapshot_workflow(&config_snapshot),
+        rehearsal: snapshot_rehearsal(&config_snapshot),
         config_snapshot,
         runner_id: row.get("runner_id"),
         context,
@@ -417,6 +442,14 @@ fn set_snapshot_workflow_name(snapshot: &mut serde_json::Value, workflow: Option
     if let Some(workflow) = workflow {
         snapshot["workflow"] = serde_json::json!(workflow);
     }
+}
+
+/// Whether a build is a release rehearsal, as its snapshot records it.
+pub(crate) fn snapshot_rehearsal(snapshot: &serde_json::Value) -> bool {
+    snapshot
+        .get("rehearsal")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
 }
 
 /// The workflow a build plans, as its snapshot records it.
@@ -769,7 +802,8 @@ async fn execute_build_insert(
         sqlx::query(
             "UPDATE builds \
              SET status = 'canceled', runner_id = NULL, signing_token_hash = NULL, \
-                 finished_at = ?1, updated_at = ?1 \
+                 finished_at = ?1, updated_at = ?1, superseded_by_build_id = ?4, \
+                 superseded_by_build_number = (SELECT build_number FROM builds WHERE id = ?4) \
              WHERE pipeline_id = ?2 AND branch = ?3 AND id != ?4 \
                AND build_number < (SELECT build_number FROM builds WHERE id = ?4) \
                AND json_extract(config_snapshot, '$.repository_id') = \
@@ -808,6 +842,8 @@ pub struct ListBuildsQuery {
     pub trigger: Option<String>,
     /// Exact `trigger_actor`.
     pub actor: Option<String>,
+    /// Builds the caller started or of apps the caller pinned.
+    pub mine: Option<bool>,
     /// Unix seconds; builds created at or after this time.
     pub created_after: Option<i64>,
     /// Unix seconds; builds created before this time.
@@ -850,7 +886,7 @@ fn build_search_condition(query: &str, bind_values: &mut Vec<String>) -> String 
              AND lower(sproj.name) LIKE ?{contains} ESCAPE '\\')"
         ),
     ];
-    let number = needle.strip_prefix('#').unwrap_or(needle);
+    let number = needle.trim_prefix('#');
     if number.bytes().all(|b| b.is_ascii_digit())
         && let Ok(number) = number.parse::<u64>()
     {
@@ -920,6 +956,24 @@ fn placeholders(values: &[&str], binds: &mut Vec<String>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Builds `user_id` started (manual and API builds carry their email) or of
+/// apps they pinned.
+fn push_mine_scope(
+    user_id: &str,
+    email: &str,
+    conditions: &mut Vec<String>,
+    binds: &mut Vec<String>,
+) {
+    binds.push(email.to_string());
+    let email_index = binds.len();
+    binds.push(user_id.to_string());
+    let user_index = binds.len();
+    conditions.push(format!(
+        "(builds.trigger_actor = ?{email_index} OR builds.project_id IN \
+         (SELECT project_id FROM user_favorite_projects WHERE user_id = ?{user_index}))"
+    ));
 }
 
 /// WHERE conditions and their bind values for `GET /v1/builds`, scoped to
@@ -1072,7 +1126,8 @@ fn build_list_query(where_clause: &str, order_by: &str, bind_count: usize) -> St
              THEN 'repository_unavailable' \
            WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
            ELSE NULL \
-         END AS runner_policy_block_reason \
+         END AS runner_policy_block_reason, \
+         (SELECT GROUP_CONCAT(r.state) FROM releases r WHERE r.build_id = builds.id) AS release_states \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
          LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
@@ -1171,6 +1226,29 @@ fn changelog_markdown(commits: Vec<crate::integrations::CommitSummary>) -> Strin
 }
 
 // ── Handlers ────────────────────────────────────────────────────
+
+/// Release notes written for a build's store uploads. Saved after the
+/// insert: the runner reads them only when it reaches the publish step.
+async fn save_store_notes(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+    notes: &str,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    sqlx::query("UPDATE builds SET store_notes = ?1 WHERE id = ?2")
+        .bind(notes)
+        .bind(build_id)
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to save build release notes");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to save the release notes",
+            )
+        })?;
+    Ok(())
+}
 
 /// `GET /v1/projects/{project_id}/builds/changelog-preview` — draft release notes.
 pub async fn preview_build_changelog(
@@ -1348,9 +1426,8 @@ async fn workflow_binding(
             })
             .ok()
     });
-    let (signing, app_store) = plan
-        .map(|plan| (plan.signing, plan.publish.needs_app_store_export()))
-        .unwrap_or_default();
+    let (signing, app_store) =
+        plan.map_or_default(|plan| (plan.signing, plan.publish.needs_app_store_export()));
     crate::signing_identities::resolve_workflow_binding(
         pool,
         project_id,
@@ -1390,6 +1467,18 @@ pub async fn create_build(
             StatusCode::BAD_REQUEST,
             "invalid_input",
             "Changelog must be 4,000 characters or fewer",
+        ));
+    }
+    let rehearsal = req.rehearsal.unwrap_or(false);
+    let store_notes = normalize_optional(req.store_notes);
+    if store_notes
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 4_000)
+    {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "Release notes must be 4,000 characters or fewer",
         ));
     }
 
@@ -1557,6 +1646,9 @@ pub async fn create_build(
     }
     set_snapshot_workflow_name(&mut config_snapshot, workflow.as_deref());
     binding.write_to(&mut config_snapshot);
+    if rehearsal {
+        config_snapshot["rehearsal"] = serde_json::json!(true);
+    }
 
     let snapshot_str = config_snapshot.to_string();
     let inserted = insert_build_with_retry(
@@ -1590,6 +1682,9 @@ pub async fn create_build(
     }
 
     let build_number = fetch_build_number(&pool, &build_id).await?;
+    if let Some(notes) = &store_notes {
+        save_store_notes(&pool, &build_id, notes).await?;
+    }
 
     // Insert initial build event
     sqlx::query(
@@ -1646,6 +1741,12 @@ pub async fn create_build(
     let runner_policy_block_reason =
         runner_policy_block_reason_for_project(&pool, &project_id).await?;
     let build = Build {
+        release_outcome: None,
+        commit_title: None,
+        commit_author: None,
+        version_name: None,
+        version_code: None,
+        superseded_by: None,
         id: build_id,
         project_id,
         pipeline_id: req.pipeline_id,
@@ -1659,10 +1760,12 @@ pub async fn create_build(
         commit_sha,
         branch,
         changelog,
+        store_notes,
         source_build_id: None,
         retry_steps: None,
         approval: pending_approval(approval_required, now),
         workflow: snapshot_workflow(&config_snapshot),
+        rehearsal,
         config_snapshot,
         runner_id: None,
         context: None,
@@ -1707,7 +1810,15 @@ pub async fn list_builds(
 
     let viewer =
         (auth.0.role != "owner" && auth.0.role != "admin").then_some(auth.0.user_id.as_str());
-    let (conditions, bind_values) = build_list_conditions(&params, viewer)?;
+    let (mut conditions, mut bind_values) = build_list_conditions(&params, viewer)?;
+    if params.mine == Some(true) {
+        push_mine_scope(
+            &auth.0.user_id,
+            &auth.0.email,
+            &mut conditions,
+            &mut bind_values,
+        );
+    }
 
     let where_clause = where_sql(&conditions);
 
@@ -1830,7 +1941,8 @@ pub async fn get_build(
              THEN 'repository_unavailable' \
            WHEN COALESCE(instance_preferences.direct_macos_runner_paused, 0) = 1 THEN 'instance_paused' \
            ELSE NULL \
-         END AS runner_policy_block_reason \
+         END AS runner_policy_block_reason, \
+         (SELECT GROUP_CONCAT(r.state) FROM releases r WHERE r.build_id = builds.id) AS release_states \
          FROM builds \
          LEFT JOIN projects ON projects.id = builds.project_id \
          LEFT JOIN integration_repositories ON integration_repositories.id = projects.repository_id \
@@ -1875,10 +1987,66 @@ pub async fn get_build(
             Vec::new()
         });
 
+    let queue = crate::queue_estimate::estimate(pool, &build_id, now_unix())
+        .await
+        .unwrap_or_else(|e| {
+            warn!(build_id = %build_id, error = %e, "failed to estimate the queue wait");
+            None
+        });
+
+    let retention = build_retention(pool, &build_id).await.unwrap_or_else(|e| {
+        warn!(build_id = %build_id, error = %e, "failed to work out the build's retention");
+        None
+    });
+
     Ok(Json(BuildDetailResponse {
         build,
         events,
         retryable_steps,
+        queue,
+        retention,
+    }))
+}
+
+/// Why retention keeps a finished build and when its age limit removes it.
+pub(crate) async fn build_retention(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+) -> Result<Option<oore_contract::BuildRetention>, sqlx::Error> {
+    let Some(row) = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT b.project_id, b.status, b.kept_at, \
+                COALESCE(b.finished_at, b.created_at) AS finished_at, \
+                EXISTS (SELECT 1 FROM releases r WHERE r.build_id = b.id AND {}) AS by_release \
+         FROM builds b WHERE b.id = ?1",
+        crate::background::RELEASE_KEEPS_BUILD
+    )))
+    .bind(build_id)
+    .fetch_optional(pool)
+    .await?
+    else {
+        return Ok(None);
+    };
+    let status: String = row.get("status");
+    if !matches!(
+        status.as_str(),
+        "succeeded" | "failed" | "canceled" | "timed_out"
+    ) {
+        return Ok(None);
+    }
+    let project_id: String = row.get("project_id");
+    let policy = crate::retention::load_effective_policy(pool, &project_id).await?;
+    let kept = row.get::<Option<i64>, _>("kept_at").is_some();
+    let kept_by_release = row.get::<i64, _>("by_release") != 0;
+    let kept_by_status = policy.keep_statuses.iter().any(|kept| kept == &status);
+    let expires_at = (policy.enabled && !kept && !kept_by_release && !kept_by_status)
+        .then_some(policy.max_age_days)
+        .flatten()
+        .map(|days| row.get::<i64, _>("finished_at") + days * 86_400);
+    Ok(Some(oore_contract::BuildRetention {
+        kept,
+        kept_by_release,
+        kept_by_status,
+        expires_at,
     }))
 }
 
@@ -2199,8 +2367,8 @@ pub(crate) async fn queue_rerun(
     // Fetch source build
     let source_row = sqlx::query(
         "SELECT id, project_id, pipeline_id, build_number, status, \
-         trigger_ref, commit_sha, branch, changelog, config_snapshot, approval_requested_at, \
-         step_results \
+         trigger_ref, commit_sha, branch, changelog, store_notes, config_snapshot, \
+         approval_requested_at, step_results \
          FROM builds WHERE id = ?1",
     )
     .bind(&build_id)
@@ -2399,6 +2567,7 @@ pub(crate) async fn queue_rerun(
     let commit_sha: Option<String> = source_row.get("commit_sha");
     let trigger_ref: Option<String> = source_row.get("trigger_ref");
     let changelog: Option<String> = source_row.get("changelog");
+    let store_notes: Option<String> = source_row.get("store_notes");
 
     let now = now_unix();
     let new_build_id = Uuid::new_v4().to_string();
@@ -2445,6 +2614,9 @@ pub(crate) async fn queue_rerun(
     }
 
     let build_number = fetch_build_number(pool, &new_build_id).await?;
+    if let Some(notes) = &store_notes {
+        save_store_notes(pool, &new_build_id, notes).await?;
+    }
 
     // Insert initial build event
     let reason = initial_event_reason(
@@ -2520,6 +2692,12 @@ pub(crate) async fn queue_rerun(
     let runner_policy_block_reason =
         runner_policy_block_reason_for_project(pool, &project_id).await?;
     let build = Build {
+        release_outcome: None,
+        commit_title: None,
+        commit_author: None,
+        version_name: None,
+        version_code: None,
+        superseded_by: None,
         id: new_build_id,
         project_id,
         pipeline_id,
@@ -2533,10 +2711,12 @@ pub(crate) async fn queue_rerun(
         commit_sha,
         branch,
         changelog,
+        store_notes,
         source_build_id: Some(build_id),
         retry_steps,
         approval: pending_approval(approval_required, now),
         workflow: snapshot_workflow(&config_snapshot),
+        rehearsal: snapshot_rehearsal(&config_snapshot),
         config_snapshot,
         runner_id: None,
         context: None,
@@ -3003,6 +3183,12 @@ pub async fn trigger_build_from_webhook(
                 );
 
                 created_builds.push(Build {
+                    release_outcome: None,
+                    commit_title: None,
+                    commit_author: None,
+                    version_name: None,
+                    version_code: None,
+                    superseded_by: None,
                     id: build_id,
                     project_id: project_id.clone(),
                     pipeline_id: pipeline_id.clone(),
@@ -3016,10 +3202,12 @@ pub async fn trigger_build_from_webhook(
                     commit_sha: commit_sha.map(String::from),
                     branch: branch.map(String::from),
                     changelog: None,
+                    store_notes: None,
                     source_build_id: None,
                     retry_steps: None,
                     approval: pending_approval(approval_required, now),
                     workflow: snapshot_workflow(&config_snapshot),
+                    rehearsal: false,
                     config_snapshot,
                     runner_id: None,
                     context: None,
@@ -3655,6 +3843,11 @@ mod tests {
         let superseded = load_build(&pool, &first[0].id).await;
         assert_eq!(superseded.status, "canceled");
         assert!(superseded.approval.is_none());
+        let replaced_by = superseded
+            .superseded_by
+            .expect("names the build that replaced it");
+        assert_eq!(replaced_by.id, second[0].id);
+        assert_eq!(replaced_by.build_number, second[0].build_number);
         assert_eq!(
             second[0].approval.as_ref().map(|approval| approval.state),
             Some(BuildApprovalState::Pending)
@@ -3796,6 +3989,7 @@ mod tests {
             workflow: None,
             trigger: None,
             actor: None,
+            mine: None,
             created_after: None,
             created_before: None,
             q: None,
@@ -3926,6 +4120,47 @@ mod tests {
             q = q.bind(bind);
         }
         q.fetch_all(pool).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn mine_lists_own_builds_and_pinned_apps() {
+        let pool = pool(r#"{"events":["push"]}"#, r#"{"required":false}"#, 60).await;
+        insert_filter_builds(&pool).await;
+        let mine = |user_id: &str, email: &str| {
+            let (mut conditions, mut binds) = build_list_conditions(&list_params(), None).unwrap();
+            push_mine_scope(user_id, email, &mut conditions, &mut binds);
+            (conditions, binds)
+        };
+        let run = |(conditions, binds): (Vec<String>, Vec<String>)| {
+            let pool = pool.clone();
+            async move {
+                let sql = format!(
+                    "SELECT id FROM builds {} ORDER BY created_at",
+                    where_sql(&conditions)
+                );
+                let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql));
+                for bind in &binds {
+                    q = q.bind(bind);
+                }
+                q.fetch_all(&pool).await.unwrap()
+            }
+        };
+
+        assert_eq!(
+            run(mine("u1", "lead@example.com")).await,
+            ["manual", "rerun"]
+        );
+        sqlx::query(
+            "INSERT INTO user_favorite_projects (user_id, project_id, created_at) \
+             VALUES ('u1', 'p2', 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run(mine("u1", "lead@example.com")).await,
+            ["manual", "rerun", "nightly", "hidden"]
+        );
     }
 
     #[tokio::test]

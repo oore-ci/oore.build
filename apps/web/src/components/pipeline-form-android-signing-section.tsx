@@ -78,7 +78,7 @@ export function PipelineAndroidSigningSection({
       ) : null}
       {releaseEnabled || debugEnabled ? (
         <SetupHint
-          title="Android project setup"
+          title="Android app setup"
           items={[
             <span key="gradle">
               No Gradle changes needed. For each <code>flutter build apk</code>{' '}

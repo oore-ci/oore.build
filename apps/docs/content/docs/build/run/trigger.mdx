@@ -12,13 +12,13 @@ explains what happens after the build is queued.
 
 ## What you need
 
-- A linked project with at least one pipeline.
-- Project developer, maintainer, instance admin, or instance owner access.
+- A linked app with at least one pipeline.
+- App developer, maintainer, instance admin, or instance owner access.
 - An online Direct macOS runner that is accepting new work.
 
 ## 1. Open the build dialog
 
-Open the project and select **Run build**.
+Open the app and select **Run build**.
 
 ## 2. Choose what to build
 
@@ -42,6 +42,23 @@ The build detail shows its branch, pinned commit, pipeline, and selected
 platforms. Follow the state and logs until the build reaches `succeeded` or
 another terminal result.
 
+## Follow the build
+
+The build page opens on **Logs** while the build runs, with a bar and a line
+such as "Step 3 of 6 · Build · about 4 min left" once the pipeline has a few
+successful runs to compare with. A build no runner has started lists the
+runners that can take it and why each has not yet. A finished build opens on
+**Summary**: the apps it made with **Install**, the stores it was sent to,
+what changed, its checks, its version, commit and author, and its activity,
+including tester feedback. A failed build opens on **Logs**, or on **Tests**
+when tests failed.
+
+To run a build again with a different branch, workflow or notes, open the
+menu beside **Re-run** and choose **Re-run with changes**.
+
+A build canceled because a newer push to the same branch started another one
+says **Replaced by** and links to that build.
+
 ## Troubleshooting
 
 **The build waits because the Direct macOS runner is paused**
@@ -52,13 +69,13 @@ second repository approval step.
 
 **The build reports that the source is unavailable**
 
-Ask an owner or admin to repair or relink the project source, then trigger a
+Ask an owner or admin to repair or relink the app source, then trigger a
 new build. A re-run does not move an older build snapshot to a different
 repository identity.
 
 **Oore asks for a branch or commit**
 
-Enter a branch, provide a commit SHA, or set the project's default branch.
+Enter a branch, provide a commit SHA, or set the app's default branch.
 
 Connected GitHub and GitLab sources can also trigger enabled pipelines from
 verified webhook revisions. The HTTP contract is available in

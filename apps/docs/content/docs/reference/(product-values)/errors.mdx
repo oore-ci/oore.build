@@ -28,10 +28,10 @@ the valid responses for that path.
 
 For example, project-scoped authorization deliberately distinguishes:
 
-| Status | Code                | Meaning                                                                   |
-| ------ | ------------------- | ------------------------------------------------------------------------- |
-| `404`  | `not_found`         | The project does not exist or the caller has no membership to discover it |
-| `403`  | `permission_denied` | The caller can discover the project but lacks the requested permission    |
+| Status | Code                | Meaning                                                               |
+| ------ | ------------------- | --------------------------------------------------------------------- |
+| `404`  | `not_found`         | The app does not exist or the caller has no membership to discover it |
+| `403`  | `permission_denied` | The caller can discover the app but lacks the requested permission    |
 
 Artifact delivery can return `410` with `artifact_expired` after retention has
 removed an artifact. A build status update can return `409` with

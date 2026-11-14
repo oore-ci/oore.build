@@ -7,11 +7,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use oore_contract::{
-    GooglePlayPublishConfig, GooglePlayReleaseNotesSource, PublishStore, RunnerPublishResult,
+    GooglePlayPublishConfig, GooglePlayReleaseNotesSource, PublishPreflight, PublishStore,
+    ReadinessLevel, RehearsalCheck, RunnerPublishResult,
 };
 use oore_google_play::{
-    LocalizedText, MAX_RELEASE_NOTES_CHARS, PlayEdits, ReleaseStatus, TrackRelease, access_token,
-    is_play_rejection, play_track_name, read_aab_manifest,
+    CommitOutcome, Listing, LocalizedText, MAX_FULL_DESCRIPTION_CHARS, MAX_RELEASE_NOTES_CHARS,
+    MAX_SHORT_DESCRIPTION_CHARS, MAX_TITLE_CHARS, PlayEdits, ReleaseStatus, TrackRelease,
+    access_token, is_play_rejection, play_track_name, read_aab_manifest,
 };
 
 use crate::store_version::{ensure_play_version_code, fetch_play_version_codes};
@@ -96,13 +98,12 @@ fn release_notes(
         GooglePlayReleaseNotesSource::Changelog => Ok(changelog
             .map(str::trim)
             .filter(|text| !text.is_empty())
-            .map(|text| {
+            .map_or_default(|text| {
                 vec![LocalizedText {
                     language: config.release_notes_locale.clone(),
                     text: truncate_release_notes(text),
                 }]
-            })
-            .unwrap_or_default()),
+            })),
         GooglePlayReleaseNotesSource::RepoFiles => {
             let relative = config
                 .release_notes_dir
@@ -143,6 +144,85 @@ fn release_notes(
     }
 }
 
+/// Reads one listing file, `None` when it is missing or empty; fails when
+/// it is longer than Play takes, so a listing is never cut short.
+fn listing_field(
+    dir: &Path,
+    file: &str,
+    max_chars: Option<usize>,
+) -> anyhow::Result<Option<String>> {
+    let path = dir.join(file);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text =
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if let Some(max) = max_chars
+        && text.chars().count() > max
+    {
+        bail!(
+            "{} is {} characters; Google Play takes at most {max}",
+            path.display(),
+            text.chars().count()
+        );
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// Reads the store listing in fastlane's layout: `<dir>/<locale>/title.txt`,
+/// `short_description.txt`, `full_description.txt` and `video.txt`.
+pub(crate) fn read_play_listing_dir(
+    workspace: &Path,
+    relative: &str,
+) -> anyhow::Result<Vec<Listing>> {
+    let canonical_workspace = workspace.canonicalize()?;
+    let dir = workspace
+        .join(relative)
+        .canonicalize()
+        .with_context(|| format!("store listing directory {relative} does not exist"))?;
+    if !dir.starts_with(&canonical_workspace) {
+        bail!("store listing directory {relative} resolves outside the workspace");
+    }
+    let mut listings = Vec::new();
+    for entry in fs::read_dir(&dir)? {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(language) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let listing = Listing {
+            language: language.to_string(),
+            title: listing_field(&path, "title.txt", Some(MAX_TITLE_CHARS))?,
+            short_description: listing_field(
+                &path,
+                "short_description.txt",
+                Some(MAX_SHORT_DESCRIPTION_CHARS),
+            )?,
+            full_description: listing_field(
+                &path,
+                "full_description.txt",
+                Some(MAX_FULL_DESCRIPTION_CHARS),
+            )?,
+            video: listing_field(&path, "video.txt", None)?,
+        };
+        if listing.title.is_some()
+            || listing.short_description.is_some()
+            || listing.full_description.is_some()
+            || listing.video.is_some()
+        {
+            listings.push(listing);
+        }
+    }
+    listings.sort_by(|a, b| a.language.cmp(&b.language));
+    Ok(listings)
+}
+
 /// Status and user fraction for the initial release.
 fn release_status(config: &GooglePlayPublishConfig) -> (ReleaseStatus, Option<f64>) {
     if config.draft {
@@ -165,6 +245,9 @@ pub(crate) struct PublishGate<S, A> {
 #[derive(Debug, PartialEq, Eq)]
 enum Committed {
     Confirmed,
+    /// Play took the edit but holds it until someone sends it for review in
+    /// Play Console.
+    HeldForReview,
     /// The commit's reply was lost, but the release is on the track.
     ReplyLost,
 }
@@ -198,8 +281,10 @@ async fn stage_and_commit<T>(
         return Err(error
             .context("The build stopped before the release was committed; nothing was published"));
     }
-    let Err(error) = edits.commit().await else {
-        return Ok((staged, Committed::Confirmed));
+    let error = match edits.commit().await {
+        Ok(CommitOutcome::SentForReview) => return Ok((staged, Committed::Confirmed)),
+        Ok(CommitOutcome::HeldForReview) => return Ok((staged, Committed::HeldForReview)),
+        Err(error) => error,
     };
     if !is_play_rejection(&error) && landed.await.unwrap_or(false) {
         return Ok((staged, Committed::ReplyLost));
@@ -244,6 +329,10 @@ pub(crate) async fn publish_to_google_play(
     let track = play_track_name(&config.track);
     let (status, user_fraction) = release_status(config);
     let notes = release_notes(workspace, config, changelog)?;
+    let listings = match &config.listing_dir {
+        Some(dir) => read_play_listing_dir(workspace, dir)?,
+        None => Vec::new(),
+    };
     let mapping = config
         .upload_mapping
         .then(|| mapping_for_bundle(workspace, &bundle))
@@ -270,7 +359,7 @@ pub(crate) async fn publish_to_google_play(
         let version_code = edits.upload_bundle(&bundle).await?;
         staged_log.push(format!(
             "[oore-publish] Uploaded {} as versionCode {version_code}",
-            bundle.strip_prefix(workspace).unwrap_or(&bundle).display()
+            bundle.trim_prefix(workspace).display()
         ));
         match &mapping {
             Some(path) => {
@@ -283,6 +372,16 @@ pub(crate) async fn publish_to_google_play(
                 );
             }
             None => {}
+        }
+        for listing in &listings {
+            edits.update_listing(listing).await?;
+        }
+        if !listings.is_empty() {
+            let languages: Vec<&str> = listings.iter().map(|l| l.language.as_str()).collect();
+            staged_log.push(format!(
+                "[oore-publish] Updated the store listing for {}",
+                languages.join(", ")
+            ));
         }
         edits
             .update_track(
@@ -297,6 +396,21 @@ pub(crate) async fn publish_to_google_play(
                 },
             )
             .await?;
+        match config.preflight {
+            PublishPreflight::Off => {}
+            level => {
+                if let Err(error) = edits.validate().await {
+                    if level == PublishPreflight::Block {
+                        return Err(error.context(
+                            "Pre-flight: Google Play refused the release before it was committed; nothing was published",
+                        ));
+                    }
+                    staged_log.push(format!(
+                        "[oore-publish] Pre-flight warning: Google Play's check of the edit failed: {error:#}"
+                    ));
+                }
+            }
+        }
         anyhow::Ok(version_code)
     };
     let landed = async {
@@ -310,6 +424,13 @@ pub(crate) async fn publish_to_google_play(
     let committed = stage_and_commit(&edits, stage, gate, landed).await;
     log.append(&mut staged_log);
     let (version_code, committed) = committed?;
+    let held_for_review = committed == Committed::HeldForReview;
+    if held_for_review {
+        log.push(
+            "[oore-publish] Play Console holds this change until someone presses Send for review in Publishing overview; nothing reaches users before that"
+                .to_string(),
+        );
+    }
     if committed == Committed::ReplyLost {
         log.push(
             "[oore-publish] Google Play's reply to the commit was lost, but the release is on the track"
@@ -318,6 +439,9 @@ pub(crate) async fn publish_to_google_play(
     }
 
     log.push(match (status, user_fraction) {
+        _ if held_for_review => {
+            format!("[oore-publish] Staged on {track}, waiting to be sent for review")
+        }
         (ReleaseStatus::Draft, _) => format!("[oore-publish] Created a draft release on {track}"),
         (_, Some(fraction)) => format!(
             "[oore-publish] Rolling out to {}% of {track} users",
@@ -343,7 +467,236 @@ pub(crate) async fn publish_to_google_play(
         }
         .to_string(),
         testflight_groups: None,
+        held_for_review,
+        release_notes: None,
+        listing: None,
     })
+}
+
+fn rehearsal_check(
+    code: &str,
+    level: ReadinessLevel,
+    title: String,
+    detail: Option<String>,
+) -> RehearsalCheck {
+    RehearsalCheck {
+        code: code.to_string(),
+        level,
+        title,
+        detail,
+    }
+}
+
+/// Checks a Google Play release without making it, for a release rehearsal:
+/// the same bundle, version code, notes and track as the real upload, staged
+/// in an edit that Play validates and Oore then discards. Never commits.
+/// Stops at the first check that fails, since later ones depend on it.
+pub(crate) async fn rehearse_google_play(
+    http: &reqwest::Client,
+    workspace: &Path,
+    secrets: &BTreeMap<String, String>,
+    changelog: Option<&str>,
+    config: &GooglePlayPublishConfig,
+) -> Vec<RehearsalCheck> {
+    let mut checks = Vec::new();
+    let block = |code: &str, title: &str, error: anyhow::Error| {
+        rehearsal_check(
+            code,
+            ReadinessLevel::Block,
+            title.to_string(),
+            Some(format!("{error:#}")),
+        )
+    };
+    let Some(service_account) = secrets.get(&config.service_account_secret) else {
+        checks.push(rehearsal_check(
+            "play_service_account",
+            ReadinessLevel::Block,
+            "The Google Play service account secret is missing".to_string(),
+            Some(format!(
+                "Add the secret '{}' with the service account JSON to the pipeline, its app or the instance.",
+                config.service_account_secret
+            )),
+        ));
+        return checks;
+    };
+    let bundle = match find_bundle(workspace) {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            checks.push(block("play_bundle", "No App Bundle to upload", error));
+            return checks;
+        }
+    };
+    let manifest = match read_aab_manifest(&bundle) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            checks.push(block(
+                "play_bundle",
+                "The App Bundle could not be read",
+                error,
+            ));
+            return checks;
+        }
+    };
+    if let Some(expected) = &config.package_name
+        && expected != &manifest.package_name
+    {
+        checks.push(rehearsal_check(
+            "play_package",
+            ReadinessLevel::Block,
+            "The App Bundle is for another app".to_string(),
+            Some(format!(
+                "The bundle is {}, but publishing is set up for {expected}.",
+                manifest.package_name
+            )),
+        ));
+        return checks;
+    }
+    let version = format!(
+        "{} ({})",
+        manifest.version_name.as_deref().unwrap_or("no versionName"),
+        manifest.version_code
+    );
+    let track = play_track_name(&config.track);
+    let notes = match release_notes(workspace, config, changelog) {
+        Ok(notes) => notes,
+        Err(error) => {
+            checks.push(block(
+                "play_release_notes",
+                "The release notes could not be read",
+                error,
+            ));
+            return checks;
+        }
+    };
+    if notes.is_empty() && config.release_notes != GooglePlayReleaseNotesSource::None {
+        checks.push(rehearsal_check(
+            "play_release_notes",
+            ReadinessLevel::Warn,
+            "No release notes".to_string(),
+            Some("Users see no \"What's new\" text. Write notes when you start the build, or add them to the repository.".to_string()),
+        ));
+    }
+    let listings = match &config.listing_dir {
+        Some(dir) => match read_play_listing_dir(workspace, dir) {
+            Ok(listings) => listings,
+            Err(error) => {
+                checks.push(block(
+                    "play_listing",
+                    "The store listing files could not be read",
+                    error,
+                ));
+                return checks;
+            }
+        },
+        None => Vec::new(),
+    };
+    let token = match access_token(http, service_account).await {
+        Ok(token) => token,
+        Err(error) => {
+            checks.push(block(
+                "play_access",
+                "Oore could not sign in to Google Play",
+                error,
+            ));
+            return checks;
+        }
+    };
+    let store_codes =
+        match fetch_play_version_codes(http, &token, &manifest.package_name, &track).await {
+            Ok(codes) => codes,
+            Err(error) => {
+                checks.push(block(
+                    "play_access",
+                    "Google Play did not let Oore read the app",
+                    error,
+                ));
+                return checks;
+            }
+        };
+    match ensure_play_version_code(manifest.version_code, &store_codes, &track) {
+        Ok(()) => checks.push(rehearsal_check(
+            "play_version_code",
+            ReadinessLevel::Ok,
+            format!(
+                "Version code {} is free on Google Play",
+                manifest.version_code
+            ),
+            store_codes
+                .track_highest
+                .map(|highest| format!("The highest on {track} is {highest}.")),
+        )),
+        Err(error) => {
+            checks.push(block(
+                "play_version_code",
+                "The version code is already used",
+                error,
+            ));
+            return checks;
+        }
+    }
+    let edits = match PlayEdits::insert(http, &token, &manifest.package_name).await {
+        Ok(edits) => edits,
+        Err(error) => {
+            checks.push(block(
+                "play_access",
+                "Google Play did not open an edit",
+                error,
+            ));
+            return checks;
+        }
+    };
+    let (status, user_fraction) = release_status(config);
+    let staged = async {
+        let version_code = edits
+            .upload_bundle(&bundle)
+            .await
+            .context("Google Play refused the App Bundle")?;
+        for listing in &listings {
+            edits
+                .update_listing(listing)
+                .await
+                .context("Google Play refused the store listing")?;
+        }
+        edits
+            .update_track(
+                &track,
+                &TrackRelease {
+                    name: None,
+                    version_codes: vec![version_code],
+                    status,
+                    user_fraction,
+                    release_notes: notes.clone(),
+                    in_app_update_priority: config.in_app_update_priority,
+                },
+            )
+            .await
+            .context("Google Play refused the release on the track")?;
+        edits
+            .validate()
+            .await
+            .context("Google Play's check of the release failed")
+    }
+    .await;
+    // The edit is never committed; discarding it drops the staged bundle.
+    let _ = edits.delete().await;
+    checks.push(match staged {
+        Ok(()) => rehearsal_check(
+            "play_validate",
+            ReadinessLevel::Ok,
+            format!("Google Play accepts {version} on {track}"),
+            Some(
+                "Staged and checked by Google Play, then discarded. Nothing was committed."
+                    .to_string(),
+            ),
+        ),
+        Err(error) => rehearsal_check(
+            "play_validate",
+            ReadinessLevel::Block,
+            format!("Google Play would refuse {version} on {track}"),
+            Some(format!("{error:#}")),
+        ),
+    });
+    checks
 }
 
 #[cfg(test)]
@@ -443,6 +796,26 @@ mod tests {
 
         config.release_notes_dir = Some("../outside".to_string());
         assert!(release_notes(&root, &config, None).is_err());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn store_listing_from_fastlane_metadata() {
+        let root = workspace("listing");
+        touch(&root, "metadata/en-US/title.txt", "Shop\n");
+        touch(&root, "metadata/en-US/full_description.txt", "Buy things.");
+        touch(&root, "metadata/de-DE/short_description.txt", "Kaufen");
+        touch(&root, "metadata/fr-FR/changelogs/1.txt", "ignored");
+        let listings = read_play_listing_dir(&root, "metadata").unwrap();
+        assert_eq!(listings.len(), 2);
+        assert_eq!(listings[0].language, "de-DE");
+        assert_eq!(listings[0].short_description.as_deref(), Some("Kaufen"));
+        assert_eq!(listings[1].title.as_deref(), Some("Shop"));
+        assert_eq!(listings[1].short_description, None);
+
+        touch(&root, "metadata/en-US/title.txt", &"a".repeat(31));
+        assert!(read_play_listing_dir(&root, "metadata").is_err());
+        assert!(read_play_listing_dir(&root, "../outside").is_err());
         fs::remove_dir_all(&root).ok();
     }
 

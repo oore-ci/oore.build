@@ -64,7 +64,7 @@ type SecretFormValues = z.infer<typeof secretFormSchema>
 
 const SCOPE_EFFECT = {
   instance: 'Every pipeline on this instance can use it.',
-  project: 'Every pipeline in this project can use it.',
+  project: 'Every pipeline in this app can use it.',
   pipeline: 'Only this pipeline can use it.',
 } as const
 
@@ -166,10 +166,10 @@ export function SecretValueDialog({
                   className="mt-0.5"
                 />
                 <span className="flex flex-col gap-0.5">
-                  <span className="font-medium">Share with every project</span>
+                  <span className="font-medium">Share with every app</span>
                   <span className="text-muted-foreground">
-                    Saves an instance secret. A project secret with the same
-                    name still takes precedence.
+                    Saves an instance secret. An app secret with the same name
+                    still takes precedence.
                   </span>
                 </span>
               </label>

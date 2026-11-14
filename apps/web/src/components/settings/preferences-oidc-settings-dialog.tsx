@@ -1,6 +1,6 @@
 import type { SubmitHandler, UseFormReturn } from 'react-hook-form'
 import type { GetExternalAccessOidcResponse } from '@oore/client/models'
-import type { ExternalAccessOidcFormValues } from '@/routes/settings/preferences'
+import type { ExternalAccessOidcFormValues } from '@/routes/settings/general'
 import { OidcIssuerUrlAutocomplete } from '@/components/oidc-issuer-url-autocomplete'
 import { Button } from '@/components/ui/button'
 import {

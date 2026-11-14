@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
+import { buildSourceRef } from '@/lib/build-source'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { Row } from '@/components/layout/row'
-import { Link } from '@tanstack/react-router'
 
 import type { Build } from '@oore/client/models'
 import {
@@ -17,11 +17,14 @@ import {
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
-import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import {
+  BuildNumberValue,
+  BuildSourceValue,
+  EmptyValue,
+} from '@/components/table-values'
 import { formatDuration, relativeTime } from '@/lib/format-utils'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import type { ProjectBuildSort } from './-project-build-sort'
-import { LIST_NAV_ITEM } from '@/lib/keyboard-shortcuts'
 
 const PROJECT_BUILD_SORTS = [
   'pipeline_name',
@@ -39,16 +42,7 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'build_number',
     header: 'Build',
-    cell: ({ row }) => (
-      <Link
-        {...LIST_NAV_ITEM}
-        to="/builds/$buildId"
-        params={{ buildId: row.original.id }}
-        className="font-mono font-medium underline-offset-4 hover:underline"
-      >
-        #{row.original.build_number}
-      </Link>
-    ),
+    cell: ({ row }) => <BuildNumberValue build={row.original} navItem />,
     enableHiding: false,
     enableSorting: false,
   },
@@ -87,13 +81,15 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'branch',
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Branch" />
+      <DataTableColumnHeader column={column} title="Source" />
     ),
     cell: ({ row }) => (
       <BuildSourceValue
-        branch={row.original.branch}
+        branch={buildSourceRef(row.original)}
         commitSha={row.original.commit_sha}
         context={row.original.context}
+        title={row.original.commit_title}
+        author={row.original.commit_author}
       />
     ),
   },

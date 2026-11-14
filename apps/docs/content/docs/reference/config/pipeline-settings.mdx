@@ -43,7 +43,7 @@ build names none. `null`, shown as **Not set**, leaves the choice to each run.
 | Started by a push, pull request or tag | Runs the default if the event matches its `on`; without one, the top-level `on`; without either, the trigger settings | One build per workflow whose `on` matches, or whose trigger settings match when neither it nor the top level sets `on`       |
 
 The **Default workflow** selector lists the workflows in the pipeline's file
-on the project's default branch, and names that branch beneath it. Select
+on the app's default branch, and names that branch beneath it. Select
 **Change branch** to read the file from another branch, for example while the
 file is only on `develop`. The branch changes only what the selector shows;
 builds read the file at the commit they build.
@@ -62,7 +62,7 @@ and its approval.
 
 | UI label            | API field             | Value                                                                                                                                          |
 | ------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Android signing** | `android_identity_id` | An Android keystore from the [project's signing library](/build/sign/project-library). Replaces the file's `signing.android`                   |
+| **Android signing** | `android_identity_id` | An Android keystore from the [app's signing library](/build/sign/project-library). Replaces the file's `signing.android`                       |
 | **iOS signing**     | `ios_identity_id`     | An iOS distribution identity from the library. Replaces the file's `signing.ios`, and with it the iOS export method                            |
 | **Publishing**      | `publish_enabled`     | `false` stops every store upload of the workflow, whatever the file and the Publishing tab say. Unset follows them                             |
 | **Approval**        | `approval_required`   | `true` holds every build of the workflow for approval and `false` none, whatever its event. Unset follows the pipeline's [approval](#approval) |
@@ -74,9 +74,9 @@ and its approval.
   replaces the workflow's settings, so a field left out is cleared. An empty
   request removes them.
 - Changing `approval_required` needs the same role as changing the
-  pipeline's approval policy. The other fields need project developer access
+  pipeline's approval policy. The other fields need app developer access
   or higher.
-- An identity must belong to the pipeline's project and be of the field's
+- An identity must belong to the pipeline's app and be of the field's
   kind.
 - A workflow whose settings pick an ad hoc iOS identity, and that uploads to
   App Store Connect with publishing on, is refused with `invalid_signing`.
@@ -89,7 +89,7 @@ a later change applies to new builds only.
 
 ## Health
 
-`health` on a pipeline says whether its file is usable on the project's
+`health` on a pipeline says whether its file is usable on the app's
 default branch. Oore reads it from the files it last saw on that branch,
 never from GitHub or GitLab while a page loads, and leaves it out until it has
 read the repository once.
@@ -122,10 +122,10 @@ When Oore reads the branch is described in
 | `pull_request` | Pull request | A pull or merge request is opened, reopened or updated |
 | `tag_push`     | Tag push     | A tag is pushed                                        |
 
-An empty list accepts every event. Source events need a project connected to
-GitHub or GitLab. A project that builds a repository on the Oore Mac builds
+An empty list accepts every event. Source events need an app connected to
+GitHub or GitLab. An app that builds a repository on the Oore Mac builds
 only from the UI, the API, or a schedule. GitLab sends tag pushes only when the
-project webhook has **Tag push events** turned on.
+app webhook has **Tag push events** turned on.
 
 You can always start a build by hand, whatever the events are.
 
@@ -175,10 +175,10 @@ Oore builds instead of skipping. Path filters do not apply to tag pushes.
 }
 ```
 
-| Field    | Value                                                                           |
-| -------- | ------------------------------------------------------------------------------- |
-| `cron`   | Five fields: minute, hour, day of month, month, day of week (0 or 7 is Sunday)  |
-| `branch` | Branch to build. Without it, the project's default branch at its current commit |
+| Field    | Value                                                                          |
+| -------- | ------------------------------------------------------------------------------ |
+| `cron`   | Five fields: minute, hour, day of month, month, day of week (0 or 7 is Sunday) |
+| `branch` | Branch to build. Without it, the app's default branch at its current commit    |
 
 - Lists (`1,15`), ranges (`9-17`), and steps (`*/15`) work in every field.
 - `@hourly`, `@daily`, `@weekly`, `@monthly`, and `@yearly` work in place of
@@ -223,7 +223,7 @@ with. A re-run uses the pipeline's current timeout.
 
 ## Approval
 
-`approval` holds new builds until a project maintainer approves them:
+`approval` holds new builds until an app maintainer approves them:
 
 ```json
 {
@@ -245,9 +245,9 @@ with. A re-run uses the pipeline's current timeout.
   canceled with the reason "approval request expired".
 - A re-run of a held build is held again.
 - A waiting build that is canceled or superseded stops waiting.
-- For a project that builds a repository on the Oore Mac, **Which builds**
+- For an app that builds a repository on the Oore Mac, **Which builds**
   offers only **Manual** and **Schedule**.
-- Only project maintainers, instance admins, and the instance owner can change
+- Only app maintainers, instance admins, and the instance owner can change
   `approval`. Developers see it read-only.
 
 ## Size budget
@@ -308,7 +308,7 @@ The size comparison and the increase limits use the same baseline: the latest
 earlier successful build of the same pipeline on the base branch.
 
 - For a pull request, the base branch is the request's target branch.
-- For a push, it is the project's default branch, so a build on the default
+- For a push, it is the app's default branch, so a build on the default
   branch compares with the one before it.
 - Builds of the same commit are skipped, so a re-run never compares with
   itself.

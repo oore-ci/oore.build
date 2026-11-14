@@ -136,6 +136,7 @@ pub fn export_form_settings(settings: FormSettings<'_>) -> Result<FormExport, St
                 ),
                 service_account: None,
                 draft: Some(upload.draft),
+                preflight: None,
             });
         }
         if *platform == BuildPlatform::Ios
@@ -670,6 +671,7 @@ pub(crate) fn on_of(spec: &TriggerSpec) -> OnSpec {
 mod tests {
     use super::*;
     use crate::pipeline_config::TriggerEvent;
+    use crate::{AppStoreReleaseType, PublishPreflight};
     use crate::{GooglePlayReleaseNotesSource, PipelineEnvVar, ScheduleTrigger};
 
     fn execution(json: serde_json::Value) -> PipelineExecutionConfig {
@@ -697,9 +699,11 @@ mod tests {
             release_notes: GooglePlayReleaseNotesSource::default(),
             release_notes_locale: "en-US".to_string(),
             release_notes_dir: None,
+            listing_dir: None,
             upload_mapping: true,
             in_app_update_priority: None,
             rollout_policy: None,
+            preflight: PublishPreflight::default(),
         }
     }
 
@@ -712,6 +716,13 @@ mod tests {
             uses_non_exempt_encryption: false,
             submit_for_review: false,
             phased_release: false,
+            release_type: AppStoreReleaseType::default(),
+            earliest_release_date: None,
+            release_notes_dir: None,
+            listing_dir: None,
+            listing: Vec::new(),
+            cancel_previous_submission: false,
+            preflight: PublishPreflight::default(),
         }
     }
 

@@ -8,12 +8,16 @@ import {
   requireDemoProjectPermission,
 } from '../authorization'
 import { demoState } from '../state'
+import { demoAppStorePublishEnabled } from './pipelines'
+import { demoPlayPublishEnabled } from './secrets'
 import { parseDemoJsonObject } from '../request'
 import type {
   AddProjectMemberRequest,
+  BuildPlatform,
   CreateProjectRequest,
   UpdateProjectMemberRequest,
 } from '@oore/client/models'
+import type { DemoProject } from '../state'
 
 const projectRoleSchema = z.enum(['maintainer', 'developer', 'viewer'])
 const projectMemberRequestSchema = z.toZod<AddProjectMemberRequest>()(
@@ -36,14 +40,76 @@ const createProjectRequestSchema = z.toZod<CreateProjectRequest>()(
   }),
 )
 
+const signingEnabledSchema = z.object({ enabled: z.boolean() })
+
+/** What the project has set up after its first install. */
+function demoSetupProgress(projectId: string) {
+  const pipelineIds = demoState.pipelines
+    .filter((pipeline) => pipeline.project_id === projectId)
+    .map((pipeline) => pipeline.id)
+  return {
+    release_signing: pipelineIds.some(
+      (id) =>
+        signingEnabledSchema.safeParse(demoState.androidSigning[id]?.release)
+          .data?.enabled === true ||
+        signingEnabledSchema.safeParse(demoState.iosSigning[id]).data
+          ?.enabled === true,
+    ),
+    store_publishing: pipelineIds.some(
+      (id) => demoPlayPublishEnabled(id) || demoAppStorePublishEnabled(id),
+    ),
+    testers: false,
+  }
+}
+
+const LIVE_STATES = new Set(['rolling', 'complete'])
+
+/** Adds the per-person and derived fields the backend computes. */
+function decorateProject<T extends DemoProject>(project: T, userId: string) {
+  const platforms = new Set<BuildPlatform>()
+  for (const pipeline of demoState.pipelines) {
+    if (pipeline.project_id !== project.id) continue
+    for (const platform of pipeline.execution_config.platforms) {
+      platforms.add(platform)
+    }
+  }
+  const lastBuild = demoState.builds
+    .filter((build) => build.project_id === project.id)
+    .reduce<number | undefined>(
+      (latest, build) => Math.max(latest ?? 0, build.created_at),
+      undefined,
+    )
+  const live = demoState.releases
+    .filter(
+      (release) =>
+        release.project_id === project.id &&
+        LIVE_STATES.has(release.state) &&
+        release.version_name,
+    )
+    .sort((left, right) => right.updated_at - left.updated_at)[0]
+  return {
+    ...project,
+    is_favorite: (demoState.favoriteProjects[userId] ?? []).includes(
+      project.id,
+    ),
+    platforms: (['android', 'ios', 'macos'] as const).filter((platform) =>
+      platforms.has(platform),
+    ),
+    last_build_at: lastBuild,
+    live_version: live?.version_name ?? undefined,
+  }
+}
+
 function hasProjectMembership(projectId: string, userId: string): boolean {
   return !!demoState.projectRoles[projectId]?.[userId]
 }
 
-function hasRepository(repositoryId: string): boolean {
-  return Object.values(demoState.repositories).some((repositories) =>
-    repositories?.some((repository) => repository.id === repositoryId),
-  )
+function findRepository(repositoryId: string) {
+  for (const repositories of Object.values(demoState.repositories)) {
+    const repository = repositories?.find(({ id }) => id === repositoryId)
+    if (repository) return repository
+  }
+  return undefined
 }
 
 export const projectHandlers = [
@@ -53,7 +119,14 @@ export const projectHandlers = [
     const persona = getDemoPersonaFromRequest(request)
     let projects = demoState.projects.flatMap((project) => {
       const role = getDemoProjectRole(persona, project.id)
-      return role ? [{ ...project, current_user_role: role }] : []
+      return role
+        ? [
+            {
+              ...decorateProject(project, persona.userId),
+              current_user_role: role,
+            },
+          ]
+        : []
     })
     const integrationId = url.searchParams.get('integration_id')
     if (integrationId) {
@@ -79,6 +152,14 @@ export const projectHandlers = [
     const sort = url.searchParams.get('sort')
     const direction = url.searchParams.get('direction') === 'asc' ? 1 : -1
     projects.sort((left, right) => {
+      if (sort === 'activity') {
+        return (
+          Number(right.is_favorite) - Number(left.is_favorite) ||
+          (right.last_build_at ?? right.created_at) -
+            (left.last_build_at ?? left.created_at) ||
+          left.id.localeCompare(right.id)
+        )
+      }
       const leftValue =
         sort === 'name'
           ? left.name.toLowerCase()
@@ -119,7 +200,10 @@ export const projectHandlers = [
       )
     }
     return HttpResponse.json({
-      project: { ...project, current_user_role: role },
+      project: {
+        ...decorateProject(project, persona.userId),
+        current_user_role: role,
+      },
       pipeline_count: demoState.pipelines.filter(
         (pipeline) => pipeline.project_id === project.id,
       ).length,
@@ -127,7 +211,49 @@ export const projectHandlers = [
         (build) => build.project_id === project.id,
       ).length,
       current_user_role: role,
+      setup: demoSetupProgress(project.id),
     })
+  }),
+
+  demoApi.detectProjectApp(async ({ params }) => {
+    await delay(400)
+    const project = demoState.projects.find((p) => p.id === params.project_id)
+    if (!project) {
+      return HttpResponse.json(
+        { error: 'Project not found', code: 'not_found' },
+        { status: 404 },
+      )
+    }
+    return HttpResponse.json({
+      reference: project.default_branch ?? 'main',
+      flutter: true,
+      app_name: 'coin',
+      platforms: ['android', 'ios'],
+      config_files: [],
+    })
+  }),
+
+  demoApi.createSampleProject(async ({ request }) => {
+    await delay(1200)
+    const forbidden = requireDemoInstancePermission(request, 'projects:write')
+    if (forbidden) return forbidden
+    const persona = getDemoPersonaFromRequest(request)
+    const project = {
+      id: `proj-demo-sample-${crypto.randomUUID().slice(0, 8)}`,
+      name: 'Sample app',
+      description: 'A new Flutter app Oore created to show a first build.',
+      repository_id: 'local:oore-sample',
+      repository_full_name: 'oore_sample_3f9c2a1e',
+      default_branch: 'main',
+      settings: {},
+      auto_add_pipelines: true,
+      created_by: persona.userId,
+      created_at: ago(0),
+      updated_at: ago(0),
+    }
+    demoState.projects.unshift(project)
+    demoState.projectRoles[project.id] = { [persona.userId]: 'maintainer' }
+    return HttpResponse.json({ project }, { status: 201 })
   }),
 
   demoApi.listProjectMembers(async ({ params, request }) => {
@@ -323,7 +449,10 @@ export const projectHandlers = [
     if (forbidden) return forbidden
     const persona = getDemoPersonaFromRequest(request)
     const body = createProjectRequestSchema.parse(await request.json())
-    if (body.repository_id && !hasRepository(body.repository_id)) {
+    const repository = body.repository_id
+      ? findRepository(body.repository_id)
+      : undefined
+    if (body.repository_id && !repository) {
       return HttpResponse.json(
         { error: 'Repository not found', code: 'not_found' },
         { status: 404 },
@@ -334,7 +463,11 @@ export const projectHandlers = [
       name: body.name,
       description: body.description,
       repository_id: body.repository_id,
-      default_branch: body.default_branch ?? 'main',
+      // The daemon joins these from the repository row.
+      repository_full_name: repository?.full_name,
+      repository_avatar_url: repository?.avatar_url,
+      default_branch:
+        body.default_branch ?? repository?.default_branch ?? 'main',
       settings: {},
       auto_add_pipelines: body.auto_add_pipelines ?? true,
       created_by: persona.userId,
@@ -370,13 +503,20 @@ export const projectHandlers = [
       )
     }
     const repositoryId = z.string().safeParse(body.repository_id)
-    if (repositoryId.success && !hasRepository(repositoryId.data)) {
+    const repository = repositoryId.success
+      ? findRepository(repositoryId.data)
+      : undefined
+    if (repositoryId.success && !repository) {
       return HttpResponse.json(
         { error: 'Repository not found', code: 'not_found' },
         { status: 404 },
       )
     }
     Object.assign(project, body, { updated_at: ago(0) })
+    if (repository) {
+      project.repository_full_name = repository.full_name
+      project.repository_avatar_url = repository.avatar_url
+    }
     return HttpResponse.json({ project })
   }),
 

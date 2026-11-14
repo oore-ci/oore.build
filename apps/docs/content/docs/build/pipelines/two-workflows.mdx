@@ -6,18 +6,18 @@ description: 'Build an ad hoc test build and a store release from one .oore.yaml
 
 Keep one `.oore.yaml` with two workflows: `adhoc` builds every pull request
 for testers, and `release` builds `main` and `v*` tags for the stores. Each
-workflow signs with its own identity from the project's signing library, and
+workflow signs with its own identity from the app's signing library, and
 one pipeline runs both.
 
 ## What you need
 
-- A project connected to GitHub or GitLab, with a pipeline that reads
+- An app connected to GitHub or GitLab, with a pipeline that reads
   `.oore.yaml`. See [Move a pipeline into `.oore.yaml`](/build/pipelines/oore-yaml).
-- Project developer, maintainer, instance admin, or instance owner access.
-- The signing identities each workflow needs in the project's signing library,
+- App developer, maintainer, instance admin, or instance owner access.
+- The signing identities each workflow needs in the app's signing library,
   such as an Android upload keystore, an iOS identity with ad hoc profiles and
   one with App Store profiles. See
-  [Move credentials into the project library](/build/sign/project-library).
+  [Move credentials into the app library](/build/sign/project-library).
 - For Google Play, the service account key stored as a secret, such as
   `PLAY_SERVICE_ACCOUNT`. See [Publish to Google Play](/build/distribute/google-play).
 - For App Store Connect, the pipeline's App Store Connect publishing set up.
@@ -75,7 +75,7 @@ Do not add `--export-method` to the iOS build. The export follows the
 identity's profiles, so `coin-adhoc` exports ad hoc IPAs and
 `coin-app-store` App Store IPAs.
 
-## 2. Check the file against the project
+## 2. Check the file against the app
 
 ```bash
 oore pipeline validate .oore.yaml --project "$PROJECT_ID"
@@ -83,9 +83,9 @@ oore pipeline plan .oore.yaml
 ```
 
 `validate --project` checks that `upload-key`, `coin-adhoc` and
-`coin-app-store` exist in the project's library with the right kind, that
+`coin-app-store` exist in the app's library with the right kind, that
 `coin-app-store` is not ad hoc, and that `PLAY_SERVICE_ACCOUNT` is a secret
-the project can see. Fix any `error:` it prints before you commit.
+the app can see. Fix any `error:` it prints before you commit.
 
 `plan` prints, for each workflow, the steps, the identities it signs with,
 where it publishes and which credentials the upload uses.

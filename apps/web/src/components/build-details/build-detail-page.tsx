@@ -30,7 +30,17 @@ import { useRerunAndOpen } from '@/hooks/use-rerun-and-open'
 import { usePageCommands, type PageCommand } from '@/stores/command-store'
 import { buildStepLabel, retryStepLabel } from '@/lib/build-steps'
 import { BuildSummary, buildSourceRef } from './build-summary'
-import { EventTimeline } from './event-timeline'
+import {
+  BUILD_TAB_TITLE_MARK,
+  buildTabState,
+  useBuildTabIcon,
+} from '@/hooks/use-build-tab-state'
+import { BuildOverviewPanel } from './build-overview-panel'
+import { BuildProgressStrip } from './build-progress-strip'
+import { QueuedBuildRunners } from './queued-build-runners'
+import TriggerBuildDrawer from '@/components/trigger-build-drawer'
+import { Stack } from '@/components/layout/stack'
+import { buildProgress, queueLabel } from '@/lib/build-identity'
 import { AnalyzerPanel } from './analyzer-panel'
 import { TestsPanel } from './tests-panel'
 import type {
@@ -71,6 +81,10 @@ import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { StatusBadge } from '@/components/status-badge'
+import {
+  BuildRehearsalCard,
+  RehearsalBadge,
+} from '@/components/build-details/build-rehearsal'
 import PageHeader from '@/components/page-header'
 import { ResumeRunnersButton } from '@/components/settings/direct-runner-policy-panel'
 import PageLayout from '@/components/page-layout'
@@ -105,6 +119,8 @@ import { LIVE_FALLBACK_POLL_MS } from '@/lib/live-events'
 import { useLiveEventsStore } from '@/stores/live-events-store'
 import { Row } from '@/components/layout/row'
 import { SplitRow } from '@/components/layout/split-row'
+import { useBuildFailureHint } from '@/hooks/use-build-trends'
+import { CompareWithLastGood, lastGoodBuild } from './compare-last-good'
 import { Text } from '@/components/layout/text'
 import { splitRowVariants, textVariants } from '@/lib/recipes'
 import { analyzerTabCount } from '@/lib/analyzer-format'
@@ -130,12 +146,14 @@ function missingTabMessage(
         : tab === 'release'
           ? 'This build has not been sent to a store'
           : `This build has no “${tab}” view`
-  return `${reason}, so ${shownTab === 'tests' ? 'Tests' : 'Logs'} is shown instead.`
+  const shown =
+    shownTab === 'tests' ? 'Tests' : shownTab === 'summary' ? 'Summary' : 'Logs'
+  return `${reason}, so ${shown} is shown instead.`
 }
 
 export function BuildDetailPage({
   buildId,
-  initialTab,
+  initialTab: requestedInitialTab,
   selectedReleaseId,
 }: {
   buildId: string
@@ -143,6 +161,9 @@ export function BuildDetailPage({
   selectedReleaseId?: string
 }) {
   const navigate = useNavigate()
+  // The Timeline tab became part of Summary; old links still land there.
+  const initialTab =
+    requestedInitialTab === 'timeline' ? 'summary' : requestedInitialTab
   const [
     canTriggerBuildGlobally,
     canCancelBuildGlobally,
@@ -184,8 +205,11 @@ export function BuildDetailPage({
   const nowSeconds = useTime((now) =>
     isTerminal ? Math.floor(now / 60_000) * 60 : Math.floor(now / 1000),
   )
+  // Live events refresh these on every build change; polling is the fallback.
+  const subPoll = (ms: number) =>
+    isTerminal ? false : liveEvents ? LIVE_FALLBACK_POLL_MS : ms
   const artifactsQuery = useArtifacts(buildId, {
-    refetchInterval: isTerminal ? false : 3000,
+    refetchInterval: subPoll(3000),
   })
   const artifacts = artifactsQuery.data?.artifacts ?? []
   const { refetch: refetchArtifacts } = artifactsQuery
@@ -199,13 +223,13 @@ export function BuildDetailPage({
   const feedbackQuery = useBuildFeedback(buildId)
   const feedback = feedbackQuery.data?.feedback ?? NO_FEEDBACK
   const sizesQuery = useBuildSizeReport(buildId, {
-    refetchInterval: isTerminal ? false : 5000,
+    refetchInterval: subPoll(5000),
   })
   const testsQuery = useBuildTests(buildId, {
-    refetchInterval: isTerminal ? false : 5000,
+    refetchInterval: subPoll(5000),
   })
   const analysisQuery = useBuildAnalysis(buildId, {
-    refetchInterval: isTerminal ? false : 5000,
+    refetchInterval: subPoll(5000),
   })
   const analysisCounts = analysisQuery.data?.analysis?.counts
   const hasAnalyzerTab =
@@ -229,17 +253,19 @@ export function BuildDetailPage({
     releasesQuery.isError ||
     (initialTab === 'release' && releasesQuery.isLoading)
   const availableTabs = new Set<string | number>([
+    'summary',
     'logs',
-    'timeline',
     'artifacts',
   ])
   if (hasTestsTab) availableTabs.add('tests')
   if (hasAnalyzerTab) availableTabs.add('analyzer')
   if (hasReleaseTab) availableTabs.add('release')
   const requestedTab = chosenTab ?? initialTab ?? null
-  // A finished build with failing tests opens on Tests until the user picks a tab.
-  // Decide once the build and its test results have loaded, then keep it, so
-  // the page never jumps from Logs to Tests under the user.
+  // A finished build opens on Summary; a failed one on Tests when tests
+  // failed, otherwise Logs; a running one on Logs. Decide once the build and
+  // its test results have loaded, then keep it, so the page never jumps
+  // under the user.
+  const failedBuild = buildStatus === 'failed' || buildStatus === 'timed_out'
   const settledDefaultTab = !buildStatus
     ? null
     : !isTerminal
@@ -248,7 +274,9 @@ export function BuildDetailPage({
         ? null
         : testSummary?.failed
           ? 'tests'
-          : 'logs'
+          : failedBuild
+            ? 'logs'
+            : 'summary'
   const [defaultTab, setDefaultTab] = useState<string | null>(null)
   if (defaultTab === null && settledDefaultTab !== null) {
     setDefaultTab(settledDefaultTab)
@@ -262,9 +290,11 @@ export function BuildDetailPage({
       ? initialTab
       : null
 
+  const tabState = buildTabState(data?.build.status)
   const label = data?.build.build_number
-    ? `Build #${data.build.build_number}`
+    ? `${tabState ? BUILD_TAB_TITLE_MARK[tabState] : ''}Build #${data.build.build_number}`
     : 'Build Details'
+  useBuildTabIcon(data?.build.status)
 
   useBuildNotification(data?.build, isTerminal)
   const notifications = useNotificationPermission()
@@ -297,7 +327,12 @@ export function BuildDetailPage({
       direction: 'desc',
       limit: 20,
     },
-    { enabled: !!data?.build.step_results?.length },
+    {
+      enabled:
+        !!data?.build.step_results?.length ||
+        data?.build.status === 'running' ||
+        data?.build.status === 'failed',
+    },
   )
   const medians = useMemo(
     () => stepMedians(pipelineHistoryQuery.data?.builds ?? [], buildId),
@@ -311,15 +346,52 @@ export function BuildDetailPage({
     )
     return findFailureLine(stepGroups, allVisibleLogs)
   }, [buildStatus, mergedLogs, stepResults])
-  const runningStep = useMemo(() => {
-    const name = buildStatus === 'running' ? currentStepName(mergedLogs) : null
-    return name
-      ? buildStepLabel(
-          name,
-          (stepResults ?? []).map((step) => step.name),
-        )
+  const failureHintQuery = useBuildFailureHint(
+    buildId,
+    buildStatus === 'failed' || buildStatus === 'timed_out',
+  )
+  const failureHint = failureHintQuery.data?.hint ?? null
+  // The rehearsal card already lists what to fix.
+  const failedAtRehearsal = (stepResults ?? []).some(
+    (step) => step.status === 'failed' && step.name.startsWith('rehearse-'),
+  )
+  const runningStepName = useMemo(
+    () => (buildStatus === 'running' ? currentStepName(mergedLogs) : null),
+    [buildStatus, mergedLogs],
+  )
+  const runningStep = runningStepName
+    ? buildStepLabel(
+        runningStepName,
+        (stepResults ?? []).map((step) => step.name),
+      )
+    : null
+  const startedAt = data?.build.started_at
+  const progress =
+    buildStatus === 'running' && startedAt
+      ? buildProgress({
+          history: pipelineHistoryQuery.data?.builds ?? [],
+          buildId,
+          currentStep: runningStepName,
+          elapsedSeconds: nowSeconds - startedAt,
+        })
       : null
-  }, [buildStatus, mergedLogs, stepResults])
+  const queueText = queueLabel(data?.queue)
+  const [rerunDrawerOpen, setRerunDrawerOpen] = useState(false)
+  const buildToRerun = data?.build
+  const rerunPrefill = useMemo(
+    () =>
+      buildToRerun
+        ? {
+            project_id: buildToRerun.project_id,
+            pipeline_id: buildToRerun.pipeline_id,
+            branch: buildToRerun.branch ?? '',
+            workflow: buildToRerun.workflow ?? '',
+            changelog: buildToRerun.changelog ?? undefined,
+            store_notes: buildToRerun.store_notes ?? '',
+          }
+        : undefined,
+    [buildToRerun],
+  )
 
   function handleApprove() {
     approveMutation.mutate(
@@ -561,6 +633,10 @@ export function BuildDetailPage({
       ? artifacts.filter((artifact) => artifactInstallReadiness(artifact).ready)
       : []
   const showTests = () => setActiveTab('tests')
+  const lastGood =
+    build.status === 'failed' || build.status === 'timed_out'
+      ? lastGoodBuild(build, pipelineHistoryQuery.data?.builds ?? [])
+      : null
   const nextStep =
     build.status === 'failed' || build.status === 'timed_out' ? (
       firstRetryLabel ? (
@@ -586,6 +662,7 @@ export function BuildDetailPage({
         'Fix the cause, then re-run the build.'
       )
     ) : (build.status === 'canceled' || build.status === 'expired') &&
+      !build.superseded_by &&
       canTriggerBuild ? (
       'Re-run it to start a new build.'
     ) : null
@@ -619,21 +696,22 @@ export function BuildDetailPage({
                 <StatusBadge kind="approval" value={build.approval.state} />
               ) : null}
               <WorkflowBadge workflow={build.workflow} className="h-6 px-2.5" />
+              {build.rehearsal ? (
+                <RehearsalBadge className="h-6 px-2.5" />
+              ) : null}
               <StoreWaitBadges
                 releases={releases}
                 onOpenRelease={() => setActiveTab('release')}
               />
-              {runningStep ? (
-                <span className="min-w-0 truncate text-sm text-foreground">
-                  {runningStep}
-                </span>
+              {build.superseded_by ? (
+                <Link
+                  to="/builds/$buildId"
+                  params={{ buildId: build.superseded_by.id }}
+                  className="text-foreground underline underline-offset-4"
+                >
+                  Replaced by #{build.superseded_by.build_number}
+                </Link>
               ) : null}
-              <span>
-                {TRIGGER_TYPE_LABELS[build.trigger_type]}
-                {build.trigger_event
-                  ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}`
-                  : ''}
-              </span>
             </div>
             <BuildSummary build={build} duration={duration} />
           </>
@@ -730,15 +808,35 @@ export function BuildDetailPage({
               </Button>
             ))}
             {canRerun ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={rerun}
-                disabled={rerunAndOpen.isPending}
-              >
-                <HugeiconsIcon icon={Refresh01Icon} size={14} />
-                {rerunAndOpen.isPending ? 'Re-running...' : 'Re-run'}
-              </Button>
+              <Row gap={1}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={rerun}
+                  disabled={rerunAndOpen.isPending}
+                >
+                  <HugeiconsIcon icon={Refresh01Icon} size={14} />
+                  {rerunAndOpen.isPending ? 'Re-running...' : 'Re-run'}
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        aria-label="More ways to re-run"
+                      />
+                    }
+                  >
+                    <HugeiconsIcon icon={ArrowDown01Icon} size={14} />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-auto">
+                    <DropdownMenuItem onClick={() => setRerunDrawerOpen(true)}>
+                      Re-run with changes…
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </Row>
             ) : null}
             {canDecideApproval ? (
               <>
@@ -777,6 +875,15 @@ export function BuildDetailPage({
         }
       />
 
+      {build.status === 'running' ? (
+        <BuildProgressStrip progress={progress} stepLabel={runningStep} />
+      ) : null}
+      {build.status === 'queued' && queueText ? (
+        <Text variant="muted" role="status">
+          {queueText}
+        </Text>
+      ) : null}
+
       {build.runner_policy_block_reason ? (
         <Alert>
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
@@ -812,7 +919,7 @@ export function BuildDetailPage({
                   search={{ tab: 'settings' }}
                   className="font-medium underline underline-offset-4"
                 >
-                  Project Settings
+                  App settings
                 </Link>
                 .
               </>
@@ -821,11 +928,34 @@ export function BuildDetailPage({
         </Alert>
       ) : null}
 
-      {stateSummary ? (
+      {build.rehearsal ? (
+        <BuildRehearsalCard build={build} canRelease={canTriggerBuild} />
+      ) : null}
+
+      {stateSummary && !failedAtRehearsal ? (
         <BuildStateAlert
           summary={stateSummary}
           failureLine={failureLine}
-          nextStep={nextStep}
+          hint={failureHint}
+          nextStep={
+            lastGood && nextStep ? (
+              <>
+                {nextStep} <CompareWithLastGood build={build} good={lastGood} />
+              </>
+            ) : (
+              nextStep
+            )
+          }
+          onShowHintLine={(hint) => {
+            setActiveTab('logs')
+            if (hint.step) {
+              setLogFocus({
+                step: hint.step,
+                sequence: hint.sequence,
+                key: Date.now(),
+              })
+            }
+          }}
           details={approvalDetails}
           onShowFailureLine={() => {
             if (!failureLine) return
@@ -854,6 +984,7 @@ export function BuildDetailPage({
         className="min-h-0 flex-1 gap-3"
       >
         <TabsList variant="line" aria-label="Build details">
+          <TabsTrigger value="summary">Summary</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           {hasTestsTab ? (
             <TabsTrigger value="tests">
@@ -881,12 +1012,6 @@ export function BuildDetailPage({
               Release{releases.length ? ` (${releases.length})` : ''}
             </TabsTrigger>
           ) : null}
-          <TabsTrigger value="timeline">
-            Timeline
-            {events.length + feedback.length > 0
-              ? ` (${events.length + feedback.length})`
-              : ''}
-          </TabsTrigger>
         </TabsList>
         {missingTab ? (
           <Text variant="muted" role="status">
@@ -912,20 +1037,25 @@ export function BuildDetailPage({
               focusRequest={logFocus}
             />
           ) : (
-            <Empty className="flex-none border">
-              <EmptyHeader>
-                <EmptyTitle>No logs yet</EmptyTitle>
-                <EmptyDescription>
-                  {build.status === 'expired'
-                    ? 'This build expired before a runner started it, so it has no logs.'
-                    : build.status === 'canceled'
-                      ? 'This build was canceled before a runner started it, so it has no logs.'
-                      : awaitingApproval
-                        ? 'Logs appear here once the build is approved and a runner starts it.'
-                        : 'Logs appear here once a runner starts the build.'}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            <Stack gap={4}>
+              <Empty className="flex-none border">
+                <EmptyHeader>
+                  <EmptyTitle>No logs yet</EmptyTitle>
+                  <EmptyDescription>
+                    {build.status === 'expired'
+                      ? 'This build expired before a runner started it, so it has no logs.'
+                      : build.status === 'canceled'
+                        ? 'This build was canceled before a runner started it, so it has no logs.'
+                        : awaitingApproval
+                          ? 'Logs appear here once the build is approved and a runner starts it.'
+                          : 'Logs appear here once a runner starts the build.'}
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+              {!isTerminal && !awaitingApproval ? (
+                <QueuedBuildRunners build={build} />
+              ) : null}
+            </Stack>
           )}
         </TabsContent>
         {hasTestsTab ? (
@@ -971,8 +1101,20 @@ export function BuildDetailPage({
             />
           </TabsContent>
         ) : null}
-        <TabsContent value="timeline">
-          <EventTimeline events={events} feedback={feedback} />
+        <TabsContent value="summary">
+          <BuildOverviewPanel
+            build={build}
+            events={events}
+            feedback={feedback}
+            artifacts={artifacts}
+            releases={releases}
+            sizes={sizesQuery.data}
+            tests={testSummary ?? undefined}
+            analysis={analysisCounts ?? undefined}
+            retention={data?.retention}
+            canShare={canManageShareLinks}
+            onOpenTab={setActiveTab}
+          />
         </TabsContent>
       </Tabs>
 
@@ -992,6 +1134,22 @@ export function BuildDetailPage({
             open
           />
         </Suspense>
+      ) : null}
+      {canRerun ? (
+        <TriggerBuildDrawer
+          open={rerunDrawerOpen}
+          onOpenChange={setRerunDrawerOpen}
+          fixedProjectId={build.project_id}
+          prefill={rerunPrefill}
+          title={`Re-run build #${build.build_number} with changes`}
+          description="Change the branch, workflow or notes, then run it."
+          onBuildCreated={(createdId) =>
+            void navigate({
+              to: '/builds/$buildId',
+              params: { buildId: createdId },
+            })
+          }
+        />
       ) : null}
       {cancelOpen ? (
         <Suspense

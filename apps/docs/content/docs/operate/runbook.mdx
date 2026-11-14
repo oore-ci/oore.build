@@ -1,0 +1,169 @@
+---
+title: 'Runbook for the team'
+status: implemented
+description: 'Release an app, read every warning, deal with a failed build, keep the server healthy and rotate credentials, without the person who set Oore up.'
+---
+
+This page is for someone who has not run Oore before and has to keep releases
+going. Each section says what to do, then links to the full page.
+
+## What you need
+
+- An Oore account with the **Owner** or **Admin** instance role for server and
+  credential work, or **Maintainer** on the app for releases. See
+  [Roles](/team/roles).
+- Terminal access to the Mac that runs Oore, for the server tasks only.
+- Access to Play Console and App Store Connect for the apps, to fix what the
+  stores refuse.
+
+## Release an app
+
+1. **Rehearse first.** On the app's **Releases** tab, choose **Rehearse a
+   release**, pick the pipeline and branch, and choose **Rehearse**. Oore builds
+   and signs, then asks Google Play and App Store Connect whether they would
+   take it. Nothing is submitted. See
+   [Rehearse a release](/build/distribute/rehearse).
+2. **Fix what the rehearsal lists.** Each item has a button to the store page
+   that fixes it. Choose **Re-run** on the build to rehearse again.
+3. **Release.** When the rehearsal says **Ready to release**, choose **Release
+   this commit**. It runs the same pipeline, workflow and commit.
+4. **Watch the release.** The build page and the app's **Releases** tab show
+   each store's state. The table below says what each state means.
+5. **Roll out.** A Play release with a schedule raises its share on its own.
+   **Update rollout** sets an exact share, **Pause** and **Halt** stop it, and
+   **Complete** sends it to everyone. See
+   [Environments and rollouts](/build/distribute/environments).
+6. **If something is wrong**, choose **Halt**, then **Ship a hotfix** on the
+   release. See [Freeze, fix and record releases](/build/distribute/release-safety).
+
+Hold all releases with **Freeze releases** on the Releases tab, for example
+during a sale or while nobody is around to watch a rollout. **Halt** and
+**Pause** still work during a freeze.
+
+### Release states
+
+| State       | What it means                                                             | What to do                                                                           |
+| ----------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| Uploading   | The runner is sending the build to the store                              | Wait                                                                                 |
+| Processing  | The store is processing the build                                         | Wait. Apple can take up to an hour                                                   |
+| In review   | Apple or Google is reviewing it                                           | Wait. The release page shows how long reviews usually take for the app               |
+| Blocked     | The store refused a request, or has failed for over an hour               | Read the reason on the release, fix it with the store link, then **Check again now** |
+| Approved    | Review passed and the release waits for someone to release it             | **Release now**                                                                      |
+| Rejected    | Review rejected it                                                        | Read Apple's reasons, fix, then **Resubmit with a new build**                        |
+| Rolling out | Out to a share of users                                                   | Watch crash rates, then raise or **Complete**                                        |
+| Paused      | The rollout waits at its current share                                    | **Resume**, or **Halt**                                                              |
+| Halted      | No new users get this version. People who have it keep it                 | **Resume**, **Ship a hotfix**, or **Build the previous version again**               |
+| Complete    | Out to everyone on the track                                              | Nothing                                                                              |
+| Failed      | Oore stopped trying. The reason is on the release and in the notification | Fix the reason, then build and release again                                         |
+
+### What the stores refuse most
+
+| Message on the release                                                 | Fix                                                                        |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Google Play is holding the changes until someone sends them for review | Send the changes for review in Play Console, then **Mark sent for review** |
+| Oore's service account is not allowed to release this app              | Give it release access in Play Console under Users and permissions         |
+| No "What's New" text or release notes                                  | Write notes when you start the build, or add them in the store             |
+| Age rating or content rating questions are unanswered                  | Answer them in App Store Connect or Play Console                           |
+| App Review needs contact details or a demo account                     | Add them to the version in App Store Connect                               |
+| Apple needs to know whether the build uses encryption                  | Answer export compliance in TestFlight                                     |
+| App Privacy or Data safety answers are incomplete                      | Finish them in the store                                                   |
+| An agreement, tax or banking form is waiting                           | The account holder signs it in App Store Connect or Play Console           |
+| Screenshots are missing for a device size                              | Add them in the store listing                                              |
+| That version or build number was uploaded before                       | Raise the build number in `pubspec.yaml` and build again                   |
+
+## Warnings on Home
+
+| Warning                               | What to do                                                                                                                  |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| A runner is offline                   | Check the Mac is on and awake, then restart the runner (see [the server](#the-server))                                      |
+| A runner is low on disk space         | **Purge cache** on the runner in **Settings > Runners**, or lower how long build files are kept in **Settings > Retention** |
+| A certificate or profile expires soon | Replace it in the pipeline's iOS signing or the app's **Signing** library before release builds fail                        |
+| A TestFlight build expires soon       | Release a newer build to testers                                                                                            |
+| A build waits with **No runner**      | No online runner has the labels the pipeline asks for. Start that runner, or change the pipeline's labels                   |
+| Needs attention: tester feedback      | Read it on the build's **Summary** tab                                                                                      |
+
+To get these in Slack or email as well, add a channel in **Settings >
+Notifications** with at least **Build failed**, **Release failed**, **Blocked**,
+**Rejected in review**, **Runner offline** and **Certificate or profile
+expiring**. See [Notifications](/team/notifications).
+
+## A build failed
+
+1. Open the build. When Oore recognises the error, the top of the page names
+   the likely cause, the log line and a fix.
+2. Otherwise open **Logs**. The failed step is marked; read its last lines.
+3. Decide:
+   - **Re-run** for a network error, a timeout or a download that failed.
+     These pass on a second try.
+   - Fix first for signing, versions, code or dependency errors. A re-run
+     fails the same way.
+   - **Retry Google Play upload** or **Retry App Store upload** when only the store upload failed, so nothing is built again.
+     See [Retry a store upload](/build/run/retry-step).
+
+| Cause in the log                    | Fix                                                                                |
+| ----------------------------------- | ---------------------------------------------------------------------------------- |
+| No space left on device             | Free space on the runner, or purge its caches                                      |
+| Keychain locked, or no certificate  | Check the pipeline's iOS signing has a valid certificate and password              |
+| Provisioning profile does not fit   | Upload a profile for this bundle ID and certificate                                |
+| Keystore was tampered with          | Re-enter the keystore and key passwords in the pipeline's Android signing          |
+| Version solving failed, pod install | Run `flutter pub get` or `pod install --repo-update` locally to see the full error |
+| A package needs a newer Dart SDK    | Pin a newer Flutter for the pipeline                                               |
+| Could not resolve host, timed out   | Re-run; check the runner's network if it keeps happening                           |
+
+See [Troubleshoot Oore](/operate/troubleshoot) for more.
+
+## The server
+
+Run these on the Mac that runs Oore. They need an administrator account for
+`sudo`.
+
+| Task                    | Command                                                                |
+| ----------------------- | ---------------------------------------------------------------------- |
+| Is everything up?       | `oore status`                                                          |
+| Check the build tools   | `oore doctor`                                                          |
+| Back up                 | `oore backup create --output /Volumes/<backup disk>/oore-state.tar.gz` |
+| Check a backup          | `oore backup verify --input /Volumes/<backup disk>/oore-state.tar.gz`  |
+| Is there an update?     | `oore update --check`                                                  |
+| Update                  | `oore update`                                                          |
+| Restart the backend     | `sudo launchctl kickstart -k system/build.oore.oored`                  |
+| Restart the runner      | `sudo launchctl kickstart -k system/build.oore.oore-runner`            |
+| Change a runner setting | `oore runner config set <KEY> <VALUE>`, then restart the runner        |
+
+**Before an update**, back up and check the backup. `oore update` then drains
+running builds, backs up again, restarts the services and checks the new
+release. If the check fails, it puts the previous release back on its own.
+
+**To go back to an older release** after an update that worked but behaves
+badly, follow [Move to an older release](/operate/maintain/upgrade#preserve-data).
+It keeps the database. Restore a backup only if data was damaged: see
+[Restore a backup](/operate/maintain/backups/restore).
+
+**If the web UI is down after an update**, run `oore doctor --update` on the
+Mac. See [When an in-place update fails](/operate/maintain/upgrade#when-an-in-place-update-fails).
+
+Stay on the `stable` channel. Alpha and beta builds are for testing new
+features. See [Choose a release channel](/operate/releases).
+
+## Credentials
+
+| Credential                                | Where it lives in Oore                                           | How to replace it                                                                                           |
+| ----------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| App Store Connect API key                 | **Settings > Store credentials**                                 | Create a key in App Store Connect under Users and Access > Integrations, upload it, then remove the old one |
+| Google Play service account               | **Settings > Store credentials**                                 | Create a JSON key in Google Cloud, upload it, then delete the old key in Google Cloud                       |
+| iOS distribution certificate and profiles | The pipeline's iOS signing, or the app's **Signing** library     | Upload the new `.p12` and profiles before the old ones expire. Oore reminds 30 and 7 days ahead             |
+| Android keystore                          | The pipeline's Android signing, or the app's **Signing** library | Never replace an upload key you released with, unless Play Console has reset it                             |
+| Git access (GitHub app, GitLab token)     | **Settings > Sources**                                           | Reconnect, or paste a new token. GitLab warns before a token expires                                        |
+| Build secrets                             | **Settings > Secrets**, or the pipeline's secrets                | Edit the value. The next build uses it                                                                      |
+
+Oore never shows a stored key again. Keep the originals in the team's
+password manager.
+
+## Before the setup person leaves
+
+- At least two people hold the **Owner** or **Admin** instance role, so no one
+  needs the setup person's account. See [Roles](/team/roles).
+- A notification channel sends the events listed under
+  [Warnings on Home](#warnings-on-home).
+- The team agrees when to freeze releases, and who lifts the freeze.
+- A recent backup has passed `oore backup verify`.
+- Someone has run one rehearsal of each app on the current release.

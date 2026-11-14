@@ -35,6 +35,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { SampleAppButton } from '@/components/sample-app-button'
 import RepositoryAvatar from '@/components/repository-avatar'
 import type { ScmProvider } from '@oore/client/models'
 import { useCreateProject } from '@/hooks/use-projects'
@@ -47,10 +48,11 @@ import { useActiveInstance } from '@/stores/instance-store'
 import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
+import { Text } from '@/components/layout/text'
 import { textVariants } from '@/lib/recipes'
 
 const createProjectSchema = z.object({
-  name: z.string().trim().min(1, 'Enter a project name.'),
+  name: z.string().trim().min(1, 'Enter an app name.'),
   description: z.string().optional(),
   default_branch: z.string().optional(),
   local_repository_path: z.string().optional(),
@@ -65,7 +67,7 @@ function createProjectSchemaFor(isRemoteMode: boolean) {
     if (isRemoteMode && !data.repository_id?.trim()) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Choose the repository this project builds from.',
+        message: 'Choose the repository this app builds from.',
         path: ['repository_id'],
       })
     }
@@ -88,11 +90,14 @@ function sourceProviderLabel(provider: ScmProvider): string {
 interface CreateProjectDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** A repository path on this Mac to start from, as `oore setup` passes. */
+  initialPath?: string
 }
 
 export default function CreateProjectDialog({
   open,
   onOpenChange,
+  initialPath,
 }: CreateProjectDialogProps) {
   const titleRef = useRef<HTMLHeadingElement>(null)
   const scope = useFirstAppScope()
@@ -137,10 +142,14 @@ export default function CreateProjectDialog({
   const form = useForm<CreateProjectForm>({
     resolver: zodResolver(schema),
     defaultValues: {
-      name: draft?.name ?? '',
+      name:
+        draft?.name ??
+        (initialPath
+          ? (initialPath.split('/').filter(Boolean).at(-1) ?? '')
+          : ''),
       description: draft?.description ?? '',
       default_branch: draft?.default_branch ?? '',
-      local_repository_path: draft?.local_repository_path ?? '',
+      local_repository_path: draft?.local_repository_path ?? initialPath ?? '',
       repository_id: draft?.repository_id ?? '',
     },
     mode: 'onBlur',
@@ -177,7 +186,7 @@ export default function CreateProjectDialog({
             projectId: response.project.id,
             projectDraft: undefined,
           })
-          toast.success('Project created')
+          toast.success('App created')
           form.reset()
           onOpenChange(false)
           void navigate({
@@ -186,7 +195,7 @@ export default function CreateProjectDialog({
           })
         },
         onError: (error) => {
-          toast.error(`Failed to create project: ${error.message}`)
+          toast.error(`Failed to create app: ${error.message}`)
         },
       },
     )
@@ -214,12 +223,12 @@ export default function CreateProjectDialog({
         >
           <DrawerHeader>
             <DrawerTitle ref={titleRef} tabIndex={-1} className="outline-none">
-              Create project
+              Add your app
             </DrawerTitle>
             <DrawerDescription>
               {isRemoteMode
-                ? "Choose a repository from a connected source. Creating the project trusts its build commands to run with the runner account's macOS permissions."
-                : "Choose a repository on this Mac. Creating the project trusts its build commands to run with the runner account's macOS permissions."}
+                ? 'Pick the repository. Oore reads it next and proposes what to build.'
+                : 'Pick the repository on this Mac. Oore reads it next and proposes what to build.'}
             </DrawerDescription>
           </DrawerHeader>
 
@@ -334,7 +343,7 @@ export default function CreateProjectDialog({
                             <Button
                               type="button"
                               variant="outline"
-                              render={<Link to="/settings/integrations" />}
+                              render={<Link to="/settings/sources" />}
                               nativeButton={false}
                               onClick={() =>
                                 updateProgress(scope, {
@@ -351,7 +360,7 @@ export default function CreateProjectDialog({
                           <FormDescription>
                             Not listed?{' '}
                             <Link
-                              to="/settings/integrations"
+                              to="/settings/sources"
                               className="font-medium text-foreground underline underline-offset-4"
                               onClick={() =>
                                 updateProgress(scope, {
@@ -396,7 +405,7 @@ export default function CreateProjectDialog({
                       </FormLabel>
                       <FormControl>
                         <Input
-                          placeholder="A brief description of this project"
+                          placeholder="A brief description of this app"
                           {...field}
                         />
                       </FormControl>
@@ -451,6 +460,16 @@ export default function CreateProjectDialog({
                   />
                 ) : null}
 
+                {!isRemoteMode ? (
+                  <Row gap={1} className="flex-wrap">
+                    <Text variant="muted">No Flutter app on this Mac yet?</Text>
+                    <SampleAppButton
+                      variant="link"
+                      onCreated={() => handleOpenChange(false)}
+                    />
+                  </Row>
+                ) : null}
+
                 <FormField
                   control={form.control}
                   name="default_branch"
@@ -470,6 +489,18 @@ export default function CreateProjectDialog({
                   )}
                 />
               </div>
+              <Text variant="caption" className="px-4">
+                Builds run the repository&apos;s commands as the runner&apos;s
+                Mac account.{' '}
+                <a
+                  href="https://docs.oore.build/concepts/runner-trust"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline underline-offset-4"
+                >
+                  Learn more
+                </a>
+              </Text>
               <DrawerFooter>
                 <Button
                   type="button"
@@ -491,10 +522,10 @@ export default function CreateProjectDialog({
                   {createMutation.isPending ? (
                     <>
                       <Spinner className="size-4" />
-                      Creating...
+                      Adding...
                     </>
                   ) : (
-                    'Create project'
+                    'Add app'
                   )}
                 </Button>
               </DrawerFooter>
@@ -509,7 +540,7 @@ export default function CreateProjectDialog({
         enabled={open && !isRemoteMode && canBrowseLocalFs}
         initialPath={form.getValues('local_repository_path')}
         title="Browse Local Folders"
-        description="Select a Git repository folder and use it for this project."
+        description="Select a Git repository folder and use it for this app."
         requireGitRepository
         selectCurrentLabel="Use Current Folder"
         selectDirectoryLabel="Use Repo"

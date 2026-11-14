@@ -235,7 +235,7 @@ export function AddProjectMembersDialog({ projectId }: { projectId: string }) {
     setSubmitting(false)
 
     if (nextFailures.length === 0) {
-      toast.success(`${people(added)} added to this project`)
+      toast.success(`${people(added)} added to this app`)
       setOpen(false)
       reset()
       return
@@ -260,10 +260,10 @@ export function AddProjectMembersDialog({ projectId }: { projectId: string }) {
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>Add project members</DialogTitle>
+          <DialogTitle>Add app members</DialogTitle>
           <DialogDescription>
-            Pick people or paste a list of emails. Everyone gets the same
-            project role.
+            Pick people or paste a list of emails. Everyone gets the same app
+            role.
           </DialogDescription>
         </DialogHeader>
 
@@ -408,7 +408,7 @@ export function AddProjectMembersDialog({ projectId }: { projectId: string }) {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="project-members-role">Project role</Label>
+            <Label htmlFor="project-members-role">App role</Label>
             <Select
               value={role}
               onValueChange={(value) => {

@@ -4,7 +4,6 @@ import * as z from 'zod'
 import type {
   ProjectRole,
   ReleaseAction,
-  ReleaseActionRequest,
   ReleaseState,
 } from '@oore/client/models'
 import { ago } from '../seed'
@@ -13,13 +12,13 @@ import { demoStoreVitals } from '../data/store-vitals'
 import type { DemoPersona } from '../personas'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { demoState } from '../state'
+import { demoActiveFreeze, demoFrozenResponse } from './release-freezes'
 
-const releaseActionRequestSchema = z.toZod<ReleaseActionRequest>()(
-  z.object({
-    reason: z.string().nullish(),
-    fraction: z.number().nullish(),
-  }),
-)
+// The demo reads only the reason and fraction; a policy passes through.
+const releaseActionBodySchema = z.looseObject({
+  reason: z.string().nullish(),
+  fraction: z.number().nullish(),
+})
 
 // Mirrors the daemon: developers can stop a rollout, maintainers drive it.
 const ROLE_ACTIONS = {
@@ -30,24 +29,47 @@ const ROLE_ACTIONS = {
     'resume',
     'halt',
     'complete',
+    'retry',
+    'release_now',
+    'resubmit',
+    'pull_from_review',
+    'mark_sent_for_review',
+    'mark_rejected',
+    'attach_schedule',
+    'detach_schedule',
   ]),
-  developer: new Set<ReleaseAction>(['pause', 'halt']),
+  developer: new Set<ReleaseAction>(['pause', 'halt', 'retry']),
   viewer: new Set<ReleaseAction>(),
 } satisfies Record<ProjectRole, ReadonlySet<ReleaseAction>>
 
 function stateActions(release: DemoRelease): Array<ReleaseAction> {
   if (release.awaiting_approval) return ['approve']
+  const appStore = release.store === 'app_store'
   switch (release.state) {
     case 'rolling':
-      return ['raise', 'pause', 'halt', 'complete']
+      if (appStore) return ['pause', 'complete']
+      return [
+        'raise',
+        'pause',
+        'halt',
+        'complete',
+        release.auto_rollout ? 'detach_schedule' : 'attach_schedule',
+      ]
     case 'paused':
-      return ['resume', 'halt', 'complete']
+      return appStore ? ['resume', 'complete'] : ['resume', 'halt', 'complete']
     case 'halted':
       return ['resume']
+    case 'blocked':
+      return appStore ? ['retry'] : ['mark_sent_for_review', 'mark_rejected']
+    case 'in_review':
+      return appStore ? ['retry', 'pull_from_review'] : []
+    case 'approved':
+      return ['release_now', 'retry', 'pull_from_review']
+    case 'rejected':
+      return ['resubmit']
     case 'uploading':
     case 'processing':
-    case 'in_review':
-      return ['halt']
+      return appStore ? ['retry'] : []
     case 'complete':
     case 'failed':
       return []
@@ -108,6 +130,22 @@ function applyAction(
       return { state: 'halted', fraction: release.rollout_fraction }
     case 'complete':
       return { state: 'complete', fraction: 1 }
+    case 'retry':
+    case 'attach_schedule':
+    case 'detach_schedule':
+      return { state: release.state, fraction: release.rollout_fraction }
+    case 'release_now':
+      return { state: 'complete', fraction: 1 }
+    case 'resubmit':
+      return { state: 'in_review', fraction: 0 }
+    case 'pull_from_review':
+      return { state: 'blocked', fraction: 0 }
+    case 'mark_sent_for_review':
+      return release.rollout_fraction >= 1
+        ? { state: 'complete', fraction: 1 }
+        : { state: 'rolling', fraction: release.rollout_fraction }
+    case 'mark_rejected':
+      return { state: 'rejected', fraction: release.rollout_fraction }
   }
 }
 
@@ -132,7 +170,23 @@ function releaseActionHandler(action: ReleaseAction) {
         { error: `Cannot ${action} this release`, code: 'forbidden' },
         { status: 403 },
       )
-    const body = releaseActionRequestSchema.parse(await request.json())
+    const freeze = demoActiveFreeze(release.project_id)
+    if (
+      freeze &&
+      [
+        'raise',
+        'resume',
+        'complete',
+        'approve',
+        'release_now',
+        'resubmit',
+      ].includes(action)
+    ) {
+      return demoFrozenResponse(freeze)
+    }
+    const body = releaseActionBodySchema.parse(
+      await request.json().catch(() => ({})),
+    )
     const next = applyAction(release, action, body.fraction)
     const history = demoState.releaseHistory[release.id] ?? []
     history.unshift({
@@ -152,10 +206,22 @@ function releaseActionHandler(action: ReleaseAction) {
       release.approved_at = ago(0)
       release.approved_by_email = persona.email
     }
+    if (action === 'attach_schedule') release.auto_rollout = true
+    if (action === 'detach_schedule') release.auto_rollout = false
     release.state = next.state
     release.rollout_fraction = next.fraction
+    release.store_status =
+      action === 'resubmit'
+        ? 'WAITING_FOR_REVIEW'
+        : action === 'pull_from_review'
+          ? 'DEVELOPER_REJECTED'
+          : release.store_status
+    if (next.state !== 'blocked' && next.state !== 'rejected')
+      release.state_reason = null
     release.next_fraction =
-      next.state === 'rolling' ? nextFraction(release) : null
+      next.state === 'rolling' && release.auto_rollout
+        ? nextFraction(release)
+        : null
     release.next_step_at =
       release.next_fraction == null
         ? null
@@ -202,6 +268,8 @@ export const releaseHandlers = [
     if (projectId) releases = releases.filter((r) => r.project_id === projectId)
     const buildId = url.searchParams.get('build_id')
     if (buildId) releases = releases.filter((r) => r.build_id === buildId)
+    const origin = url.searchParams.get('origin')
+    if (origin) releases = releases.filter((r) => r.origin === origin)
     const states = url.searchParams.get('state')?.split(',').filter(Boolean)
     if (states?.length) {
       releases = releases.filter((release) => states.includes(release.state))
@@ -244,16 +312,21 @@ export const releaseHandlers = [
       )
       .flatMap((release) => {
         const context = withReleaseContext(release, persona)
-        return (demoState.releaseHistory[release.id] ?? []).map((entry) => ({
-          ...entry,
-          release_id: release.id,
-          project_id: release.project_id,
-          project_name: context.project_name,
-          build_id: release.build_id,
-          store: release.store,
-          track: release.track,
-          version_name: release.version_name,
-        }))
+        return (
+          (demoState.releaseHistory[release.id] ?? [])
+            // Finding a release outside Oore is not a change to it.
+            .filter((entry) => release.origin !== 'adopted' || entry.from_state)
+            .map((entry) => ({
+              ...entry,
+              release_id: release.id,
+              project_id: release.project_id,
+              project_name: context.project_name,
+              build_id: release.build_id,
+              store: release.store,
+              track: release.track,
+              version_name: release.version_name,
+            }))
+        )
       })
       .sort((left, right) => right.at - left.at)
       .slice(0, limit)
@@ -266,4 +339,18 @@ export const releaseHandlers = [
   demoApi.resumeRelease(releaseActionHandler('resume')),
   demoApi.haltRelease(releaseActionHandler('halt')),
   demoApi.completeRelease(releaseActionHandler('complete')),
+  demoApi.retryRelease(releaseActionHandler('retry')),
+  demoApi.releaseNowRelease(releaseActionHandler('release_now')),
+  demoApi.resubmitRelease(releaseActionHandler('resubmit')),
+  demoApi.pullFromReviewRelease(releaseActionHandler('pull_from_review')),
+  demoApi.markSentForReviewRelease(
+    releaseActionHandler('mark_sent_for_review'),
+  ),
+  demoApi.markRejectedRelease(releaseActionHandler('mark_rejected')),
+  demoApi.attachScheduleRelease(releaseActionHandler('attach_schedule')),
+  demoApi.detachScheduleRelease(releaseActionHandler('detach_schedule')),
+  demoApi.syncStoreReleases(async () => {
+    await delay(900)
+    return HttpResponse.json({ apps: 3, adopted: 0, errors: [] })
+  }),
 ]

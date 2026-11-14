@@ -15,8 +15,8 @@ use axum::http::StatusCode;
 use oore_contract::{
     ApiError, CreateReleaseRequest, ListReleaseActivityResponse, ListReleasesResponse, ProjectRole,
     Release, ReleaseAction, ReleaseActionRequest, ReleaseActivityEvent, ReleaseApprovalGate,
-    ReleaseDetailResponse, ReleaseHealth, ReleaseHistoryEntry, ReleasePolicy, ReleaseState,
-    ReleaseStore,
+    ReleaseDetailResponse, ReleaseHealth, ReleaseHistoryEntry, ReleaseOrigin, ReleasePolicy,
+    ReleaseState, ReleaseStore,
 };
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
@@ -54,6 +54,20 @@ pub enum StoreChange {
     Complete,
 }
 
+/// A request to the store that changes no rollout: the App Store review
+/// controls and a forced re-read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreAction {
+    /// Read the store again now.
+    Retry,
+    /// Release an approved App Store version.
+    ReleaseNow,
+    /// Submit a rejected App Store version for review again.
+    Resubmit,
+    /// Take an App Store version out of review.
+    PullFromReview,
+}
+
 /// Where the store says a release stands on its track.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StoreObservation {
@@ -83,6 +97,16 @@ pub trait ReleaseStoreClient: Send + Sync {
         release: &'a Release,
         change: StoreChange,
     ) -> BoxFuture<'a, anyhow::Result<()>>;
+
+    /// Ask the store for a change that the store, not Oore, then reports
+    /// back through its monitor.
+    fn act<'a>(
+        &'a self,
+        _release: &'a Release,
+        action: StoreAction,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move { anyhow::bail!("this store does not support {action:?}") })
+    }
 
     /// Current crash rate (0..1) for the release, if the store reports one.
     fn crash_rate<'a>(&'a self, release: &'a Release)
@@ -149,6 +173,10 @@ pub struct NoopReleaseStoreClient;
 
 impl ReleaseStoreClient for NoopReleaseStoreClient {
     fn apply<'a>(&'a self, _: &'a Release, _: StoreChange) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn act<'a>(&'a self, _: &'a Release, _: StoreAction) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -275,7 +303,8 @@ fn store_rejection_message(error: &anyhow::Error) -> String {
 
 pub struct NewRelease {
     pub project_id: String,
-    pub build_id: String,
+    /// `None` for a release found in the store.
+    pub build_id: Option<String>,
     pub artifact_id: Option<String>,
     pub store: ReleaseStore,
     pub track: String,
@@ -289,6 +318,36 @@ pub struct NewRelease {
     /// track match, if the project has one.
     pub environment_id: Option<String>,
     pub promoted_from_release_id: Option<String>,
+    pub origin: ReleaseOrigin,
+    /// The pipeline whose store credentials reach a release found in the
+    /// store. Releases with a build use the build's pipeline.
+    pub pipeline_id: Option<String>,
+    /// Whether Oore drives the rollout on `policy`'s schedule.
+    pub auto_rollout: bool,
+}
+
+impl NewRelease {
+    /// A release of `build_id` that Oore uploaded and drives.
+    pub fn uploaded(project_id: String, build_id: String) -> Self {
+        Self {
+            project_id,
+            build_id: Some(build_id),
+            artifact_id: None,
+            store: ReleaseStore::GooglePlay,
+            track: String::new(),
+            package_name: None,
+            version_name: None,
+            version_code: None,
+            state: ReleaseState::Rolling,
+            rollout_fraction: 0.0,
+            policy: ReleasePolicy::default(),
+            environment_id: None,
+            promoted_from_release_id: None,
+            origin: ReleaseOrigin::Oore,
+            pipeline_id: None,
+            auto_rollout: true,
+        }
+    }
 }
 
 /// A requested state or fraction change.
@@ -337,6 +396,7 @@ pub(crate) fn awaiting_approval(release: &Release) -> bool {
 /// When the daemon should take the next step, if it drives this release.
 fn next_step_at(release: &Release, now: i64) -> Option<i64> {
     let driven = release.store == ReleaseStore::GooglePlay
+        && release.auto_rollout
         && release.state == ReleaseState::Rolling
         && !awaiting_approval(release)
         && release.policy.next_step(release.rollout_fraction).is_some();
@@ -356,16 +416,30 @@ fn store_change(from: ReleaseState, to: ReleaseState, fraction: f64) -> Option<S
     }
 }
 
-fn event_kind(from: ReleaseState, to: ReleaseState) -> ReleaseEventKind {
-    use ReleaseState::{Complete, Failed, Halted, Paused, Rolling};
+/// The event a state change announces. Every transition has its own kind,
+/// so a notification says what the store did: `Uploaded` is only sent when
+/// a release is created from an upload.
+pub(crate) fn event_kind(from: ReleaseState, to: ReleaseState) -> ReleaseEventKind {
+    use ReleaseState::{
+        Approved, Blocked, Complete, Failed, Halted, InReview, Paused, Processing, Rejected,
+        Rolling, Uploading,
+    };
     match (from, to) {
         (_, Failed) => ReleaseEventKind::Failed,
+        (_, Blocked) => ReleaseEventKind::Blocked,
+        (_, Rejected) => ReleaseEventKind::Rejected,
+        (_, Approved) => ReleaseEventKind::StoreApproved,
+        (_, InReview) => ReleaseEventKind::Submitted,
+        (Rejected, Complete) => ReleaseEventKind::Superseded,
+        (Uploading | Processing | Blocked | InReview | Approved, Rolling | Complete) => {
+            ReleaseEventKind::Live
+        }
         (_, Complete) => ReleaseEventKind::RolloutCompleted,
         (_, Halted) => ReleaseEventKind::RolloutHalted,
         (_, Paused) => ReleaseEventKind::RolloutPaused,
         (Rolling, Rolling) => ReleaseEventKind::RolloutStepRaised,
         (Paused | Halted, Rolling) => ReleaseEventKind::RolloutResumed,
-        _ => ReleaseEventKind::Uploaded,
+        _ => ReleaseEventKind::Updated,
     }
 }
 
@@ -413,18 +487,114 @@ pub(crate) fn allowed_actions(
     if manage && awaiting {
         actions.push(ReleaseAction::Approve);
     }
+    let blocked = state == ReleaseState::Blocked;
+    // Re-read the store now: anything the monitor is still waiting on.
+    if operate
+        && app_store
+        && (blocked
+            || release.store_error.is_some()
+            || matches!(
+                state,
+                ReleaseState::Processing | ReleaseState::InReview | ReleaseState::Approved
+            ))
+    {
+        actions.push(ReleaseAction::Retry);
+    }
+    if manage && app_store && state == ReleaseState::Approved {
+        actions.push(ReleaseAction::ReleaseNow);
+    }
+    if manage && app_store && state == ReleaseState::Rejected {
+        actions.push(ReleaseAction::Resubmit);
+    }
+    // Apple only lets a version leave review while it waits or is in it.
+    if manage
+        && app_store
+        && (state == ReleaseState::Approved
+            || (state == ReleaseState::InReview
+                && release.track == "app_store"
+                && release
+                    .store_status
+                    .as_deref()
+                    .is_some_and(|status| matches!(status, "WAITING_FOR_REVIEW" | "IN_REVIEW"))))
+    {
+        actions.push(ReleaseAction::PullFromReview);
+    }
+    if manage && !app_store && blocked {
+        actions.push(ReleaseAction::MarkSentForReview);
+    }
+    // Play's API never says a review was rejected; whoever sent a held
+    // change for review records the outcome.
+    if manage && !app_store && blocked && release.track == "production" {
+        actions.push(ReleaseAction::MarkRejected);
+    }
+    if manage && !app_store && !awaiting && state == ReleaseState::Rolling {
+        if release.auto_rollout && release.next_fraction.is_some() {
+            actions.push(ReleaseAction::DetachSchedule);
+        } else {
+            actions.push(ReleaseAction::AttachSchedule);
+        }
+    }
     actions
 }
 
-pub(crate) const RELEASE_SELECT: &str = "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
-     au.email AS approved_by_email, env.name AS environment_name, \
-     asl.last_error AS store_error, asl.failing_since AS store_error_since, asl.store_status \
-     FROM releases r \
+/// The store console page for a release: its App Store Connect version or
+/// TestFlight build list, or the app in Play Console.
+pub(crate) fn console_url(
+    store: ReleaseStore,
+    track: &str,
+    package_name: Option<&str>,
+    asc_app_id: Option<&str>,
+) -> Option<String> {
+    match store {
+        ReleaseStore::AppStore => {
+            let app_id = asc_app_id?;
+            Some(if track == "app_store" {
+                format!(
+                    "https://appstoreconnect.apple.com/apps/{app_id}/distribution/ios/version/inflight"
+                )
+            } else {
+                format!("https://appstoreconnect.apple.com/apps/{app_id}/testflight/ios")
+            })
+        }
+        ReleaseStore::GooglePlay => package_name
+            .map(|package| format!("https://play.google.com/apps/publish/?package={package}")),
+    }
+}
+
+/// The columns every release read selects besides `r.*`.
+macro_rules! release_columns {
+    () => {
+        "p.name AS project_name, b.build_number AS build_number, \
+         au.email AS approved_by_email, env.name AS environment_name, \
+         asl.last_error AS store_error, asl.failing_since AS store_error_since, asl.store_status, \
+         asl.asc_app_id AS asc_app_id, \
+         (SELECT h.reason FROM release_history h WHERE h.release_id = r.id \
+          ORDER BY h.at DESC, h.rowid DESC LIMIT 1) AS state_reason, \
+         CASE WHEN r.state = 'in_review' THEN ( \
+           SELECT CASE WHEN COUNT(d) >= 2 THEN CAST(AVG(d) AS INTEGER) END FROM ( \
+             SELECT (SELECT MIN(h2.at) FROM release_history h2 \
+                     WHERE h2.release_id = h1.release_id AND h2.at > h1.at \
+                       AND h2.to_state <> 'in_review') - h1.at AS d \
+             FROM release_history h1 JOIN releases r2 ON r2.id = h1.release_id \
+             WHERE r2.project_id = r.project_id AND r2.store = r.store AND r2.id <> r.id \
+               AND (r2.track = 'app_store') = (r.track = 'app_store') \
+               AND h1.to_state = 'in_review' \
+               AND (h1.from_state IS NULL OR h1.from_state <> 'in_review') \
+             ORDER BY h1.at DESC LIMIT 5) \
+         ) END AS typical_review_seconds"
+    };
+}
+
+pub(crate) const RELEASE_SELECT: &str = concat!(
+    "SELECT r.*, ",
+    release_columns!(),
+    " FROM releases r \
      LEFT JOIN app_store_release_links asl ON asl.release_id = r.id \
      LEFT JOIN projects p ON p.id = r.project_id \
      LEFT JOIN builds b ON b.id = r.build_id \
      LEFT JOIN users au ON au.id = r.approved_by \
-     LEFT JOIN project_environments env ON env.id = r.environment_id";
+     LEFT JOIN project_environments env ON env.id = r.environment_id"
+);
 
 pub(crate) fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
     let parse_err = |message: String| ReleaseError::Db(anyhow::anyhow!(message));
@@ -434,17 +604,28 @@ pub(crate) fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
         .map_err(|error| ReleaseError::Db(error.into()))?;
     let rollout_fraction: f64 = row.get("rollout_fraction");
     let crash_rate: Option<f64> = row.get("crash_rate");
+    let origin: ReleaseOrigin = row.get::<String, _>("origin").parse().map_err(parse_err)?;
+    let track: String = row.get("track");
+    let package_name: Option<String> = row.get("package_name");
+    let asc_app_id: Option<String> = row.try_get("asc_app_id").ok().flatten();
     let mut release = Release {
         id: row.get("id"),
         project_id: row.get("project_id"),
         project_name: row.get("project_name"),
         build_id: row.get("build_id"),
         build_number: row.get("build_number"),
+        origin,
         artifact_id: row.get("artifact_id"),
         platform: store.platform().to_string(),
+        console_url: console_url(
+            store,
+            &track,
+            package_name.as_deref(),
+            asc_app_id.as_deref(),
+        ),
         store,
-        track: row.get("track"),
-        package_name: row.get("package_name"),
+        track,
+        package_name,
         version_name: row.get("version_name"),
         version_code: row.get("version_code"),
         state,
@@ -466,11 +647,14 @@ pub(crate) fn row_to_release(row: &SqliteRow) -> Result<Release, ReleaseError> {
         store_error: row.try_get("store_error").ok().flatten(),
         store_error_since: row.try_get("store_error_since").ok().flatten(),
         store_status: row.try_get("store_status").ok().flatten(),
+        state_reason: row.try_get("state_reason").ok().flatten(),
+        typical_review_seconds: row.try_get("typical_review_seconds").ok().flatten(),
+        auto_rollout: row.get::<i64, _>("auto_rollout") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
     };
     release.awaiting_approval = awaiting_approval(&release);
-    if !state.is_terminal() {
+    if !state.is_terminal() && (release.auto_rollout || store != ReleaseStore::GooglePlay) {
         release.next_fraction = release.policy.next_step(rollout_fraction);
     }
     Ok(release)
@@ -501,13 +685,16 @@ fn publish(
         kind,
         project_id: release.project_id.clone(),
         release_id: release.id.clone(),
-        build_id: Some(release.build_id.clone()),
+        build_id: release.build_id.clone(),
         version_name: release.version_name.clone(),
         version_code: release.version_code,
         track: Some(release.track.clone()),
         rollout_percent: Some(release.rollout_fraction * 100.0),
         actor: actor.email().map(str::to_string),
         reason: reason.map(str::to_string),
+        state: Some(release.state.as_str().to_string()),
+        store_status: release.store_status.clone(),
+        console_url: release.console_url.clone(),
         timestamp: now_unix(),
     });
 }
@@ -600,7 +787,10 @@ pub(crate) async fn insert_release(
         return Err(ReleaseError::Invalid("track must not be empty".into()));
     }
     // `complete` covers an upload straight to 100%, `paused` a draft at 0%.
-    if matches!(input.state, ReleaseState::Halted | ReleaseState::Failed) {
+    // A release found in the store starts where the store has it.
+    if input.state == ReleaseState::Failed
+        || (input.state == ReleaseState::Halted && input.origin != ReleaseOrigin::Adopted)
+    {
         return Err(ReleaseError::Invalid(
             "a release cannot start halted or failed".into(),
         ));
@@ -628,8 +818,8 @@ pub(crate) async fn insert_release(
     sqlx::query(
         "INSERT INTO releases (id, project_id, build_id, artifact_id, store, track, package_name, \
          version_name, version_code, state, rollout_fraction, policy_json, created_by, created_at, updated_at, \
-         environment_id, promoted_from_release_id) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15, ?16)",
+         environment_id, promoted_from_release_id, origin, pipeline_id, auto_rollout) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?15, ?16, ?17, ?18, ?19)",
     )
     .bind(&id)
     .bind(&input.project_id)
@@ -647,6 +837,9 @@ pub(crate) async fn insert_release(
     .bind(now)
     .bind(&environment_id)
     .bind(&input.promoted_from_release_id)
+    .bind(input.origin.as_str())
+    .bind(&input.pipeline_id)
+    .bind(i64::from(input.auto_rollout))
     .execute(&mut **tx)
     .await?;
     insert_history(
@@ -704,10 +897,9 @@ pub(crate) async fn finish_create(
         actor,
         reason.as_deref(),
     );
-    if matches!(
-        release.state,
-        ReleaseState::Rolling | ReleaseState::Complete
-    ) {
+    // A release found in the store was not uploaded by Oore; it only
+    // notifies once it changes.
+    if release.origin == ReleaseOrigin::Oore && release.promoted_from_release_id.is_none() {
         publish(
             deps.scheduler,
             &release,
@@ -715,6 +907,15 @@ pub(crate) async fn finish_create(
             actor,
             reason.as_deref(),
         );
+        if release.state == ReleaseState::Blocked {
+            publish(
+                deps.scheduler,
+                &release,
+                ReleaseEventKind::Blocked,
+                actor,
+                reason.as_deref(),
+            );
+        }
     }
     if release.awaiting_approval {
         publish(
@@ -1083,6 +1284,32 @@ async fn note_rollout_hold(
     tx.commit().await
 }
 
+/// Records a new reason for a release that is already blocked, and notifies
+/// about it like the first block. A release that stays blocked for the same
+/// reason is not noted again; callers keep track of what was notified.
+pub(crate) async fn note_blocked_reason(
+    deps: ReleaseDeps<'_>,
+    release_id: &str,
+    reason: &str,
+) -> Result<(), ReleaseError> {
+    let lock = release_lock(release_id);
+    let _guard = lock.lock().await;
+    let release = load_release(deps.pool, release_id).await?;
+    if release.state != ReleaseState::Blocked {
+        return Ok(());
+    }
+    note_rollout_hold(deps.pool, &release, reason, now_unix()).await?;
+    let release = load_release(deps.pool, release_id).await?;
+    publish(
+        deps.scheduler,
+        &release,
+        ReleaseEventKind::Blocked,
+        &ReleaseActor::System,
+        Some(reason),
+    );
+    Ok(())
+}
+
 /// One pass of the rollout monitor: sync with the store, check health, halt
 /// on breach, take due steps.
 ///
@@ -1233,6 +1460,13 @@ pub(crate) async fn run_rollout_tick(
         if !due || release.awaiting_approval {
             continue;
         }
+        // A freeze holds scheduled steps too; the step is taken once lifted.
+        if crate::release_freezes::active_freeze(deps.pool, &release.project_id)
+            .await?
+            .is_some()
+        {
+            continue;
+        }
         let Some(fraction) = release.policy.next_step(release.rollout_fraction) else {
             continue;
         };
@@ -1313,6 +1547,7 @@ pub struct ListReleasesQuery {
     project_id: Option<String>,
     build_id: Option<String>,
     state: Option<String>,
+    origin: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -1353,6 +1588,13 @@ pub async fn list_releases(
         binds.push(build_id);
         conditions.push(format!("r.build_id = ?{}", binds.len()));
     }
+    if let Some(origin) = params.origin {
+        let origin: ReleaseOrigin = origin.parse().map_err(|message: String| {
+            api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
+        })?;
+        binds.push(origin.as_str().to_string());
+        conditions.push(format!("r.origin = ?{}", binds.len()));
+    }
     if let Some(states) = params.state {
         let mut placeholders = Vec::new();
         for value in states
@@ -1392,9 +1634,7 @@ pub async fn list_releases(
         .map_err(store_err("Failed to count releases"))?;
 
     let mut list = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT r.*, p.name AS project_name, b.build_number AS build_number, \
-         au.email AS approved_by_email, env.name AS environment_name, pm.role AS member_role, \
-         asl.last_error AS store_error, asl.failing_since AS store_error_since, asl.store_status {from} \
+        "SELECT r.*, {columns}, pm.role AS member_role {from} \
          LEFT JOIN app_store_release_links asl ON asl.release_id = r.id \
          LEFT JOIN projects p ON p.id = r.project_id \
          LEFT JOIN builds b ON b.id = r.build_id \
@@ -1402,7 +1642,8 @@ pub async fn list_releases(
          LEFT JOIN project_environments env ON env.id = r.environment_id \
          {where_clause} ORDER BY r.created_at DESC, r.id LIMIT ?{} OFFSET ?{}",
         binds.len() + 1,
-        binds.len() + 2
+        binds.len() + 2,
+        columns = release_columns!(),
     )));
     for value in &binds {
         list = list.bind(value);
@@ -1527,8 +1768,6 @@ pub async fn create_release_handler(
     let mut release = create_release(
         ReleaseDeps::from(&*state),
         NewRelease {
-            project_id,
-            build_id: request.build_id,
             artifact_id: request.artifact_id,
             store: request.store,
             track: request.track,
@@ -1538,8 +1777,7 @@ pub async fn create_release_handler(
             state: initial_state,
             rollout_fraction,
             policy,
-            environment_id: None,
-            promoted_from_release_id: None,
+            ..NewRelease::uploaded(project_id, request.build_id)
         },
         &user_actor(&auth),
         request.reason.as_deref(),
@@ -1560,7 +1798,7 @@ pub async fn release_action(
     let action: ReleaseAction = action
         .parse()
         .map_err(|_| api_err(StatusCode::NOT_FOUND, "not_found", "Unknown release action"))?;
-    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let request = body.map_or_default(|Json(request)| request);
     let current = load_release(&state.db, &release_id)
         .await
         .map_err(ReleaseError::into_api)?;
@@ -1568,15 +1806,37 @@ pub async fn release_action(
     require_project_permission(&role, ProjectPermission::Read)
         .map_err(|_| api_err(StatusCode::NOT_FOUND, "not_found", "Release not found"))?;
     let permission = match action {
-        ReleaseAction::Pause | ReleaseAction::Halt => ProjectPermission::OperateRelease,
+        ReleaseAction::Pause | ReleaseAction::Halt | ReleaseAction::Retry => {
+            ProjectPermission::OperateRelease
+        }
         _ => ProjectPermission::ManageReleases,
     };
     require_project_permission(&role, permission)?;
+    // A freeze holds anything that reaches more users; pausing and halting
+    // stay possible.
+    if matches!(
+        action,
+        ReleaseAction::Raise
+            | ReleaseAction::Resume
+            | ReleaseAction::Complete
+            | ReleaseAction::Approve
+            | ReleaseAction::ReleaseNow
+            | ReleaseAction::Resubmit
+    ) {
+        crate::release_freezes::ensure_not_frozen(&state.db, &current.project_id).await?;
+    }
     if request.fraction.is_some() && action != ReleaseAction::Raise {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
             "invalid_input",
             "fraction is only accepted by raise",
+        ));
+    }
+    if request.policy.is_some() && action != ReleaseAction::AttachSchedule {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "policy is only accepted by attach_schedule",
         ));
     }
     if !allowed_actions(&role, &current).contains(&action) {
@@ -1618,6 +1878,20 @@ pub async fn release_action(
     let actor = user_actor(&auth);
     let reason = request.reason.as_deref();
     let seen = (current.state, current.rollout_fraction);
+    let store_action = match action {
+        ReleaseAction::Retry => Some(StoreAction::Retry),
+        ReleaseAction::ReleaseNow => Some(StoreAction::ReleaseNow),
+        ReleaseAction::Resubmit => Some(StoreAction::Resubmit),
+        ReleaseAction::PullFromReview => Some(StoreAction::PullFromReview),
+        _ => None,
+    };
+    if let Some(store_action) = store_action {
+        let mut release = act_on_store(deps, &current, store_action, &actor, reason)
+            .await
+            .map_err(ReleaseError::into_api)?;
+        release.allowed_actions = allowed_actions(&role, &release);
+        return Ok(Json(release));
+    }
     let change = match action {
         ReleaseAction::Approve => {
             let mut release = approve_release(deps, &release_id, &actor, reason)
@@ -1626,6 +1900,54 @@ pub async fn release_action(
             release.allowed_actions = allowed_actions(&role, &release);
             return Ok(Json(release));
         }
+        ReleaseAction::AttachSchedule | ReleaseAction::DetachSchedule => {
+            let attach = action == ReleaseAction::AttachSchedule;
+            let policy = match request.policy {
+                Some(policy) => {
+                    policy.validate().map_err(|message| {
+                        api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
+                    })?;
+                    policy.validate_gate().map_err(|message| {
+                        api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
+                    })?;
+                    policy
+                }
+                None => current.policy.clone(),
+            };
+            let mut release =
+                set_schedule(deps, &current, attach.then_some(policy), &actor, reason)
+                    .await
+                    .map_err(ReleaseError::into_api)?;
+            release.allowed_actions = allowed_actions(&role, &release);
+            return Ok(Json(release));
+        }
+        // Play has no review state; a person tells Oore what Play Console shows.
+        ReleaseAction::MarkSentForReview => {
+            // A held draft stays a draft; anything else rolls out as staged.
+            let target = if current.rollout_fraction == 0.0 {
+                ReleaseState::Paused
+            } else {
+                ReleaseState::Rolling
+            };
+            ReleaseChange {
+                to_state: target,
+                to_fraction: None,
+                audit_action: "release_marked_sent_for_review",
+                expect: Some(seen),
+                from_store: true,
+            }
+        }
+        ReleaseAction::MarkRejected => ReleaseChange {
+            to_state: ReleaseState::Rejected,
+            to_fraction: None,
+            audit_action: "release_marked_rejected",
+            expect: Some(seen),
+            from_store: true,
+        },
+        ReleaseAction::Retry
+        | ReleaseAction::ReleaseNow
+        | ReleaseAction::Resubmit
+        | ReleaseAction::PullFromReview => unreachable!("store actions return above"),
         ReleaseAction::Raise => {
             let fraction = match request.fraction {
                 Some(fraction) => fraction,
@@ -1686,11 +2008,147 @@ pub async fn release_action(
             from_store: false,
         },
     };
+    let default_reason = match action {
+        ReleaseAction::MarkSentForReview => Some("Marked as sent for review in Play Console"),
+        ReleaseAction::MarkRejected => Some("Marked as rejected by Google in Play Console"),
+        _ => None,
+    };
+    let reason = reason.or(default_reason);
     let mut release = transition_release(deps, &release_id, change, &actor, reason)
         .await
         .map_err(ReleaseError::into_api)?;
+    // A held release at 100% goes on to complete, as Play has it.
+    if action == ReleaseAction::MarkSentForReview && release.rollout_fraction >= 1.0 {
+        release = transition_release(
+            deps,
+            &release_id,
+            ReleaseChange {
+                to_state: ReleaseState::Complete,
+                to_fraction: Some(1.0),
+                audit_action: "release_marked_sent_for_review",
+                expect: Some((release.state, release.rollout_fraction)),
+                from_store: true,
+            },
+            &actor,
+            reason,
+        )
+        .await
+        .map_err(ReleaseError::into_api)?;
+    }
     release.allowed_actions = allowed_actions(&role, &release);
     Ok(Json(release))
+}
+
+/// Ask the store for a review control and record it in the history. The
+/// store's monitor records any state change that follows.
+async fn act_on_store(
+    deps: ReleaseDeps<'_>,
+    current: &Release,
+    action: StoreAction,
+    actor: &ReleaseActor,
+    reason: Option<&str>,
+) -> Result<Release, ReleaseError> {
+    let lock = release_lock(&current.id);
+    let _guard = lock.lock().await;
+    deps.store
+        .act(current, action)
+        .await
+        .map_err(ReleaseError::Store)?;
+    let (audit_action, note) = match action {
+        StoreAction::Retry => ("release_retried", "Checking the store again now"),
+        StoreAction::ReleaseNow => (
+            "release_released_now",
+            "Asked App Store Connect to release the approved version now",
+        ),
+        StoreAction::Resubmit => (
+            "release_resubmitted",
+            "Submitted the version for App Review again",
+        ),
+        StoreAction::PullFromReview => (
+            "release_pulled_from_review",
+            "Took the version out of App Review",
+        ),
+    };
+    let reason = clean_reason(reason).unwrap_or_else(|| note.to_string());
+    if action != StoreAction::Retry {
+        note_rollout_hold(deps.pool, current, &reason, now_unix()).await?;
+    }
+    audit(
+        deps.pool,
+        audit_action,
+        &current.id,
+        actor,
+        serde_json::json!({
+            "actor_email": actor.email(),
+            "state": current.state,
+            "reason": reason,
+        }),
+    )
+    .await;
+    load_release(deps.pool, &current.id).await
+}
+
+/// Attach a rollout schedule to a Play release, or detach it with `None`.
+pub(crate) async fn set_schedule(
+    deps: ReleaseDeps<'_>,
+    current: &Release,
+    policy: Option<ReleasePolicy>,
+    actor: &ReleaseActor,
+    reason: Option<&str>,
+) -> Result<Release, ReleaseError> {
+    let lock = release_lock(&current.id);
+    let _guard = lock.lock().await;
+    let now = now_unix();
+    let mut next = current.clone();
+    next.auto_rollout = policy.is_some();
+    if let Some(policy) = &policy {
+        next.policy = policy.clone();
+    }
+    let next_at = next_step_at(&next, now);
+    let policy_json =
+        serde_json::to_string(&next.policy).map_err(|error| ReleaseError::Db(error.into()))?;
+    let updated = sqlx::query(
+        "UPDATE releases SET auto_rollout = ?1, policy_json = ?2, next_step_at = ?3, updated_at = ?4 \
+         WHERE id = ?5 AND state = ?6",
+    )
+    .bind(i64::from(next.auto_rollout))
+    .bind(&policy_json)
+    .bind(next_at)
+    .bind(now)
+    .bind(&current.id)
+    .bind(current.state.as_str())
+    .execute(deps.pool)
+    .await?;
+    if updated.rows_affected() == 0 {
+        return Err(ReleaseError::Conflict(
+            "release changed, reload and try again".into(),
+        ));
+    }
+    let note = clean_reason(reason).unwrap_or_else(|| {
+        if policy.is_some() {
+            "Rollout schedule attached; Oore raises the rollout on its steps".to_string()
+        } else {
+            "Rollout schedule detached; the rollout stays where it is".to_string()
+        }
+    });
+    note_rollout_hold(deps.pool, current, &note, now).await?;
+    audit(
+        deps.pool,
+        if policy.is_some() {
+            "release_schedule_attached"
+        } else {
+            "release_schedule_detached"
+        },
+        &current.id,
+        actor,
+        serde_json::json!({
+            "actor_email": actor.email(),
+            "policy": next.policy,
+            "reason": note,
+        }),
+    )
+    .await;
+    load_release(deps.pool, &current.id).await
 }
 
 #[derive(Deserialize)]
@@ -1714,6 +2172,8 @@ pub async fn list_release_activity(
         ));
     }
     let admin = auth.0.role == "owner" || auth.0.role == "admin";
+    // Finding a release made outside Oore is not a change to it; its later
+    // changes are.
     let rows = sqlx::query(
         "SELECT h.*, r.project_id, r.build_id, r.store, r.track, r.version_name, p.name AS project_name \
          FROM release_history h \
@@ -1722,6 +2182,7 @@ pub async fn list_release_activity(
          WHERE (?1 = 1 OR EXISTS (SELECT 1 FROM project_members pm \
                 WHERE pm.project_id = r.project_id AND pm.user_id = ?2)) \
            AND (?3 IS NULL OR r.project_id = ?3) \
+           AND NOT (r.origin = 'adopted' AND h.from_state IS NULL) \
          ORDER BY h.at DESC, h.rowid DESC LIMIT ?4",
     )
     .bind(admin)
@@ -1753,6 +2214,7 @@ pub async fn list_release_activity(
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::assert_matches;
     use std::sync::Mutex;
 
     use super::*;
@@ -1855,7 +2317,7 @@ pub(crate) mod tests {
     pub(crate) fn new_release(track: &str, policy: ReleasePolicy) -> NewRelease {
         NewRelease {
             project_id: "p1".into(),
-            build_id: "b1".into(),
+            build_id: Some("b1".into()),
             artifact_id: None,
             store: ReleaseStore::GooglePlay,
             track: track.into(),
@@ -1867,6 +2329,9 @@ pub(crate) mod tests {
             policy,
             environment_id: None,
             promoted_from_release_id: None,
+            origin: ReleaseOrigin::Oore,
+            pipeline_id: None,
+            auto_rollout: true,
         }
     }
 
@@ -1885,6 +2350,65 @@ pub(crate) mod tests {
             expect: None,
             from_store: false,
         }
+    }
+
+    #[tokio::test]
+    async fn a_release_in_review_says_how_long_reviews_usually_take() {
+        let pool = pool().await;
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            let mut tx = pool.begin().await.unwrap();
+            let created = insert_release(
+                &mut tx,
+                NewRelease {
+                    state: ReleaseState::InReview,
+                    ..new_release("production", ReleasePolicy::default())
+                },
+                &user(),
+                None,
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+            ids.push(created.release.id);
+        }
+        sqlx::query("DELETE FROM release_history")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Two earlier reviews took one and three hours; one is still open.
+        for (release, from, to) in [(&ids[0], 1_000, 4_600), (&ids[1], 10_000, 20_800)] {
+            for (state, at) in [("in_review", from), ("rolling", to)] {
+                sqlx::query(
+                    "INSERT INTO release_history (id, release_id, to_state, at) VALUES (?1, ?2, ?3, ?4)",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(release)
+                .bind(state)
+                .bind(at)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        }
+        sqlx::query(
+            "INSERT INTO release_history (id, release_id, to_state, at) VALUES ('h', ?1, 'in_review', 30000)",
+        )
+        .bind(&ids[2])
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let release = load_release(&pool, &ids[3]).await.unwrap();
+        assert_eq!(release.typical_review_seconds, Some(7_200));
+        // Only releases in review carry it.
+        sqlx::query("UPDATE releases SET state = 'rolling' WHERE id = ?1")
+            .bind(&ids[3])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let release = load_release(&pool, &ids[3]).await.unwrap();
+        assert_eq!(release.typical_review_seconds, None);
     }
 
     async fn history_len(pool: &SqlitePool, release_id: &str) -> i64 {
@@ -2159,7 +2683,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(raise_paused, Err(ReleaseError::Conflict(_))));
+        assert_matches!(raise_paused, Err(ReleaseError::Conflict(_)));
 
         transition_release(
             deps,
@@ -2178,7 +2702,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(complete_halted, Err(ReleaseError::Conflict(_))));
+        assert_matches!(complete_halted, Err(ReleaseError::Conflict(_)));
 
         transition_release(
             deps,
@@ -2203,7 +2727,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(lower, Err(ReleaseError::Invalid(_))));
+        assert_matches!(lower, Err(ReleaseError::Invalid(_)));
         let complete = transition_release(
             deps,
             &release.id,
@@ -2264,7 +2788,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(blocked, Err(ReleaseError::Conflict(_))));
+        assert_matches!(blocked, Err(ReleaseError::Conflict(_)));
     }
 
     #[tokio::test]
@@ -2320,7 +2844,7 @@ pub(crate) mod tests {
             None,
         )
         .await;
-        assert!(matches!(blocked, Err(ReleaseError::Conflict(_))));
+        assert_matches!(blocked, Err(ReleaseError::Conflict(_)));
         run_rollout_tick(deps, now_unix() + 365 * 86_400, 100)
             .await
             .unwrap();
@@ -2449,7 +2973,7 @@ pub(crate) mod tests {
             Some("scheduled rollout step"),
         )
         .await;
-        assert!(matches!(stale, Err(ReleaseError::Conflict(_))));
+        assert_matches!(stale, Err(ReleaseError::Conflict(_)));
         assert_eq!(store.changes.lock().unwrap().len(), 2);
         let after = load_release(&pool, &release.id).await.unwrap();
         assert_eq!(after.state, ReleaseState::Halted);
@@ -2607,7 +3131,7 @@ pub(crate) mod tests {
             id: "r".into(),
             project_id: "p".into(),
             project_name: None,
-            build_id: "b".into(),
+            build_id: Some("b".into()),
             build_number: None,
             artifact_id: None,
             platform: "android".into(),
@@ -2634,10 +3158,18 @@ pub(crate) mod tests {
             store_error: None,
             store_error_since: None,
             store_status: None,
+            origin: ReleaseOrigin::Oore,
+            state_reason: None,
+            typical_review_seconds: None,
+            console_url: None,
+            auto_rollout: true,
             created_at: 0,
             updated_at: 0,
         };
-        use ReleaseAction::{Complete, Halt, Pause, Raise, Resume};
+        use ReleaseAction::{
+            AttachSchedule, Complete, DetachSchedule, Halt, MarkRejected, MarkSentForReview, Pause,
+            Raise, Resume,
+        };
         let viewer = EffectiveProjectRole::Member(ProjectRole::Viewer);
         let developer = EffectiveProjectRole::Member(ProjectRole::Developer);
         assert!(allowed_actions(&viewer, &release).is_empty());
@@ -2645,7 +3177,24 @@ pub(crate) mod tests {
         assert_eq!(allowed_actions(&developer, &release), vec![Pause, Halt]);
         assert_eq!(
             allowed_actions(&EffectiveProjectRole::InstanceAdmin, &release),
-            vec![Raise, Pause, Halt, Complete]
+            vec![Raise, Pause, Halt, Complete, DetachSchedule]
+        );
+        let manual = Release {
+            auto_rollout: false,
+            next_fraction: None,
+            ..release.clone()
+        };
+        assert_eq!(
+            allowed_actions(&EffectiveProjectRole::InstanceAdmin, &manual),
+            vec![Raise, Pause, Halt, Complete, AttachSchedule]
+        );
+        let held = Release {
+            state: ReleaseState::Blocked,
+            ..release.clone()
+        };
+        assert_eq!(
+            allowed_actions(&EffectiveProjectRole::InstanceAdmin, &held),
+            vec![MarkSentForReview, MarkRejected]
         );
         let halted = Release {
             state: ReleaseState::Halted,

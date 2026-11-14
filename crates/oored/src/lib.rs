@@ -11,11 +11,14 @@ pub mod audit_logs;
 pub mod auth;
 pub mod background;
 pub mod build_analysis;
+pub mod build_failure_hint;
 pub mod build_feedback;
 pub mod build_insights;
+pub mod build_trends;
 pub mod builds;
 pub mod commit_checks;
 pub mod crypto;
+pub mod device_registration;
 pub mod environments;
 pub mod events;
 pub mod extractors;
@@ -31,6 +34,7 @@ pub mod notification_dispatch;
 pub mod observability;
 pub mod oidc;
 pub mod operator;
+pub mod personal;
 pub mod pipeline_ios_signing;
 pub mod pipeline_publish;
 pub mod pipeline_schedules;
@@ -39,7 +43,10 @@ pub mod pipelines;
 pub mod project_members;
 pub mod project_rbac;
 pub mod projects;
+pub mod queue_estimate;
 pub mod rbac;
+pub mod rehearsals;
+pub mod release_freezes;
 pub mod release_store;
 pub mod releases;
 pub mod repository_config_files;
@@ -47,18 +54,24 @@ pub mod repository_workflows;
 pub mod retention;
 pub mod runners;
 pub mod runtime_updates;
+pub mod sample_app;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
+pub mod signing_expiry;
 pub mod signing_identities;
 pub mod step_retry;
 pub mod storage;
 pub mod store;
+pub mod store_readiness;
+pub mod store_sync;
 pub mod store_vitals;
 pub mod test_results;
+pub mod testers;
 pub mod token;
 pub mod users;
 pub mod util;
+pub mod web_push;
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -2471,6 +2484,8 @@ pub async fn build_router_with_recovery(
             pool.clone(),
             shared_state.encryption_key.to_vec(),
         );
+        personal::start_personal_mailer(pool.clone(), shared_state.encryption_key.to_vec());
+        web_push::start_web_push_notifier(pool.clone(), shared_state.encryption_key.to_vec());
         notification_dispatch::start_notification_dispatcher(
             pool,
             sched,
@@ -2480,6 +2495,7 @@ pub async fn build_router_with_recovery(
         app_store_publish::start_release_monitor(shared_state.clone());
         background::start_release_rollout_monitor(shared_state.clone());
         store_vitals::start_store_vitals_monitor(shared_state.clone());
+        store_sync::start_store_sync(shared_state.clone());
         pipeline_schedules::start_schedule_monitor(shared_state.clone());
     }
 
@@ -2580,6 +2596,58 @@ pub async fn build_router_with_recovery(
         .route("/v1/auth/logout", post(auth::logout))
         // User management endpoints
         .route("/v1/users/me", get(users::get_me))
+        .route(
+            "/v1/users/me/notification-preferences",
+            get(personal::get_preferences).put(personal::update_preferences),
+        )
+        .route("/v1/users/me/inbox", get(personal::get_inbox))
+        .route(
+            "/v1/builds/{build_id}/installs",
+            get(testers::list_build_installs),
+        )
+        .route(
+            "/v1/builds/{build_id}/shares",
+            get(testers::list_build_shares).post(testers::send_build_to_group),
+        )
+        .route(
+            "/v1/builds/{build_id}/keep",
+            axum::routing::put(testers::keep_build).delete(testers::unkeep_build),
+        )
+        .route(
+            "/v1/pipelines/{pipeline_id}/latest-links",
+            get(testers::list_latest_links).post(testers::create_latest_link),
+        )
+        .route(
+            "/v1/latest-links/{link_id}",
+            axum::routing::delete(testers::delete_latest_link),
+        )
+        .route(
+            "/v1/tester-groups",
+            get(testers::list_tester_groups).post(testers::create_tester_group),
+        )
+        .route(
+            "/v1/tester-groups/{group_id}",
+            axum::routing::put(testers::update_tester_group).delete(testers::delete_tester_group),
+        )
+        .route("/v1/feedback/recent", get(testers::list_recent_feedback))
+        .route(
+            "/v1/pipelines/{pipeline_id}/device-registrations",
+            post(device_registration::create_registration),
+        )
+        .route(
+            "/v1/device-registrations/{registration_id}",
+            get(device_registration::get_registration),
+        )
+        .route("/v1/web-push/config", get(web_push::get_config))
+        .route("/v1/web-push/subscriptions", post(web_push::subscribe))
+        .route("/v1/web-push/unsubscribe", post(web_push::unsubscribe))
+        .route("/v1/web-push/test", post(web_push::send_test))
+        .route("/v1/users/me/digest", get(personal::get_digest))
+        .route("/v1/users/me/digest/send", post(personal::send_digest_now))
+        .route(
+            "/v1/projects/{project_id}/favorite",
+            put(personal::add_favorite).delete(personal::remove_favorite),
+        )
         .route(
             "/v1/system/update",
             get(runtime_updates::get_status).post(runtime_updates::start_update),
@@ -2728,6 +2796,10 @@ pub async fn build_router_with_recovery(
             get(projects::list_projects).post(projects::create_project),
         )
         .route(
+            "/v1/projects/sample",
+            post(sample_app::create_sample_project),
+        )
+        .route(
             "/v1/projects/{project_id}",
             get(projects::get_project)
                 .patch(projects::update_project)
@@ -2736,6 +2808,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/projects/{project_id}/repository-workflows",
             get(repository_workflows::discover_repository_workflows),
+        )
+        .route(
+            "/v1/projects/{project_id}/app-detection",
+            get(repository_workflows::detect_project_app),
         )
         .route(
             "/v1/projects/{project_id}/repository-config-files",
@@ -2840,6 +2916,10 @@ pub async fn build_router_with_recovery(
                 .put(pipeline_publish::update_pipeline_google_play_publish),
         )
         .route(
+            "/v1/pipelines/{pipeline_id}/publish/readiness",
+            get(store_readiness::get_pipeline_publish_readiness),
+        )
+        .route(
             "/v1/pipelines/{pipeline_id}/publish/google-play/test-credentials",
             post(pipeline_publish::test_pipeline_google_play_credentials),
         )
@@ -2897,6 +2977,7 @@ pub async fn build_router_with_recovery(
             "/v1/builds/insights",
             get(build_insights::get_build_insights),
         )
+        .route("/v1/builds/trends", get(build_trends::get_build_trends))
         .route("/v1/store-vitals", get(store_vitals::get_store_vitals))
         .route(
             "/v1/store-vitals/refresh",
@@ -2907,6 +2988,14 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))
         .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
         .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
+        .route(
+            "/v1/builds/{build_id}/rehearsal",
+            get(rehearsals::get_build_rehearsal),
+        )
+        .route(
+            "/v1/builds/{build_id}/failure-hint",
+            get(build_failure_hint::get_build_failure_hint),
+        )
         .route(
             "/v1/builds/{build_id}/retry-step",
             post(step_retry::retry_build_step),
@@ -2939,12 +3028,24 @@ pub async fn build_router_with_recovery(
             "/v1/releases",
             get(releases::list_releases).post(releases::create_release_handler),
         )
+        .route(
+            "/v1/releases/store-sync",
+            post(store_sync::sync_store_releases),
+        )
         .route("/v1/releases/{release_id}", get(releases::get_release))
         .route(
             "/v1/releases/{release_id}/{action}",
             post(releases::release_action),
         )
         .route("/v1/release-events", get(releases::list_release_activity))
+        .route(
+            "/v1/release-freezes",
+            get(release_freezes::list_release_freezes).put(release_freezes::set_release_freeze),
+        )
+        .route(
+            "/v1/release-freezes/{freeze_id}",
+            axum::routing::delete(release_freezes::delete_release_freeze),
+        )
         .route(
             "/v1/projects/{project_id}/environments",
             get(environments::list_project_environments)
@@ -3003,6 +3104,10 @@ pub async fn build_router_with_recovery(
             post(runners::update_job_status),
         )
         .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/identity",
+            post(runners::report_build_identity),
+        )
+        .route(
             "/v1/runners/{runner_id}/jobs/{job_id}",
             get(runners::get_job_status),
         )
@@ -3029,6 +3134,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/publish-results",
             post(pipeline_publish::report_job_publish_result),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal",
+            post(rehearsals::report_job_rehearsal),
         )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/test-results",
@@ -3132,6 +3241,21 @@ pub async fn build_router_with_recovery(
         .route(
             "/install/ios/{token}/manifest.plist",
             get(artifact_install::ios_install_manifest),
+        )
+        .route("/install/latest/{token}", get(testers::open_latest_link))
+        .route(
+            "/install/register-device/{token}/profile.mobileconfig",
+            get(device_registration::profile),
+        )
+        .route(
+            "/install/register-device/{token}/callback",
+            post(device_registration::callback).layer(DefaultBodyLimit::max(
+                device_registration::MAX_CALLBACK_BYTES,
+            )),
+        )
+        .route(
+            "/install/register-device/{token}/done",
+            get(device_registration::done),
         )
         .route(
             "/install/download/{token}",

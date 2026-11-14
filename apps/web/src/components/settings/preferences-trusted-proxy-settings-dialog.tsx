@@ -1,6 +1,6 @@
 import type { SubmitHandler, UseFormReturn } from 'react-hook-form'
 import type { TrustedProxySettingsPublic } from '@oore/client/models'
-import type { TrustedProxyFormValues } from '@/routes/settings/preferences'
+import type { TrustedProxyFormValues } from '@/routes/settings/general'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'

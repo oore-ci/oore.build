@@ -8,6 +8,8 @@
     "install/ios",
     "google-play",
     "app-store",
-    "environments"
+    "rehearse",
+    "environments",
+    "release-safety"
   ]
 }

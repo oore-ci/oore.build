@@ -25,7 +25,7 @@ Oore sends every request from the backend host. Slack never calls back into Oore
 
 1. Open **Settings > Notifications** and select **Add channel**.
 2. Enter a **Name** and set **Type** to **Slack**.
-3. Choose a **Project** to post only that project's events, or keep **All projects**. Runner alerts only go to channels for all projects.
+3. Choose a **App** to post only that app's events, or keep **All apps**. Runner alerts only go to channels for all apps.
 4. Paste the webhook URL into **Incoming webhook URL** and, if you have one, the bot token into **Bot token (optional)**. To mention people without a bot token, or to mention people who push to Git, list them under **Slack member IDs (optional)** (see [Mentions](#mentions)).
 5. Under **Events**, keep **All events**, or choose **Selected events** and tick the ones to send.
 6. Select **Create channel**.
@@ -35,30 +35,47 @@ The test message says whether mentions work for the email you signed in with, so
 
 ## Events
 
-| Event                   | Sent when                                          |
-| ----------------------- | -------------------------------------------------- |
-| Build approval needed   | A build waits for a maintainer's approval          |
-| Build succeeded         | A build succeeds                                   |
-| Build failed            | A build fails. The message links to the build logs |
-| Build canceled          | A build is canceled                                |
-| Build timed out         | A build exceeds its timeout                        |
-| Build expired in queue  | A queued build expires                             |
-| Release uploaded        | A release is uploaded to a store track             |
-| Release approval needed | A release waits for approval                       |
-| Rollout increased       | A staged rollout moves to a higher percentage      |
-| Rollout halted          | A staged rollout is halted                         |
-| Rollout complete        | A rollout reaches 100%                             |
-| Release failed          | A release fails                                    |
-| Tester feedback         | A tester sends feedback from the QA portal         |
-| Runner offline          | A runner stops reporting (all-projects channels)   |
+| Event                           | Sent when                                                                                                  |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Build approval needed           | A build waits for a maintainer's approval                                                                  |
+| Build succeeded                 | A build succeeds                                                                                           |
+| Build failed                    | A build fails. The message links to the build logs                                                         |
+| Build canceled                  | A build is canceled                                                                                        |
+| Build timed out                 | A build exceeds its timeout                                                                                |
+| Build expired in queue          | A queued build expires                                                                                     |
+| Release uploaded                | A release is uploaded to a store track                                                                     |
+| Release approval needed         | A release waits for approval                                                                               |
+| Rollout increased               | A staged rollout moves to a higher percentage                                                              |
+| Rollout halted                  | A staged rollout is halted                                                                                 |
+| Rollout complete                | A rollout reaches 100%                                                                                     |
+| Release failed                  | A release fails                                                                                            |
+| Tester feedback                 | A tester sends feedback from the QA portal                                                                 |
+| Certificate or profile expiring | An iOS distribution certificate or provisioning profile is 30 days or 7 days from expiring, or has expired |
+| Runner offline                  | A runner stops reporting (all-projects channels)                                                           |
 
 **All events** also sends events added in later releases.
 
+Expiry reminders cover the certificates and profiles in pipeline signing
+settings and in the app's signing library. Each file sends one reminder at 30
+days, one at 7 days and one when it expires, and the message links to where
+it is replaced. A file replaced with a newer one starts its reminders again.
+App Store Connect API keys and Google Play service account keys carry no
+expiry date Oore can read, so they send no reminder.
+
 Messages post within a few seconds of the change. If Slack does not accept a message, Oore tries again up to four more times over the next eight minutes. The delivery shows as pending until then. Each channel's page shows its **Delivery history**.
+
+## One message per release
+
+By default every release change is a new post. To keep one message per release that Oore edits as it moves (uploaded, in review, approved, rolling at 20%, complete), with each change in the message's thread:
+
+1. Give the Slack app's bot token the `chat:write` scope and invite the app to the channel.
+2. Open the channel in Oore, expand **Mentions and release threads**, and enter the bot token and the **Channel ID for release threads**. The channel ID is under the channel's name in Slack, then **About**, for example `C0123ABCD`.
+
+Mentions go in the thread replies, so the person who acted is still notified. Build and runner messages keep posting through the incoming webhook. If someone deletes a release's message in Slack, Oore posts a new one on the next change.
 
 ## Tester feedback
 
-Testers can select **Feedback** on the latest release in the QA portal. The note carries their device, OS version and app version, which the form fills in and the tester can edit, plus an optional screenshot. It shows on the build's **Timeline** tab and posts to the project's channels with a **View feedback** button. Feedback messages do not mention anyone; they name the tester instead, by display name, or by email when the tester has no display name. Webhook payloads always include the tester's email.
+Testers can select **Feedback** on the latest release in the QA portal. The note carries their device, OS version and app version, which the form fills in and the tester can edit, plus an optional screenshot. It shows under **Activity** on the build's **Summary** tab and posts to the app's channels with a **View feedback** button. Feedback messages do not mention anyone; they name the tester instead, by display name, or by email when the tester has no display name. Webhook payloads always include the tester's email.
 
 Anyone who can install the build can send feedback. Each person can send 10 notes per 10 minutes. Screenshots must be PNG, JPEG or WebP images of 5 MiB or less and need artifact storage.
 
@@ -106,7 +123,7 @@ line for the Git username, because the bot token can look up only emails.
 
 ### Runner alerts do not arrive
 
-Runner offline alerts go only to channels set to **All projects**.
+Runner offline alerts go only to channels set to **All apps**.
 
 ### A delivery stays pending
 

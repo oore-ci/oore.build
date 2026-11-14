@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { buildSourceRef } from '@/lib/build-source'
 import { Link } from '@tanstack/react-router'
 import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
 import {
@@ -122,7 +123,8 @@ function storeReleasesByBuild(releases: Array<Release>) {
   for (const release of [...releases].sort(
     (left, right) => right.updated_at - left.updated_at,
   )) {
-    if (!byBuild.has(release.build_id)) byBuild.set(release.build_id, release)
+    if (release.build_id && !byBuild.has(release.build_id))
+      byBuild.set(release.build_id, release)
   }
   return byBuild
 }
@@ -178,7 +180,7 @@ function CurrentRelease({
           </CardTitle>
           <CardDescription>
             Released {relativeTime(releasedAt)}
-            {build.branch ? ` · ${build.branch}` : ''}
+            {buildSourceRef(build) ? ` · ${buildSourceRef(build)}` : ''}
             {duration ? ` · Built in ${duration}` : ''}
           </CardDescription>
         </CardHeader>
@@ -734,8 +736,8 @@ export default function QaReleasesPage() {
             </EmptyMedia>
             <EmptyTitle>No apps shared with you yet</EmptyTitle>
             <EmptyDescription>
-              Ask an owner or admin to add you to a project. Its test releases
-              will appear here automatically.
+              Ask an owner or admin to add you to an app. Its test releases will
+              appear here automatically.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>

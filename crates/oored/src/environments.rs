@@ -1571,6 +1571,9 @@ async fn execute_promotion(
                 policy: environment.rollout_policy.clone(),
                 environment_id: Some(environment.id.clone()),
                 promoted_from_release_id: Some(source.id.clone()),
+                origin: source.origin,
+                pipeline_id: None,
+                auto_rollout: true,
             },
             actor,
             Some(&note),
@@ -1632,7 +1635,7 @@ async fn execute_promotion(
     .await;
     info!(
         promotion_id,
-        build_id = %source.build_id,
+        build_id = source.build_id.as_deref().unwrap_or_default(),
         environment = %environment.key,
         release_id = %release.id,
         "build promoted"
@@ -1764,6 +1767,7 @@ pub async fn promote_build(
     Json(request): Json<CreatePromotionRequest>,
 ) -> ApiResult<EnvironmentPromotion> {
     let role = role_with(&state, &auth, &project_id, ProjectPermission::Read).await?;
+    crate::release_freezes::ensure_not_frozen(&state.db, &project_id).await?;
     request_promotion(
         ReleaseDeps::from(&*state),
         &project_id,
@@ -1783,6 +1787,7 @@ pub async fn approve_promotion(
     Path((project_id, promotion_id)): Path<(String, String)>,
     body: Option<Json<PromotionDecisionRequest>>,
 ) -> ApiResult<EnvironmentPromotion> {
+    crate::release_freezes::ensure_not_frozen(&state.db, &project_id).await?;
     decide(state, auth, project_id, promotion_id, body, true).await
 }
 
@@ -1817,7 +1822,7 @@ async fn decide(
 ) -> ApiResult<EnvironmentPromotion> {
     let role = role_with(&state, &auth, &project_id, ProjectPermission::Read).await?;
     refuse_api_token(&auth.0.auth_source).map_err(EnvironmentError::into_api)?;
-    let request = body.map(|Json(request)| request).unwrap_or_default();
+    let request = body.map_or_default(|Json(request)| request);
     decide_promotion(
         ReleaseDeps::from(&*state),
         &project_id,
@@ -1834,6 +1839,8 @@ async fn decide(
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use oore_contract::ProjectRole;
 
     use super::*;
@@ -1977,7 +1984,7 @@ mod tests {
         let release = load_release(&pool, promotion.release_id.as_deref().unwrap())
             .await
             .unwrap();
-        assert_eq!(release.build_id, "b1");
+        assert_eq!(release.build_id.as_deref(), Some("b1"));
         assert_eq!(release.track, "production");
         assert_eq!(release.version_code, Some(120));
         assert_eq!(
@@ -2034,13 +2041,13 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(
+        assert_matches!(
             again,
             Err(EnvironmentError::Conflict {
                 code: "already_in_environment",
                 ..
             })
-        ));
+        );
     }
 
     #[tokio::test]
@@ -2076,17 +2083,17 @@ mod tests {
         assert_eq!(pending.state, PromotionState::Pending);
         assert!(!pending.can_decide);
         assert!(store.promotions.lock().unwrap().is_empty());
-        assert!(matches!(
+        assert_matches!(
             request_promotion(deps, "p1", &dev_role, &dev, request()).await,
             Err(EnvironmentError::Conflict {
                 code: "promotion_pending",
                 ..
             })
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             decide_promotion(deps, "p1", &pending.id, &dev_role, &dev, true, None).await,
             Err(EnvironmentError::Forbidden(_))
-        ));
+        );
 
         let approved =
             decide_promotion(deps, "p1", &pending.id, &lead_role, &lead, true, Some("Go"))
@@ -2103,13 +2110,13 @@ mod tests {
             .unwrap();
         // The promotion was the approval; the release itself is not gated again.
         assert!(!release.awaiting_approval);
-        assert!(matches!(
+        assert_matches!(
             decide_promotion(deps, "p1", &pending.id, &lead_role, &lead, true, None).await,
             Err(EnvironmentError::Conflict {
                 code: "promotion_not_pending",
                 ..
             })
-        ));
+        );
     }
 
     #[tokio::test]
@@ -2194,7 +2201,7 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Forbidden(_))));
+        assert_matches!(result, Err(EnvironmentError::Forbidden(_)));
         let viewer = EffectiveProjectRole::Member(ProjectRole::Viewer);
         let list = list_environments(
             &pool,
@@ -2246,7 +2253,7 @@ mod tests {
 
         *store.promote_fails.lock().unwrap() = true;
         let failed = request_promotion(deps, "p1", &role, &actor, request()).await;
-        assert!(matches!(failed, Err(EnvironmentError::Store(_))));
+        assert_matches!(failed, Err(EnvironmentError::Store(_)));
         let list = list_environments(
             &pool,
             "p1",
@@ -2285,7 +2292,7 @@ mod tests {
         create_release(
             deps,
             NewRelease {
-                build_id: "b2".into(),
+                build_id: Some("b2".into()),
                 version_code: Some(121),
                 ..new_release("open", ReleasePolicy::default())
             },
@@ -2348,13 +2355,13 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(EnvironmentError::Conflict {
                 code: "no_source_release",
                 ..
             })
-        ));
+        );
     }
 
     #[tokio::test]
@@ -2387,16 +2394,16 @@ mod tests {
         let (_, actor) = maintainer();
         let mut bad_key = environment("Prod", "production", false);
         bad_key.key = "Prod".into();
-        assert!(matches!(
+        assert_matches!(
             create_environment(&pool, "p1", &actor, bad_key).await,
             Err(EnvironmentError::Invalid(_))
-        ));
+        );
         let mut gated = environment("production", "production", false);
         gated.rollout_policy.as_mut().unwrap().approval = ReleaseApprovalGate::BeforeProduction;
-        assert!(matches!(
+        assert_matches!(
             create_environment(&pool, "p1", &actor, gated).await,
             Err(EnvironmentError::Invalid(_))
-        ));
+        );
         create_environment(
             &pool,
             "p1",
@@ -2405,7 +2412,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(matches!(
+        assert_matches!(
             create_environment(
                 &pool,
                 "p1",
@@ -2417,7 +2424,7 @@ mod tests {
                 code: "environment_exists",
                 ..
             })
-        ));
+        );
         let beta = create_environment(&pool, "p1", &actor, environment("beta", "open", false))
             .await
             .unwrap();
@@ -2439,10 +2446,10 @@ mod tests {
         delete_environment(&pool, "p1", &beta.id, &actor)
             .await
             .unwrap();
-        assert!(matches!(
+        assert_matches!(
             load_environment(&pool, "p1", &beta.id).await,
             Err(EnvironmentError::NotFound(_))
-        ));
+        );
     }
 
     async fn audit_details(
@@ -2616,13 +2623,13 @@ mod tests {
         let stuck = stuck_promotion(deps, &production.id).await;
         let lock = promotion_lock("b1", &production.id);
         let held = lock.lock().await;
-        assert!(matches!(
+        assert_matches!(
             delete_environment(&pool, "p1", &production.id, &lead).await,
             Err(EnvironmentError::Conflict {
                 code: "promotion_in_progress",
                 ..
             })
-        ));
+        );
         drop(held);
         assert_eq!(promotion_state(&pool, &stuck).await.0, "promoting");
     }
@@ -2740,10 +2747,10 @@ mod tests {
             .await
             .unwrap();
         // A call that loaded the environment before the delete, then took the lock.
-        assert!(matches!(
+        assert_matches!(
             ensure_not_promoted(&pool, "b1", &production, None).await,
             Err(EnvironmentError::NotFound(_))
-        ));
+        );
     }
 
     // ── Approvers ───────────────────────────────────────────────
@@ -2938,7 +2945,7 @@ mod tests {
         let (guest_role, guest) = member(ProjectRole::Viewer, "u5", "guest@example.com");
         let refused =
             decide_promotion(deps, "p1", &pending.id, &guest_role, &guest, false, None).await;
-        assert!(matches!(refused, Err(EnvironmentError::Forbidden(_))));
+        assert_matches!(refused, Err(EnvironmentError::Forbidden(_)));
 
         // The developer who asked may approve it, as maintainers may today,
         // and the audit entry says it was their own request.
@@ -3052,7 +3059,7 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(refused, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(refused, Err(EnvironmentError::Invalid(_)));
         let updated = update_environment(
             &pool,
             "p1",

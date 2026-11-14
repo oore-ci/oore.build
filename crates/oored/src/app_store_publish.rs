@@ -15,7 +15,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, AppStoreDestination, AppStorePublishConfig, AppStoreReleaseNote, IosExportMethod,
-    PipelineAppStorePublishResponse, Release, ReleasePolicy, ReleaseState, ReleaseStore,
+    PipelineAppStorePublishResponse, Release, ReleaseState, ReleaseStore,
     RunnerAppStorePublishPlan, RunnerAppStoreUploadCredentials, RunnerPublishResult,
 };
 use serde_json::Value;
@@ -36,6 +36,7 @@ use crate::releases::{
     ReleaseChange, ReleaseDeps, ReleaseError, ReleaseStoreClient, StoreChange,
 };
 use crate::store::write_audit_log;
+use crate::store_readiness;
 use crate::util::{api_err, now_unix};
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
@@ -48,15 +49,24 @@ const MAX_LOCALE_LEN: usize = 16;
 /// App Store Connect limits both "What to Test" and "What's New" to 4000 characters.
 const MAX_WHATS_NEW_CHARS: usize = 4000;
 const MONITOR_INTERVAL: Duration = Duration::from_secs(60);
-/// Apple usually lists an upload within minutes; give up after three hours.
-const BUILD_DISCOVERY_TIMEOUT_SECS: i64 = 3 * 60 * 60;
+/// Apple usually lists an upload within minutes, but takes hours on bad
+/// days; give up after six.
+const BUILD_DISCOVERY_TIMEOUT_SECS: i64 = 6 * 60 * 60;
+/// How long Apple may sit on export compliance before the release reads as
+/// blocked on someone answering it.
+const EXPORT_COMPLIANCE_WAIT_SECS: i64 = 60 * 60;
 const POLL_PROCESSING_SECS: i64 = 60;
 const POLL_REVIEW_SECS: i64 = 5 * 60;
 const POLL_LIVE_SECS: i64 = 15 * 60;
 const POLL_ERROR_SECS: i64 = 5 * 60;
-/// How long App Store Connect may keep failing for a release before Oore
-/// gives up on it and marks it failed.
-const GIVE_UP_AFTER_SECS: i64 = 24 * 60 * 60;
+/// How long App Store Connect calls may keep failing on the way (timeouts,
+/// 5xx) before the release reads as blocked. A refusal blocks at once.
+const BLOCK_AFTER_FAILING_SECS: i64 = 60 * 60;
+/// How often a rejected version is read, in case it is resubmitted or
+/// replaced in App Store Connect.
+const POLL_REJECTED_SECS: i64 = 15 * 60;
+/// What the first read after the v0.1.51 upgrade writes to the history.
+const REMAP_REASON: &str = "Re-read from App Store Connect after upgrade";
 
 // ── Settings ────────────────────────────────────────────────────
 
@@ -132,6 +142,49 @@ pub(crate) fn normalize_config(
     }
     config.release_notes = notes;
 
+    config.earliest_release_date = config
+        .earliest_release_date
+        .take()
+        .map(|date| date.trim().to_string())
+        .filter(|date| !date.is_empty());
+    match (config.release_type, &config.earliest_release_date) {
+        (oore_contract::AppStoreReleaseType::Scheduled, None) => {
+            errors.push("A scheduled release needs a release date and time".to_string());
+        }
+        (oore_contract::AppStoreReleaseType::Scheduled, Some(date))
+            if !oore_contract::is_rfc3339_date_time(date) =>
+        {
+            errors.push(format!(
+                "'{date}' is not a date and time such as 2026-12-01T09:00:00Z"
+            ));
+        }
+        (oore_contract::AppStoreReleaseType::Scheduled, Some(_)) => {}
+        (_, Some(_)) => config.earliest_release_date = None,
+        _ => {}
+    }
+    config.release_notes_dir = config
+        .release_notes_dir
+        .take()
+        .map(|dir| dir.trim().trim_end_matches('/').to_string())
+        .filter(|dir| !dir.is_empty());
+    if let Some(dir) = &config.release_notes_dir
+        && (dir.starts_with('/') || dir.split('/').any(|part| part == ".."))
+    {
+        errors.push("The release notes directory must be a path inside the repository".to_string());
+    }
+    config.listing_dir = config
+        .listing_dir
+        .take()
+        .map(|dir| dir.trim().trim_end_matches('/').to_string())
+        .filter(|dir| !dir.is_empty());
+    if let Some(dir) = &config.listing_dir
+        && (dir.starts_with('/') || dir.split('/').any(|part| part == ".."))
+    {
+        errors.push("The store listing directory must be a path inside the repository".to_string());
+    }
+    // Only an upload carries a listing read from the repository.
+    config.listing.clear();
+
     if config.destination == AppStoreDestination::Testflight {
         config.submit_for_review = false;
         config.phased_release = false;
@@ -151,7 +204,7 @@ struct PublishTargetRow {
     updated_at: i64,
 }
 
-async fn load_config(
+pub(crate) async fn load_config(
     pool: &SqlitePool,
     pipeline_id: &str,
 ) -> sqlx::Result<Option<(AppStorePublishConfig, i64)>> {
@@ -536,6 +589,15 @@ pub(crate) async fn record_upload(
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store publish settings"))?;
     let config = uploaded_config(config, reported);
+    let store_notes: Option<String> =
+        sqlx::query_scalar("SELECT store_notes FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_optional(deps.pool)
+            .await?
+            .flatten();
+    let workflow_groups =
+        crate::signing_identities::job_testflight_groups(deps.pool, build_id).await?;
+    let config = build_overrides(config, store_notes.as_deref(), workflow_groups);
     let ipa = load_uploaded_ipa(deps.pool, build_id).await?;
     let track = settings_track(&config);
     let config_json = serde_json::to_string(&config)?;
@@ -550,8 +612,6 @@ pub(crate) async fn record_upload(
     let created = releases::insert_release(
         &mut tx,
         NewRelease {
-            project_id,
-            build_id: build_id.to_string(),
             artifact_id: Some(ipa.artifact_id.clone()),
             store: ReleaseStore::AppStore,
             track,
@@ -560,9 +620,7 @@ pub(crate) async fn record_upload(
             version_code: ipa.build_number.parse().ok(),
             state: ReleaseState::Processing,
             rollout_fraction: 0.0,
-            policy: ReleasePolicy::default(),
-            environment_id: None,
-            promoted_from_release_id: None,
+            ..NewRelease::uploaded(project_id, build_id.to_string())
         },
         &ReleaseActor::System,
         Some("Uploaded to App Store Connect; waiting for Apple to process the build"),
@@ -605,11 +663,22 @@ fn settings_track(config: &AppStorePublishConfig) -> String {
 /// have chosen and the saved settings may no longer list, so the release and
 /// its monitor use them. A runner that predates `testflight_groups` reports
 /// only the track; a track the saved settings don't produce is read as its
-/// groups. Credentials and release notes stay the saved ones.
+/// groups. Credentials stay the saved ones; release notes the runner read
+/// from the repository (`release_notes_dir`) replace the saved ones.
 fn uploaded_config(
     mut config: AppStorePublishConfig,
     reported: &RunnerPublishResult,
 ) -> AppStorePublishConfig {
+    if let Some(notes) = reported
+        .release_notes
+        .as_ref()
+        .filter(|notes| !notes.is_empty())
+    {
+        config.release_notes = notes.clone();
+    }
+    if let Some(listing) = reported.listing.as_ref().filter(|l| !l.is_empty()) {
+        config.listing = listing.clone();
+    }
     let groups: Vec<String> = match &reported.testflight_groups {
         Some(groups) => groups
             .iter()
@@ -639,6 +708,33 @@ fn uploaded_config(
     config
 }
 
+/// What the build itself asked for: release notes written when it was
+/// started replace the first locale's notes (or add `en-US`), and the
+/// workflow settings' TestFlight groups replace the groups of a TestFlight
+/// upload.
+fn build_overrides(
+    mut config: AppStorePublishConfig,
+    store_notes: Option<&str>,
+    workflow_groups: Option<Vec<String>>,
+) -> AppStorePublishConfig {
+    if let Some(notes) = store_notes.map(str::trim).filter(|notes| !notes.is_empty()) {
+        let whats_new: String = notes.chars().take(MAX_WHATS_NEW_CHARS).collect();
+        match config.release_notes.first_mut() {
+            Some(first) => first.whats_new = whats_new,
+            None => config.release_notes.push(AppStoreReleaseNote {
+                locale: "en-US".to_string(),
+                whats_new,
+            }),
+        }
+    }
+    if let Some(groups) = workflow_groups
+        && config.destination == AppStoreDestination::Testflight
+    {
+        config.testflight_groups = groups;
+    }
+    config
+}
+
 async fn insert_release_link(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     release_id: &str,
@@ -650,8 +746,8 @@ async fn insert_release_link(
     sqlx::query(
         "INSERT INTO app_store_release_links (
             release_id, pipeline_id, bundle_id, version, build_number, config,
-            stage, next_poll_at, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'awaiting_build', ?7, ?7, ?7)",
+            stage, next_poll_at, created_at, updated_at, remapped_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'awaiting_build', ?7, ?7, ?7, ?7)",
     )
     .bind(release_id)
     .bind(pipeline_id)
@@ -704,32 +800,62 @@ impl Stage {
 }
 
 /// Release state implied by an App Store version state while it is in
-/// review. `None` means the version went live and phased release decides.
-fn review_outcome(version_state: &str) -> Option<(ReleaseState, &'static str)> {
+/// review, worded as App Store Connect shows it. `None` means the version
+/// went live and phased release decides. State names follow the
+/// `AppVersionState` and older `AppStoreVersionState` enums of the App
+/// Store Connect API 4.6 OpenAPI spec.
+pub(crate) fn review_outcome(version_state: &str, version: &str) -> Option<(ReleaseState, String)> {
+    let outcome = |state, reason: &str| Some((state, reason.to_string()));
     match version_state {
-        "READY_FOR_SALE" | "READY_FOR_DISTRIBUTION" => None,
+        "READY_FOR_SALE" | "READY_FOR_DISTRIBUTION" | "PREORDER_READY_FOR_SALE" => None,
         "PREPARE_FOR_SUBMISSION" | "READY_FOR_REVIEW" => Some((
+            ReleaseState::Blocked,
+            format!(
+                "Ready to submit: build attached, but nobody has submitted version {version} for review yet. Submit it in App Store Connect."
+            ),
+        )),
+        "WAITING_FOR_REVIEW" => outcome(ReleaseState::InReview, "Waiting for App Review"),
+        "IN_REVIEW" => outcome(ReleaseState::InReview, "In App Review"),
+        "WAITING_FOR_EXPORT_COMPLIANCE" => outcome(
             ReleaseState::InReview,
-            "Build attached; submit the version for review in App Store Connect",
-        )),
-        "PENDING_DEVELOPER_RELEASE" => Some((
+            "Waiting for Apple's export compliance review",
+        ),
+        "ACCEPTED" => outcome(ReleaseState::Approved, "Approved by App Review"),
+        "PENDING_DEVELOPER_RELEASE" => outcome(
+            ReleaseState::Approved,
+            "Approved by App Review; waiting for you to release it",
+        ),
+        "PENDING_APPLE_RELEASE" => outcome(
+            ReleaseState::Approved,
+            "Approved by App Review; Apple releases it on the scheduled date",
+        ),
+        "PROCESSING_FOR_DISTRIBUTION" | "PROCESSING_FOR_APP_STORE" => outcome(
+            ReleaseState::Approved,
+            "Released; Apple is preparing the version for the App Store",
+        ),
+        "REJECTED" | "METADATA_REJECTED" | "INVALID_BINARY" => outcome(
+            ReleaseState::Rejected,
+            "Rejected by App Review. Read the Resolution Center in App Store Connect, fix what it asks, then resubmit.",
+        ),
+        "DEVELOPER_REJECTED" => outcome(
+            ReleaseState::Rejected,
+            "Pulled from review. Resubmit it when it is ready.",
+        ),
+        "PENDING_CONTRACT" => outcome(
+            ReleaseState::Blocked,
+            "Apple needs an agreement accepted in App Store Connect (Business) before it releases this version",
+        ),
+        "REPLACED_WITH_NEW_VERSION" => outcome(
+            ReleaseState::Complete,
+            "Superseded by a newer version on the App Store",
+        ),
+        "REMOVED_FROM_SALE" | "DEVELOPER_REMOVED_FROM_SALE" => {
+            outcome(ReleaseState::Halted, "Removed from sale on the App Store")
+        }
+        other => Some((
             ReleaseState::InReview,
-            "Approved by Apple; release the version in App Store Connect",
+            format!("App Store Connect shows {other}"),
         )),
-        "REJECTED" | "METADATA_REJECTED" | "INVALID_BINARY" => {
-            Some((ReleaseState::Failed, "Rejected in App Store review"))
-        }
-        "DEVELOPER_REJECTED" => Some((
-            ReleaseState::Failed,
-            "Withdrawn from review in App Store Connect",
-        )),
-        "REMOVED_FROM_SALE" | "DEVELOPER_REMOVED_FROM_SALE" | "REPLACED_WITH_NEW_VERSION" => {
-            Some((
-                ReleaseState::Halted,
-                "Version is no longer on the App Store",
-            ))
-        }
-        _ => Some((ReleaseState::InReview, "In App Store review")),
     }
 }
 
@@ -766,8 +892,11 @@ fn beta_review_outcome(external_state: Option<&str>) -> Option<(ReleaseState, &'
             ReleaseState::Complete,
             "Available to external TestFlight testers",
         )),
-        Some("BETA_REJECTED") => Some((ReleaseState::Failed, "Rejected in TestFlight beta review")),
-        Some("EXPIRED") => Some((ReleaseState::Halted, "TestFlight build expired")),
+        Some("BETA_REJECTED") => Some((
+            ReleaseState::Rejected,
+            "Rejected in TestFlight beta review; read the feedback in App Store Connect",
+        )),
+        Some("EXPIRED") => Some((ReleaseState::Complete, "TestFlight build expired")),
         _ => None,
     }
 }
@@ -777,6 +906,8 @@ fn beta_review_outcome(external_state: Option<&str>) -> Option<(ReleaseState, &'
 enum BetaReadiness {
     Ready,
     Wait,
+    /// Waiting on a person in App Store Connect.
+    Blocked(&'static str),
     Failed(&'static str),
 }
 
@@ -789,13 +920,13 @@ fn beta_readiness(detail: &AscBetaDetail, waited_secs: i64) -> BetaReadiness {
         Some("PROCESSING_EXCEPTION") => BetaReadiness::Failed(
             "Apple could not prepare the build for TestFlight; check App Store Connect",
         ),
-        Some("MISSING_EXPORT_COMPLIANCE") if waited_secs > BUILD_DISCOVERY_TIMEOUT_SECS => {
-            BetaReadiness::Failed(
-                "Apple still needs export compliance for this build; answer it in App Store Connect or set ITSAppUsesNonExemptEncryption in Info.plist",
+        Some("MISSING_EXPORT_COMPLIANCE") if waited_secs > EXPORT_COMPLIANCE_WAIT_SECS => {
+            BetaReadiness::Blocked(
+                "Export compliance needed: answer it for this build in App Store Connect, or set ITSAppUsesNonExemptEncryption in Info.plist",
             )
         }
         Some("PROCESSING") if waited_secs > BUILD_DISCOVERY_TIMEOUT_SECS => BetaReadiness::Failed(
-            "Apple did not finish processing the build for TestFlight within three hours",
+            "Apple did not finish processing the build for TestFlight within six hours",
         ),
         Some("PROCESSING" | "MISSING_EXPORT_COMPLIANCE") => BetaReadiness::Wait,
         _ => BetaReadiness::Ready,
@@ -832,6 +963,11 @@ struct LinkRow {
     created_at: i64,
     release_state: String,
     rollout_fraction: f64,
+    /// Set while polls are failing; a release blocked by those failures
+    /// leaves Blocked on the next poll that goes through.
+    failing_since: Option<i64>,
+    /// NULL until the first poll with the v0.1.51 state mapping.
+    remapped_at: Option<i64>,
 }
 
 /// Why a distribution stopped before it changed anything in App Store
@@ -863,6 +999,24 @@ impl Step {
             ..Self::default()
         }
     }
+}
+
+/// The step that ends a release whose build App Store Connect never listed:
+/// failed, with the reason every `release_failed` message shows.
+fn gave_up_discovery(link: &LinkRow, now: i64) -> Option<Step> {
+    (now - link.created_at > BUILD_DISCOVERY_TIMEOUT_SECS).then(|| Step {
+        stage: Some(Stage::Done),
+        transition: Some((
+            ReleaseState::Failed,
+            None,
+            format!(
+                "App Store Connect did not list build {} ({}) within six hours. \
+                 Check the email Apple sent about the upload, then upload again.",
+                link.version, link.build_number
+            ),
+        )),
+        ..Step::default()
+    })
 }
 
 async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscError> {
@@ -897,18 +1051,7 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
                 .find_build(&app_id, &link.version, &link.build_number)
                 .await?
             else {
-                if now_unix() - link.created_at > BUILD_DISCOVERY_TIMEOUT_SECS {
-                    step.stage = Some(Stage::Done);
-                    step.transition = Some((
-                        ReleaseState::Failed,
-                        None,
-                        format!(
-                            "App Store Connect did not list build {} ({}) within three hours",
-                            link.version, link.build_number
-                        ),
-                    ));
-                }
-                return Ok(step);
+                return Ok(gave_up_discovery(link, now_unix()).unwrap_or(step));
             };
             step.asc_build_id = Some(build.id.clone());
             match build.processing {
@@ -938,11 +1081,16 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
             let build_id = link
                 .asc_build_id
                 .clone()
-                .ok_or_else(|| AscError("App Store build ID was not recorded".to_string()))?;
+                .ok_or_else(|| AscError::new("App Store build ID was not recorded".to_string()))?;
             let beta = asc.beta_detail(&build_id).await?;
             match beta_readiness(&beta, now_unix() - link.created_at) {
                 BetaReadiness::Ready => {}
                 BetaReadiness::Wait => return Ok(step),
+                BetaReadiness::Blocked(reason) => {
+                    step.next_poll_in = POLL_REVIEW_SECS;
+                    step.transition = Some((ReleaseState::Blocked, None, reason.to_string()));
+                    return Ok(step);
+                }
                 BetaReadiness::Failed(reason) => {
                     step.stage = Some(Stage::Done);
                     step.transition = Some((ReleaseState::Failed, None, reason.to_string()));
@@ -962,7 +1110,7 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
             let build_id = link
                 .asc_build_id
                 .clone()
-                .ok_or_else(|| AscError("App Store build ID was not recorded".to_string()))?;
+                .ok_or_else(|| AscError::new("App Store build ID was not recorded".to_string()))?;
             step.next_poll_in = POLL_REVIEW_SECS;
             let external = asc.beta_detail(&build_id).await?.external;
             step.store_status = external.clone();
@@ -974,19 +1122,55 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
             Ok(step)
         }
         Stage::Review => {
-            let version_id = link
-                .asc_version_id
-                .clone()
-                .ok_or_else(|| AscError("App Store version ID was not recorded".to_string()))?;
+            let version_id = link.asc_version_id.clone().ok_or_else(|| {
+                AscError::new("App Store version ID was not recorded".to_string())
+            })?;
             step.next_poll_in = POLL_REVIEW_SECS;
-            let version_state = asc.version_state(&version_id).await?;
+            let mut version_state = asc.version_state(&version_id).await?;
+            // Oore submits the version itself: a version still waiting for a
+            // submission means the last one did not go through.
+            if config.submit_for_review
+                && matches!(
+                    version_state.as_str(),
+                    "PREPARE_FOR_SUBMISSION" | "READY_FOR_REVIEW"
+                )
+            {
+                asc.submit_for_review(&app_id, &version_id, config.cancel_previous_submission)
+                    .await?;
+                version_state = asc.version_state(&version_id).await?;
+            }
             step.store_status = Some(version_state.clone());
-            match review_outcome(&version_state) {
+            match review_outcome(&version_state, &link.version) {
                 Some((state, reason)) => {
-                    if matches!(state, ReleaseState::Failed | ReleaseState::Halted) {
-                        step.stage = Some(Stage::Done);
+                    match state {
+                        ReleaseState::Halted | ReleaseState::Complete => {
+                            step.stage = Some(Stage::Done);
+                        }
+                        ReleaseState::Rejected => step.next_poll_in = POLL_REJECTED_SECS,
+                        _ => {}
                     }
-                    step.transition = Some((state, None, reason.to_string()));
+                    // A rejected version reused for a newer build supersedes
+                    // this release.
+                    if matches!(state, ReleaseState::Rejected | ReleaseState::Blocked)
+                        && let Some(build_id) = &link.asc_build_id
+                        && asc
+                            .version_build_id(&version_id)
+                            .await?
+                            .is_some_and(|attached| attached != *build_id)
+                    {
+                        step.stage = Some(Stage::Done);
+                        step.transition = Some((
+                            ReleaseState::Complete,
+                            Some(1.0),
+                            format!(
+                                "Superseded: another build is attached to version {} now",
+                                link.version
+                            ),
+                        ));
+                        return Ok(step);
+                    }
+                    let fraction = (state == ReleaseState::Complete).then_some(1.0);
+                    step.transition = Some((state, fraction, reason));
                 }
                 None => {
                     step.stage = Some(Stage::Live);
@@ -996,10 +1180,9 @@ async fn advance(asc: &AppStoreConnect<'_>, link: &LinkRow) -> Result<Step, AscE
             Ok(step)
         }
         Stage::Live => {
-            let version_id = link
-                .asc_version_id
-                .clone()
-                .ok_or_else(|| AscError("App Store version ID was not recorded".to_string()))?;
+            let version_id = link.asc_version_id.clone().ok_or_else(|| {
+                AscError::new("App Store version ID was not recorded".to_string())
+            })?;
             step.next_poll_in = POLL_LIVE_SECS;
             let phased = asc.phased_release(&version_id).await?;
             let (state, fraction, reason) = live_outcome(
@@ -1068,9 +1251,7 @@ async fn distribute_testflight(
     asc.add_build_to_groups(build_id, &group_ids).await?;
 
     let names = config.testflight_groups.join(", ");
-    let suffix = notes_warning
-        .map(|warning| format!(" (notes not set: {warning})"))
-        .unwrap_or_default();
+    let suffix = notes_warning.map_or_default(|warning| format!(" (notes not set: {warning})"));
     if selected.iter().any(|group| !group.is_internal) {
         // A retry after a partial failure must not submit a second time.
         if !beta_review_already_submitted(beta.external.as_deref()) {
@@ -1123,20 +1304,36 @@ async fn distribute_app_store(
             notes_warning = Some(error.0);
         }
     }
+    // The listing from the repository; a refused field must not stop the
+    // submission, so it becomes a warning like the notes.
+    for listing in &config.listing {
+        if let Err(error) = asc.set_version_listing(&version_id, listing).await {
+            warn!(%error, locale = %listing.locale, "failed to set the App Store listing");
+            notes_warning = Some(error.0);
+        }
+    }
     if config.phased_release {
         asc.enable_phased_release(&version_id).await?;
     } else {
         // A reused editable version may still carry an earlier phased release.
         asc.disable_phased_release(&version_id).await?;
     }
-    let suffix = notes_warning
-        .map(|warning| format!(" (notes not set: {warning})"))
-        .unwrap_or_default();
+    // Always set, so a version created as Manual in the console follows the
+    // pipeline's choice.
+    asc.set_release_type(
+        &version_id,
+        config.release_type.asc_value(),
+        config.earliest_release_date.as_deref(),
+    )
+    .await?;
+    let suffix = notes_warning.map_or_default(|warning| format!(" (notes not set: {warning})"));
 
     step.stage = Some(Stage::Review);
     step.next_poll_in = POLL_REVIEW_SECS;
     if config.submit_for_review {
-        asc.submit_for_review(app_id, &version_id).await?;
+        asc.submit_for_review(app_id, &version_id, config.cancel_previous_submission)
+            .await?;
+        step.store_status = Some("WAITING_FOR_REVIEW".to_string());
         step.transition = Some((
             ReleaseState::InReview,
             None,
@@ -1146,11 +1343,12 @@ async fn distribute_app_store(
             ),
         ));
     } else {
+        step.store_status = Some("PREPARE_FOR_SUBMISSION".to_string());
         step.transition = Some((
-            ReleaseState::InReview,
+            ReleaseState::Blocked,
             None,
             format!(
-                "Build attached to version {}; submit it for review in App Store Connect{suffix}",
+                "Ready to submit: build attached, but nobody has submitted version {} for review yet. Submit it in App Store Connect.{suffix}",
                 link.version
             ),
         ));
@@ -1191,7 +1389,47 @@ fn state_matches(
 async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow::Result<()> {
     let mut next_poll_in = step.next_poll_in;
     let mut stage = step.stage;
-    if let Some((target, target_fraction, reason)) = step.transition
+    let mut transition = step.transition;
+    // Blocked by failing polls, and this one went through: back to where the
+    // release rests in its stage.
+    if transition.is_none()
+        && link.failing_since.is_some()
+        && link.release_state == ReleaseState::Blocked.as_str()
+    {
+        let resting = match stage.unwrap_or_else(|| Stage::parse(&link.stage)) {
+            Stage::AwaitingBuild | Stage::Distribute => Some(ReleaseState::Processing),
+            Stage::BetaReview | Stage::Review => Some(ReleaseState::InReview),
+            Stage::Live | Stage::Done => None,
+        };
+        transition = resting.map(|state| {
+            (
+                state,
+                None,
+                "App Store Connect answered again; the release is moving".to_string(),
+            )
+        });
+    }
+    // The first read after the upgrade to the new state mapping says so.
+    if link.remapped_at.is_none()
+        && let Some((_, _, reason)) = transition.as_mut()
+    {
+        *reason = format!("{REMAP_REASON}: {reason}");
+    }
+    // A submission went through: forget the refusals remembered for the app.
+    if let Some((ReleaseState::InReview | ReleaseState::Approved | ReleaseState::Rolling, _, _)) =
+        transition.as_ref()
+    {
+        let project_id: Option<String> =
+            sqlx::query_scalar("SELECT project_id FROM releases WHERE id = ?1")
+                .bind(&link.release_id)
+                .fetch_optional(deps.pool)
+                .await?;
+        if let Some(project_id) = project_id {
+            store_readiness::forget_refusals(deps.pool, &project_id, "app_store", &link.bundle_id)
+                .await?;
+        }
+    }
+    if let Some((target, target_fraction, reason)) = transition
         && !state_matches(
             &link.release_state,
             link.rollout_fraction,
@@ -1269,6 +1507,8 @@ async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow
              store_status = COALESCE(?8, store_status),
              last_error = NULL,
              failing_since = NULL,
+             notified_error = NULL,
+             remapped_at = COALESCE(remapped_at, ?6),
              next_poll_at = ?5,
              updated_at = ?6
          WHERE release_id = ?7",
@@ -1286,11 +1526,18 @@ async fn apply_step(deps: ReleaseDeps<'_>, link: &LinkRow, step: Step) -> anyhow
     Ok(())
 }
 
-/// Records a failed poll and backs off. A release that has kept failing for
-/// [`GIVE_UP_AFTER_SECS`] is marked failed with the last error as its reason.
-async fn record_poll_error(deps: ReleaseDeps<'_>, release_id: &str, message: &str) {
-    if let Err(error) = try_record_poll_error(deps, release_id, message, now_unix()).await {
-        error!(error = %error, release_id, "failed to record App Store poll error");
+/// Records a failed poll and backs off.
+///
+/// Apple refusing the request (a 4xx such as an undeclared age rating) blocks
+/// the release at once; a transient error (a 5xx, a timeout) blocks it once
+/// it has kept failing for [`BLOCK_AFTER_FAILING_SECS`]. A blocked release
+/// keeps being polled and leaves Blocked on the first poll that goes through.
+/// Each distinct reason notifies once.
+async fn record_poll_error(deps: ReleaseDeps<'_>, release_id: &str, error: &AscError) {
+    if let Err(failure) =
+        try_record_poll_error(deps, release_id, &error.0, error.is_refusal(), now_unix()).await
+    {
+        error!(error = %failure, release_id, "failed to record App Store poll error");
     }
 }
 
@@ -1298,42 +1545,68 @@ async fn try_record_poll_error(
     deps: ReleaseDeps<'_>,
     release_id: &str,
     message: &str,
+    refusal: bool,
     now: i64,
 ) -> anyhow::Result<()> {
-    let failing_since: Option<i64> = sqlx::query_scalar(
+    let row: Option<(Option<i64>, Option<String>)> = sqlx::query_as(
         "UPDATE app_store_release_links
          SET last_error = ?1, next_poll_at = ?2, updated_at = ?3,
              failing_since = COALESCE(failing_since, ?3)
          WHERE release_id = ?4
-         RETURNING failing_since",
+         RETURNING failing_since, notified_error",
     )
     .bind(message)
     .bind(now + POLL_ERROR_SECS)
     .bind(now)
     .bind(release_id)
     .fetch_optional(deps.pool)
-    .await?
-    .flatten();
-    if failing_since.is_none_or(|since| now - since < GIVE_UP_AFTER_SECS) {
+    .await?;
+    let Some((failing_since, notified_error)) = row else {
+        return Ok(());
+    };
+    let failing_long = failing_since.is_some_and(|since| now - since >= BLOCK_AFTER_FAILING_SECS);
+    if !refusal && !failing_long {
+        return Ok(());
+    }
+    if notified_error.as_deref() == Some(message) {
         return Ok(());
     }
     let release = releases::load_release(deps.pool, release_id)
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
-    let reason: String =
-        format!("App Store Connect kept failing for 24 hours; last error: {message}")
-            .chars()
-            .take(500)
-            .collect();
-    for to_state in transition_path(release.state, ReleaseState::Failed) {
+    let reason: String = if refusal {
+        format!("App Store Connect refused the request: {message}")
+    } else {
+        format!("App Store Connect has kept failing for over an hour; last error: {message}")
+    }
+    .chars()
+    .take(500)
+    .collect();
+    if refusal && let Some(bundle_id) = link_bundle_id(deps.pool, release_id).await? {
+        store_readiness::remember_refusal(
+            deps.pool,
+            &release.project_id,
+            "app_store",
+            &bundle_id,
+            message,
+            release.console_url.as_deref(),
+            now,
+        )
+        .await?;
+    }
+    if release.state == ReleaseState::Blocked {
+        releases::note_blocked_reason(deps, release_id, &reason)
+            .await
+            .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    } else if release.state.can_transition_to(ReleaseState::Blocked) {
         releases::transition_release(
             deps,
             release_id,
             ReleaseChange {
-                to_state,
+                to_state: ReleaseState::Blocked,
                 to_fraction: None,
                 audit_action: "app_store_release_updated",
-                expect: None,
+                expect: Some((release.state, release.rollout_fraction)),
                 from_store: true,
             },
             &ReleaseActor::System,
@@ -1341,19 +1614,43 @@ async fn try_record_poll_error(
         )
         .await
         .map_err(|error| anyhow::anyhow!("{error:?}"))?;
+    } else {
+        // A live phased release can't be blocked; the error shows on the
+        // release as "Needs attention" and is retried.
+        return Ok(());
     }
-    sqlx::query(
-        "UPDATE app_store_release_links SET stage = 'done', updated_at = ?1 WHERE release_id = ?2",
-    )
-    .bind(now)
-    .bind(release_id)
-    .execute(deps.pool)
-    .await?;
-    warn!(
-        release_id,
-        "gave up on an App Store release that kept failing"
-    );
+    sqlx::query("UPDATE app_store_release_links SET notified_error = ?1 WHERE release_id = ?2")
+        .bind(message)
+        .bind(release_id)
+        .execute(deps.pool)
+        .await?;
+    warn!(release_id, refusal, "App Store release is blocked");
     Ok(())
+}
+
+async fn link_bundle_id(pool: &SqlitePool, release_id: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar("SELECT bundle_id FROM app_store_release_links WHERE release_id = ?1")
+        .bind(release_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// The bundle ID a pipeline publishes to App Store Connect: its latest
+/// upload's, or the one the store vitals discovered.
+pub(crate) async fn pipeline_bundle_id(pool: &SqlitePool, pipeline_id: &str) -> Option<String> {
+    sqlx::query_scalar(
+        "SELECT bundle_id FROM (
+             SELECT bundle_id, created_at AS at FROM app_store_release_links WHERE pipeline_id = ?1
+             UNION ALL
+             SELECT app_identifier, 0 FROM store_app_vitals
+             WHERE pipeline_id = ?1 AND store = 'app_store'
+         ) ORDER BY at DESC LIMIT 1",
+    )
+    .bind(pipeline_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
 }
 
 pub(crate) async fn load_credentials(
@@ -1371,7 +1668,7 @@ async fn due_links(pool: &SqlitePool) -> sqlx::Result<Vec<LinkRow>> {
     sqlx::query_as::<_, LinkRow>(
         "SELECT l.release_id, l.pipeline_id, l.bundle_id, l.version, l.build_number, l.config,
                 l.stage, l.asc_app_id, l.asc_build_id, l.asc_version_id, l.created_at,
-                r.state AS release_state, r.rollout_fraction
+                r.state AS release_state, r.rollout_fraction, l.failing_since, l.remapped_at
          FROM app_store_release_links l
          JOIN releases r ON r.id = l.release_id
          WHERE l.stage <> 'done'
@@ -1399,7 +1696,12 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
         let creds = match load_credentials(state, &link.pipeline_id).await {
             Ok(creds) => creds,
             Err(error) => {
-                record_poll_error(deps, &link.release_id, &error.to_string()).await;
+                record_poll_error(
+                    deps,
+                    &link.release_id,
+                    &AscError::refused(error.to_string()),
+                )
+                .await;
                 continue;
             }
         };
@@ -1418,7 +1720,12 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
                     );
                     if let Err(error) = apply_step(deps, &current, step).await {
                         error!(%error, release_id = %current.release_id, "failed to apply App Store release step");
-                        record_poll_error(deps, &current.release_id, &format!("{error:#}")).await;
+                        record_poll_error(
+                            deps,
+                            &current.release_id,
+                            &AscError::new(format!("{error:#}")),
+                        )
+                        .await;
                         break;
                     }
                     if !immediate {
@@ -1433,7 +1740,7 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
                 }
                 Err(error) => {
                     warn!(%error, release_id = %current.release_id, "App Store Connect poll failed");
-                    record_poll_error(deps, &current.release_id, &error.0).await;
+                    record_poll_error(deps, &current.release_id, &error).await;
                     break;
                 }
             }
@@ -1443,7 +1750,7 @@ pub(crate) async fn poll_releases(state: &AppState, client: &reqwest::Client) {
 
 /// The client for App Store Connect calls. Bounded, so one hung request
 /// cannot stall the monitor for every release or a user's release control.
-fn app_store_http_client() -> reqwest::Client {
+pub(crate) fn app_store_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
@@ -1481,6 +1788,61 @@ impl AppStoreReleaseClient {
             encryption_key,
             client: app_store_http_client(),
         }
+    }
+
+    /// Release now, resubmit, pull from review, or read Apple again. Apple's
+    /// answer reaches the release through the monitor, which polls next.
+    async fn act(&self, release: &Release, action: releases::StoreAction) -> anyhow::Result<()> {
+        type LinkIds = (String, Option<String>, Option<String>, String);
+        let link: Option<LinkIds> = sqlx::query_as(
+            "SELECT pipeline_id, asc_app_id, asc_version_id, config FROM app_store_release_links
+             WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((pipeline_id, app_id, version_id, config)) = link else {
+            anyhow::bail!("Oore does not follow this release in App Store Connect");
+        };
+        if action != releases::StoreAction::Retry {
+            let (Some(app_id), Some(version_id)) = (app_id, version_id) else {
+                anyhow::bail!("This release has no App Store version yet");
+            };
+            let row = load_signing_key_row(&self.pool, &pipeline_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("pipeline has no iOS signing settings"))?;
+            let creds = decrypt_credentials(&row, &self.encryption_key)?
+                .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store Connect API key"))?;
+            let asc = AppStoreConnect::new(&self.client, &creds);
+            let config: AppStorePublishConfig = serde_json::from_str(&config).unwrap_or_default();
+            match action {
+                releases::StoreAction::ReleaseNow => asc.release_version(&version_id).await,
+                releases::StoreAction::Resubmit => {
+                    asc.submit_for_review(&app_id, &version_id, config.cancel_previous_submission)
+                        .await
+                }
+                releases::StoreAction::PullFromReview => {
+                    asc.cancel_review(&app_id, &version_id).await
+                }
+                releases::StoreAction::Retry => Ok(()),
+            }
+            .map_err(|error| anyhow::anyhow!(error.0))?;
+        }
+        // Read Apple on the next monitor pass; a resubmitted version is
+        // followed through review again.
+        sqlx::query(
+            "UPDATE app_store_release_links
+             SET next_poll_at = 0,
+                 stage = CASE WHEN ?2 AND stage = 'done' THEN 'review' ELSE stage END,
+                 updated_at = ?3
+             WHERE release_id = ?1",
+        )
+        .bind(&release.id)
+        .bind(action == releases::StoreAction::Resubmit)
+        .bind(now_unix())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
     }
 
     async fn apply_change(&self, release: &Release, change: StoreChange) -> anyhow::Result<()> {
@@ -1574,8 +1936,9 @@ pub(crate) async fn record_promoted_link(
     sqlx::query(
         "INSERT INTO app_store_release_links (
             release_id, pipeline_id, bundle_id, version, build_number, config, stage,
-            asc_app_id, asc_build_id, asc_version_id, next_poll_at, created_at, updated_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+            asc_app_id, asc_build_id, asc_version_id, next_poll_at, created_at, updated_at,
+            remapped_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12, ?12)",
     )
     .bind(release_id)
     .bind(&link.pipeline_id)
@@ -1690,7 +2053,7 @@ async fn ensure_version_free(
         "SELECT l.version, l.build_number FROM app_store_release_links l
          JOIN releases r ON r.id = l.release_id
          WHERE l.asc_version_id = ?1 AND l.stage IN ('review', 'live')
-           AND r.state <> 'failed' AND r.build_id <> ?2
+           AND r.state <> 'failed' AND COALESCE(r.build_id, '') <> ?2
          LIMIT 1",
     )
     .bind(version_id)
@@ -1771,9 +2134,17 @@ pub(crate) async fn promote_with(
     }
 
     let uploaded: AppStorePublishConfig = serde_json::from_str(&link.config).unwrap_or_default();
+    // When Apple releases the version follows the pipeline's current
+    // settings, as an upload's would.
+    let saved = load_config(pool, &link.pipeline_id)
+        .await?
+        .map_or_default(|(config, _)| config);
     let mut config = AppStorePublishConfig {
         enabled: true,
         uses_non_exempt_encryption: uploaded.uses_non_exempt_encryption,
+        release_type: saved.release_type,
+        earliest_release_date: saved.earliest_release_date,
+        cancel_previous_submission: saved.cancel_previous_submission,
         ..AppStorePublishConfig::default()
     };
     let mut new_link = LinkRow {
@@ -1790,10 +2161,17 @@ pub(crate) async fn promote_with(
         created_at: now_unix(),
         release_state: ReleaseState::Processing.as_str().to_string(),
         rollout_fraction: 0.0,
+        failing_since: None,
+        remapped_at: Some(now_unix()),
     };
     let step = if target.track == APP_STORE_TRACK {
         let version_id = promotion_version(asc, &app_id, &link.version).await?;
-        ensure_version_free(pool, &version_id, &source.build_id).await?;
+        ensure_version_free(
+            pool,
+            &version_id,
+            source.build_id.as_deref().unwrap_or_default(),
+        )
+        .await?;
         new_link.asc_version_id = Some(version_id);
         config.destination = AppStoreDestination::AppStore;
         // No release notes: "What's New" is prepared in App Store Connect,
@@ -1898,6 +2276,18 @@ impl ReleaseStoreClient for StoreRouter {
         }
     }
 
+    fn act<'a>(
+        &'a self,
+        release: &'a Release,
+        action: releases::StoreAction,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        if release.store == ReleaseStore::AppStore {
+            Box::pin(self.app_store.act(release, action))
+        } else {
+            self.other.act(release, action)
+        }
+    }
+
     fn crash_rate<'a>(
         &'a self,
         release: &'a Release,
@@ -1924,7 +2314,47 @@ impl ReleaseStoreClient for StoreRouter {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
+
+    #[test]
+    fn notes_and_groups_chosen_for_the_build_win() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::Testflight,
+            testflight_groups: vec!["Everyone".into()],
+            release_notes: vec![
+                AppStoreReleaseNote {
+                    locale: "en-GB".into(),
+                    whats_new: "Saved".into(),
+                },
+                AppStoreReleaseNote {
+                    locale: "de-DE".into(),
+                    whats_new: "Gespeichert".into(),
+                },
+            ],
+            ..AppStorePublishConfig::default()
+        };
+        let config = build_overrides(
+            saved.clone(),
+            Some("  Faster sync  "),
+            Some(vec!["QA".into()]),
+        );
+        assert_eq!(config.release_notes[0].whats_new, "Faster sync");
+        assert_eq!(config.release_notes[1].whats_new, "Gespeichert");
+        assert_eq!(config.testflight_groups, vec!["QA"]);
+
+        let untouched = build_overrides(saved.clone(), Some("  "), None);
+        assert_eq!(untouched, saved);
+
+        let store = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            ..AppStorePublishConfig::default()
+        };
+        let config = build_overrides(store, Some("New"), Some(vec!["QA".into()]));
+        assert_eq!(config.release_notes[0].locale, "en-US");
+        assert!(config.testflight_groups.is_empty());
+    }
     use crate::app_store_connect_keys::tests::{insert_shared_key, insert_signing, signing_pool};
 
     #[tokio::test]
@@ -1991,8 +2421,38 @@ mod tests {
             created_at: 0,
             release_state: state.as_str().into(),
             rollout_fraction: fraction,
+            failing_since: None,
+            remapped_at: Some(0),
         };
         (release, link)
+    }
+
+    #[tokio::test]
+    async fn giving_up_on_a_build_apple_never_listed_notifies_with_the_reason() {
+        let pool = releases::tests::pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (release, mut link) = app_store_release(deps, ReleaseState::Processing, 0.0).await;
+        link.stage = "awaiting_build".into();
+        link.created_at = 1_000;
+        assert!(gave_up_discovery(&link, 1_000 + BUILD_DISCOVERY_TIMEOUT_SECS).is_none());
+        let step = gave_up_discovery(&link, 1_001 + BUILD_DISCOVERY_TIMEOUT_SECS).unwrap();
+
+        let mut events = scheduler.subscribe_release_events();
+        apply_step(deps, &link, step).await.unwrap();
+        let failed = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(failed.state, ReleaseState::Failed);
+        let event = events.try_recv().unwrap();
+        assert_eq!(
+            crate::notification_dispatch::release_event_type_name(event.kind),
+            Some("release_failed")
+        );
+        assert!(event.reason.unwrap().contains("within six hours"));
     }
 
     #[tokio::test]
@@ -2120,7 +2580,7 @@ mod tests {
         let (release, _) = app_store_release(deps, ReleaseState::InReview, 0.0).await;
         let start = 1_000_000;
 
-        try_record_poll_error(deps, &release.id, "401 NOT_AUTHORIZED", start)
+        try_record_poll_error(deps, &release.id, "500 server error", false, start)
             .await
             .unwrap();
         let (last_error, next_poll_at): (Option<String>, i64) = sqlx::query_as(
@@ -2130,40 +2590,100 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(last_error.as_deref(), Some("401 NOT_AUTHORIZED"));
+        assert_eq!(last_error.as_deref(), Some("500 server error"));
         assert_eq!(next_poll_at, start + POLL_ERROR_SECS);
         // The error reaches the release, so the UI can say why it is stuck.
         let waiting = releases::load_release(&pool, &release.id).await.unwrap();
         assert_eq!(waiting.state, ReleaseState::InReview);
-        assert_eq!(waiting.store_error.as_deref(), Some("401 NOT_AUTHORIZED"));
+        assert_eq!(waiting.store_error.as_deref(), Some("500 server error"));
         assert_eq!(waiting.store_error_since, Some(start));
 
+        // A transient error blocks the release after an hour, and never
+        // gives up on it.
         try_record_poll_error(
             deps,
             &release.id,
-            "401 NOT_AUTHORIZED",
-            start + GIVE_UP_AFTER_SECS,
+            "500 server error",
+            false,
+            start + BLOCK_AFTER_FAILING_SECS,
         )
         .await
         .unwrap();
-        let failed = releases::load_release(&pool, &release.id).await.unwrap();
-        assert_eq!(failed.state, ReleaseState::Failed);
+        let blocked = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(blocked.state, ReleaseState::Blocked);
         let reason: String = sqlx::query_scalar(
-            "SELECT reason FROM release_history WHERE release_id = ?1 AND to_state = 'failed'",
+            "SELECT reason FROM release_history WHERE release_id = ?1 AND to_state = 'blocked'",
         )
         .bind(&release.id)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert!(reason.contains("401 NOT_AUTHORIZED"));
+        assert!(reason.contains("500 server error"));
         let stage: String =
             sqlx::query_scalar("SELECT stage FROM app_store_release_links WHERE release_id = ?1")
                 .bind(&release.id)
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(stage, "done");
+        assert_ne!(stage, "done");
+        // The same reason again notes nothing new.
+        try_record_poll_error(
+            deps,
+            &release.id,
+            "500 server error",
+            false,
+            start + 2 * BLOCK_AFTER_FAILING_SECS,
+        )
+        .await
+        .unwrap();
+        let notes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM release_history WHERE release_id = ?1 AND to_state = 'blocked'",
+        )
+        .bind(&release.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(notes, 1);
         assert!(store.changes.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refusal_blocks_at_once_and_is_remembered() {
+        let pool = releases::tests::pool().await;
+        let scheduler = crate::scheduler::Scheduler::new(16);
+        let store = releases::tests::FakeStore::default();
+        let deps = ReleaseDeps {
+            pool: &pool,
+            scheduler: &scheduler,
+            store: &store,
+        };
+        let (release, _) = app_store_release(deps, ReleaseState::InReview, 0.0).await;
+        let mut events = scheduler.subscribe_release_events();
+        try_record_poll_error(
+            deps,
+            &release.id,
+            "Submitting for review failed (409): ageRatingDeclaration is missing",
+            true,
+            1_000,
+        )
+        .await
+        .unwrap();
+        let blocked = releases::load_release(&pool, &release.id).await.unwrap();
+        assert_eq!(blocked.state, ReleaseState::Blocked);
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.kind, crate::scheduler::ReleaseEventKind::Blocked);
+        let code: String = sqlx::query_scalar("SELECT code FROM store_readiness_memory")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(code, "age_rating");
+        // A different refusal while blocked notifies once more.
+        try_record_poll_error(deps, &release.id, "Something else (409)", true, 2_000)
+            .await
+            .unwrap();
+        let event = events.try_recv().unwrap();
+        assert_eq!(event.kind, crate::scheduler::ReleaseEventKind::Blocked);
+        assert!(events.try_recv().is_err());
     }
 
     fn testflight(groups: &[&str]) -> AppStorePublishConfig {
@@ -2252,23 +2772,40 @@ mod tests {
     #[test]
     fn review_states_map_to_release_states() {
         assert_eq!(
-            review_outcome("WAITING_FOR_REVIEW").map(|(state, _)| state),
+            review_outcome("WAITING_FOR_REVIEW", "1.0").map(|(state, _)| state),
             Some(ReleaseState::InReview)
         );
         assert_eq!(
-            review_outcome("IN_REVIEW").map(|(state, _)| state),
+            review_outcome("IN_REVIEW", "1.0").map(|(state, _)| state),
             Some(ReleaseState::InReview)
         );
         assert_eq!(
-            review_outcome("PENDING_DEVELOPER_RELEASE").map(|(state, _)| state),
-            Some(ReleaseState::InReview)
+            review_outcome("PENDING_DEVELOPER_RELEASE", "1.0").map(|(state, _)| state),
+            Some(ReleaseState::Approved)
         );
         assert_eq!(
-            review_outcome("REJECTED").map(|(state, _)| state),
-            Some(ReleaseState::Failed)
+            review_outcome("REJECTED", "1.0").map(|(state, _)| state),
+            Some(ReleaseState::Rejected)
         );
-        assert_eq!(review_outcome("READY_FOR_SALE"), None);
-        assert_eq!(review_outcome("READY_FOR_DISTRIBUTION"), None);
+        assert_eq!(
+            review_outcome("METADATA_REJECTED", "1.0").map(|(state, _)| state),
+            Some(ReleaseState::Rejected)
+        );
+        assert_eq!(
+            review_outcome("DEVELOPER_REJECTED", "1.0").map(|(state, _)| state),
+            Some(ReleaseState::Rejected)
+        );
+        // Never submitted: not in review, so the release says so.
+        assert_eq!(
+            review_outcome("PREPARE_FOR_SUBMISSION", "1.0").map(|(state, _)| state),
+            Some(ReleaseState::Blocked)
+        );
+        assert_eq!(
+            review_outcome("REPLACED_WITH_NEW_VERSION", "1.0").map(|(state, _)| state),
+            Some(ReleaseState::Complete)
+        );
+        assert_eq!(review_outcome("READY_FOR_SALE", "1.0"), None);
+        assert_eq!(review_outcome("READY_FOR_DISTRIBUTION", "1.0"), None);
     }
 
     #[test]
@@ -2300,12 +2837,14 @@ mod tests {
     fn transitions_hop_through_rolling_when_needed() {
         use ReleaseState::*;
         assert_eq!(transition_path(Processing, InReview), vec![InReview]);
+        assert_eq!(transition_path(Processing, Complete), vec![Complete]);
+        assert_eq!(transition_path(InReview, Complete), vec![Complete]);
+        assert_eq!(transition_path(InReview, Paused), vec![Paused]);
         assert_eq!(
-            transition_path(Processing, Complete),
+            transition_path(Uploading, Complete),
             vec![Rolling, Complete]
         );
-        assert_eq!(transition_path(InReview, Complete), vec![Rolling, Complete]);
-        assert_eq!(transition_path(InReview, Paused), vec![Rolling, Paused]);
+        assert_eq!(transition_path(Blocked, InReview), vec![InReview]);
         assert_eq!(transition_path(Rolling, Complete), vec![Complete]);
         assert_eq!(transition_path(InReview, Halted), vec![Failed]);
         assert_eq!(transition_path(Rolling, Halted), vec![Halted]);
@@ -2325,14 +2864,14 @@ mod tests {
             beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), 60),
             BetaReadiness::Wait
         );
-        assert!(matches!(
-            beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), BUILD_DISCOVERY_TIMEOUT_SECS + 1),
-            BetaReadiness::Failed(reason) if reason.contains("export compliance")
-        ));
-        assert!(matches!(
+        assert_matches!(
+            beta_readiness(&detail("MISSING_EXPORT_COMPLIANCE"), EXPORT_COMPLIANCE_WAIT_SECS + 1),
+            BetaReadiness::Blocked(reason) if reason.contains("Export compliance")
+        );
+        assert_matches!(
             beta_readiness(&detail("PROCESSING_EXCEPTION"), 0),
             BetaReadiness::Failed(_)
-        ));
+        );
         assert_eq!(
             beta_readiness(&detail("READY_FOR_BETA_TESTING"), 0),
             BetaReadiness::Ready
@@ -2365,7 +2904,7 @@ mod tests {
         );
         assert_eq!(
             beta_review_outcome(Some("BETA_REJECTED")).map(|(state, _)| state),
-            Some(ReleaseState::Failed)
+            Some(ReleaseState::Rejected)
         );
     }
 
@@ -2461,6 +3000,9 @@ mod tests {
             status: "uploaded".to_string(),
             testflight_groups: groups
                 .map(|groups| groups.iter().map(|group| group.to_string()).collect()),
+            held_for_review: false,
+            release_notes: None,
+            listing: None,
         }
     }
 
@@ -2524,6 +3066,25 @@ mod tests {
             uploaded_config(saved.clone(), &reported("app_store", None)),
             saved
         );
+    }
+
+    #[test]
+    fn the_reported_listing_goes_with_the_version() {
+        let saved = AppStorePublishConfig {
+            destination: AppStoreDestination::AppStore,
+            listing_dir: Some("fastlane/metadata".to_string()),
+            ..testflight(&[])
+        };
+        let listing = vec![oore_contract::AppStoreListing {
+            locale: "en-US".to_string(),
+            keywords: Some("shop".to_string()),
+            ..Default::default()
+        }];
+        let report = RunnerPublishResult {
+            listing: Some(listing.clone()),
+            ..reported("app_store", None)
+        };
+        assert_eq!(uploaded_config(saved, &report).listing, listing);
     }
 
     #[test]
@@ -2632,8 +3193,8 @@ mod tests {
         }
         async fn attach_build_to_version(&self, version_id: &str, build_id: &str) -> AscResult<()> {
             if *self.attach_fails.lock().unwrap() {
-                return Err(AscError(
-                    "Attaching build to App Store version failed (500): server error".into(),
+                return Err(AscError::new(
+                    "Attaching build to App Store version failed (500): server error",
                 ));
             }
             self.record(format!("attach {build_id} to {version_id}"));
@@ -2648,6 +3209,14 @@ mod tests {
             self.record(format!("version notes {version_id} {locale}"));
             Ok(())
         }
+        async fn set_version_listing(
+            &self,
+            version_id: &str,
+            listing: &oore_contract::AppStoreListing,
+        ) -> AscResult<()> {
+            self.record(format!("version listing {version_id} {}", listing.locale));
+            Ok(())
+        }
         async fn enable_phased_release(&self, version_id: &str) -> AscResult<()> {
             self.record(format!("phased on {version_id}"));
             Ok(())
@@ -2656,8 +3225,22 @@ mod tests {
             self.record(format!("phased off {version_id}"));
             Ok(())
         }
-        async fn submit_for_review(&self, app_id: &str, version_id: &str) -> AscResult<()> {
+        async fn submit_for_review(
+            &self,
+            app_id: &str,
+            version_id: &str,
+            _: bool,
+        ) -> AscResult<()> {
             self.record(format!("review {app_id} {version_id}"));
+            Ok(())
+        }
+        async fn set_release_type(
+            &self,
+            version_id: &str,
+            release_type: &str,
+            _: Option<&str>,
+        ) -> AscResult<()> {
+            self.record(format!("get release type {version_id} {release_type}"));
             Ok(())
         }
     }
@@ -2747,12 +3330,12 @@ mod tests {
         let release = releases::create_release(
             deps,
             NewRelease {
-                build_id: build_id.into(),
+                build_id: Some(build_id.into()),
                 version_code: build_number.parse().ok(),
                 store: ReleaseStore::AppStore,
                 state: ReleaseState::Complete,
                 rollout_fraction: 1.0,
-                ..releases::tests::new_release("Internal", ReleasePolicy::default())
+                ..releases::tests::new_release("Internal", oore_contract::ReleasePolicy::default())
             },
             &ReleaseActor::System,
             Some("Available in TestFlight to Internal"),
@@ -2792,9 +3375,9 @@ mod tests {
             store: ReleaseStore::AppStore,
             track: track.into(),
             approval_required,
-            rollout_policy: Some(ReleasePolicy {
+            rollout_policy: Some(oore_contract::ReleasePolicy {
                 steps,
-                ..ReleasePolicy::default()
+                ..oore_contract::ReleasePolicy::default()
             }),
             submit_for_review,
             approvers: None,
@@ -3018,7 +3601,7 @@ mod tests {
         let release_id = promotion.release_id.unwrap();
         let reason = history_reason(&pool, &release_id).await;
         assert!(
-            reason.contains("submit it for review in App Store Connect"),
+            reason.contains("Submit it in App Store Connect"),
             "{reason}"
         );
     }
@@ -3049,7 +3632,7 @@ mod tests {
         let Err(error) = failed else {
             panic!("the promotion succeeded");
         };
-        assert!(matches!(error, EnvironmentError::Store(_)));
+        assert_matches!(error, EnvironmentError::Store(_));
         assert_eq!(error.into_api().0, axum::http::StatusCode::BAD_GATEWAY);
         let list = environments::list_environments(
             &pool,
@@ -3367,7 +3950,7 @@ mod tests {
             app_store_environment("beta", "External", false, vec![1.0], true),
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(result, Err(EnvironmentError::Invalid(_)));
 
         let beta = environments::create_environment(
             &pool,
@@ -3388,7 +3971,7 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(result, Err(EnvironmentError::Invalid(_)));
         // Moving an App Store environment off the app_store track clears nothing
         // silently: the combination is refused.
         let production = environments::create_environment(
@@ -3410,6 +3993,6 @@ mod tests {
             },
         )
         .await;
-        assert!(matches!(result, Err(EnvironmentError::Invalid(_))));
+        assert_matches!(result, Err(EnvironmentError::Invalid(_)));
     }
 }

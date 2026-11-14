@@ -6,6 +6,7 @@ import {
   CheckmarkCircle02Icon,
   Download04Icon,
 } from '@hugeicons/core-free-icons'
+import type { Project } from '@oore/client/models'
 import { useProject } from '@/hooks/use-projects'
 import { useBuilds, useProjectArtifacts } from '@/hooks/use-builds'
 import {
@@ -41,6 +42,7 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Stack } from '@/components/layout/stack'
+import { FirstPipelinesSetup } from '@/components/first-pipelines-setup'
 import { Text } from '@/components/layout/text'
 import { stepMarkerVariants } from '@/lib/recipes'
 
@@ -197,6 +199,7 @@ export default function SetupChecklist({
                     <>
                       <Text variant="muted">{next.detail}</Text>
                       <SetupAction
+                        project={project}
                         canChangeSource={canChangeSource}
                         canConfigure={canConfigure}
                         canRun={canRun}
@@ -217,6 +220,7 @@ export default function SetupChecklist({
 }
 
 function SetupAction({
+  project,
   canChangeSource,
   canConfigure,
   canRun,
@@ -224,6 +228,7 @@ function SetupAction({
   next,
   projectId,
 }: {
+  project: Project
   canChangeSource: boolean
   canConfigure: boolean
   canRun: boolean
@@ -255,22 +260,9 @@ function SetupAction({
       )
     case 'pipeline':
       return canConfigure ? (
-        <div className="pt-1">
-          <Button
-            size="sm"
-            render={
-              <Link
-                to="/projects/$projectId/pipelines/new"
-                params={{ projectId }}
-              />
-            }
-            nativeButton={false}
-          >
-            Add pipeline
-          </Button>
-        </div>
+        <FirstPipelinesSetup project={project} />
       ) : (
-        hint('Ask a project maintainer to add a pipeline.')
+        hint('Ask an app maintainer to add a pipeline.')
       )
     case 'build':
       return canRun ? (
@@ -290,7 +282,7 @@ function SetupAction({
           </Button>
         </div>
       ) : (
-        hint('Ask a project maintainer for permission to run builds.')
+        hint('Ask an app maintainer for permission to run builds.')
       )
     case 'install':
       return latestBuildId ? (

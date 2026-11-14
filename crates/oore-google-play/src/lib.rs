@@ -169,6 +169,28 @@ pub enum ReleaseStatus {
     Halted,
 }
 
+/// One language of a store listing. Absent fields stay as they are in
+/// Play Console.
+#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Listing {
+    #[serde(skip)]
+    pub language: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub video: Option<String>,
+}
+
+/// Longest listing fields Play takes.
+pub const MAX_TITLE_CHARS: usize = 30;
+pub const MAX_SHORT_DESCRIPTION_CHARS: usize = 80;
+pub const MAX_FULL_DESCRIPTION_CHARS: usize = 4000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LocalizedText {
     pub language: String,
@@ -213,6 +235,16 @@ pub struct TrackState {
     pub track: String,
     #[serde(default)]
     pub releases: Vec<TrackRelease>,
+}
+
+/// How Play took a committed edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitOutcome {
+    /// The changes went out, and to review where Play reviews them.
+    SentForReview,
+    /// Play only took the edit with `changesNotSentForReview=true`: the
+    /// changes wait in Play Console until someone sends them for review.
+    HeldForReview,
 }
 
 /// An open Play edit. Nothing is visible in Play Console until `commit`.
@@ -501,6 +533,19 @@ impl<'a> PlayEdits<'a> {
         .await
     }
 
+    /// Update one language of the store listing; fields left out stay.
+    pub async fn update_listing(&self, listing: &Listing) -> anyhow::Result<()> {
+        let _: serde_json::Value = play_json(
+            self.http
+                .patch(self.api(&format!("/listings/{}", listing.language)))
+                .bearer_auth(&self.token)
+                .json(listing),
+            "update the store listing",
+        )
+        .await?;
+        Ok(())
+    }
+
     /// Replace the track's releases with `release`.
     pub async fn update_track(&self, track: &str, release: &TrackRelease) -> anyhow::Result<()> {
         let _: serde_json::Value = play_json(
@@ -525,16 +570,46 @@ impl<'a> PlayEdits<'a> {
     /// On an error the edit stays open for the caller to delete. An error
     /// for which [`is_play_rejection`] is false may hide a commit that went
     /// through.
-    pub async fn commit(&self) -> anyhow::Result<()> {
+    pub async fn commit(&self) -> anyhow::Result<CommitOutcome> {
         match play_json::<serde_json::Value>(self.commit_request(false), "commit the edit").await {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(CommitOutcome::SentForReview),
             Err(error) if wants_changes_not_sent_for_review(&error.to_string()) => {
                 let _: serde_json::Value =
                     play_json(self.commit_request(true), "commit the edit").await?;
-                Ok(())
+                Ok(CommitOutcome::HeldForReview)
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// Ask Play to check the edit as it stands, without committing it. Play
+    /// answers with the same refusal a commit would get, so a problem shows
+    /// before anything changes in Play Console.
+    pub async fn validate(&self) -> anyhow::Result<()> {
+        let _: serde_json::Value = play_json(
+            self.http
+                .post(self.api(":validate"))
+                .bearer_auth(&self.token)
+                .json(&serde_json::json!({})),
+            "validate the edit",
+        )
+        .await?;
+        Ok(())
+    }
+
+    /// Every track of the app with its releases.
+    pub async fn list_tracks(&self) -> anyhow::Result<Vec<TrackState>> {
+        #[derive(Deserialize)]
+        struct Tracks {
+            #[serde(default)]
+            tracks: Vec<TrackState>,
+        }
+        let tracks: Tracks = play_json(
+            self.http.get(self.api("/tracks")).bearer_auth(&self.token),
+            "list the tracks",
+        )
+        .await?;
+        Ok(tracks.tracks)
     }
 
     // Google's front end answers a bodyless POST with 411 Length Required,
@@ -806,9 +881,8 @@ fn metric_value(row: &serde_json::Value, metric: &str) -> Option<f64> {
 }
 
 fn parse_vitals_rate(response: &serde_json::Value, daily: &str, rolling: &str) -> PlayVitalsRate {
-    let mut rows: Vec<(ReportingDate, Option<f64>, Option<f64>)> = response["rows"]
-        .as_array()
-        .map(|rows| {
+    let mut rows: Vec<(ReportingDate, Option<f64>, Option<f64>)> =
+        response["rows"].as_array().map_or_default(|rows| {
             rows.iter()
                 .filter_map(|row| {
                     let date: ReportingDate =
@@ -816,8 +890,7 @@ fn parse_vitals_rate(response: &serde_json::Value, daily: &str, rolling: &str) -
                     Some((date, metric_value(row, daily), metric_value(row, rolling)))
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     rows.sort_by_key(|(date, _, _)| (date.year, date.month, date.day));
     PlayVitalsRate {
         rate_28d: rows.iter().rev().find_map(|(_, _, rolling)| *rolling),
@@ -886,23 +959,20 @@ fn parse_error_issues(response: &serde_json::Value) -> Vec<PlayErrorIssue> {
             .unwrap_or(0)
     };
     let text = |value: &serde_json::Value| value.as_str().unwrap_or_default().to_string();
-    response["errorIssues"]
-        .as_array()
-        .map(|issues| {
-            issues
-                .iter()
-                .map(|issue| PlayErrorIssue {
-                    kind: text(&issue["type"]),
-                    cause: text(&issue["cause"]),
-                    location: text(&issue["location"]),
-                    reports: count(&issue["errorReportCount"]),
-                    users: count(&issue["distinctUsers"]),
-                    last_report_time: issue["lastErrorReportTime"].as_str().map(str::to_string),
-                    url: issue["issueUri"].as_str().map(str::to_string),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    response["errorIssues"].as_array().map_or_default(|issues| {
+        issues
+            .iter()
+            .map(|issue| PlayErrorIssue {
+                kind: text(&issue["type"]),
+                cause: text(&issue["cause"]),
+                location: text(&issue["location"]),
+                reports: count(&issue["errorReportCount"]),
+                users: count(&issue["distinctUsers"]),
+                last_report_time: issue["lastErrorReportTime"].as_str().map(str::to_string),
+                url: issue["issueUri"].as_str().map(str::to_string),
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]

@@ -12,7 +12,10 @@ import { useFirstAppScope, useFirstAppStore } from '@/stores/first-app-store'
 
 import type { RepositoryWorkflowPreview } from '@oore/client/models'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
-import { DEFAULT_TIMEOUT_MINUTES } from '@/lib/pipeline-schema'
+import {
+  EMPTY_PIPELINE_VALUES,
+  PIPELINE_TEMPLATES,
+} from '@/lib/pipeline-templates'
 import { canChangeApprovalPolicy } from '@/hooks/use-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 import {
@@ -80,132 +83,6 @@ export const Route = createFileRoute('/projects/$projectId/pipelines/new')({
   component: NewPipelinePage,
 })
 
-const emptyDefaults: PipelineFormValues = {
-  name: '',
-  config_mode: 'auto',
-  config_path: '.oore.yaml',
-  platform_android: true,
-  platform_ios: false,
-  platform_macos: false,
-  android_signing_release_enabled: false,
-  android_signing_release_store_password: '',
-  android_signing_release_key_alias: '',
-  android_signing_release_key_password: '',
-  android_signing_debug_enabled: false,
-  android_signing_debug_store_password: '',
-  android_signing_debug_key_alias: '',
-  android_signing_debug_key_password: '',
-  ios_signing_enabled: false,
-  ios_signing_mode: 'manual',
-  ios_signing_export_method: 'ad_hoc',
-  ios_signing_team_id: '',
-  ios_signing_bundle_ids: '',
-  ios_signing_p12_password: '',
-  ios_signing_api_key_id: '',
-  ios_signing_api_issuer_id: '',
-  ios_signing_api_key_source: '',
-  flutter_version: '',
-  build_number_offset: '',
-  enable_customization: false,
-  pre_build_commands: '',
-  build_commands: '',
-  post_build_commands: '',
-  android_build_args: '',
-  ios_build_args: '',
-  macos_build_args: '',
-  android_command_override: '',
-  ios_command_override: '',
-  macos_command_override: '',
-  env_vars: '',
-  artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
-  isolation: 'host',
-  runs_on: '',
-  timeout_minutes: String(DEFAULT_TIMEOUT_MINUTES),
-  trigger_events: [],
-  tags: '',
-  paths: '',
-  paths_ignore: '',
-  schedules: [],
-  cancel_previous: true,
-  branches: '',
-  max_concurrent: undefined,
-  approval_required: false,
-  approval_events: [],
-  size_budget_mode: 'warn',
-  size_budget_rules: [],
-}
-
-const PIPELINE_TEMPLATES = [
-  {
-    key: 'debug-apk',
-    label: 'Android test app',
-    description: 'A Flutter debug APK. No release signing needed.',
-    values: {
-      ...emptyDefaults,
-      name: 'Debug APK',
-      platform_android: true,
-      platform_ios: false,
-      platform_macos: false,
-      android_command_override: 'flutter build apk --debug',
-      artifact_patterns: 'build/app/outputs/flutter-apk/*.apk',
-    } satisfies PipelineFormValues,
-    events: [],
-  },
-  {
-    key: 'release-android',
-    label: 'Release Android',
-    description: 'Android release build with signing enabled.',
-    values: {
-      ...emptyDefaults,
-      name: 'Release Android',
-      platform_android: true,
-      platform_ios: false,
-      platform_macos: false,
-      android_signing_release_enabled: true,
-      artifact_patterns:
-        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab',
-    } satisfies PipelineFormValues,
-    events: ['push', 'tag_push'],
-  },
-  {
-    key: 'ios-android',
-    label: 'iOS + Android',
-    description: 'Both mobile platforms. Configure signing before running.',
-    values: {
-      ...emptyDefaults,
-      name: 'Mobile Release',
-      platform_android: true,
-      platform_ios: true,
-      platform_macos: false,
-      artifact_patterns:
-        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab\nbuild/ios/ipa/*.ipa',
-    } satisfies PipelineFormValues,
-    events: ['push', 'tag_push'],
-  },
-  {
-    key: 'full-stack',
-    label: 'All platforms',
-    description: 'Build for Android, iOS and macOS.',
-    values: {
-      ...emptyDefaults,
-      name: 'Full Build',
-      platform_android: true,
-      platform_ios: true,
-      platform_macos: true,
-      artifact_patterns:
-        'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab\nbuild/ios/ipa/*.ipa\nbuild/macos/Build/Products/Release/*.app',
-    } satisfies PipelineFormValues,
-    events: ['push', 'tag_push'],
-  },
-  {
-    key: 'custom',
-    label: 'Custom',
-    description: 'Choose your own build settings.',
-    values: emptyDefaults,
-    events: ['push'],
-  },
-] as const
-
 function workflowDefaults(
   workflow: RepositoryWorkflowPreview,
   suggestedName: string | undefined,
@@ -220,7 +97,7 @@ function workflowDefaults(
     .trim()
 
   return {
-    ...emptyDefaults,
+    ...EMPTY_PIPELINE_VALUES,
     name:
       suggestedName ??
       (workflowName
@@ -602,6 +479,7 @@ function NewPipelinePage() {
               })
             }
             submitLabel="Create pipeline"
+            compact
             isPending={
               createMutation.isPending ||
               updateSigningMutation.isPending ||

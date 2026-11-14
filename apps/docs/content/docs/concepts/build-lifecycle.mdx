@@ -4,7 +4,7 @@ status: implemented
 description: 'Follow the decisions and boundaries between a build request, runner execution, and an available artifact.'
 ---
 
-A build is a request tied to one project, pipeline, repository identity, and
+A build is a request tied to one app, pipeline, repository identity, and
 revision. Oore preserves those choices while the build moves through the
 backend, a Direct macOS runner, and artifact storage.
 
@@ -62,7 +62,14 @@ Retention may later move a completed record and its artifact availability to
 `expired`, so a successful historical build does not imply that its files are
 still downloadable.
 
-Changing a project's linked source does not rewrite an active build's checkout
+Retention never removes a build that a release still needs: one with a
+release in progress, or the version that is live on a store track. Anyone
+who can share a build's files can also select **Keep** next to **Files** on
+the build's **Summary**, so retention leaves it alone until someone selects
+**Stop keeping**. **Files** says why a build is kept, or roughly when its
+files go.
+
+Changing an app's linked source does not rewrite an active build's checkout
 identity. Queued work tied to the previous source is canceled rather than
 silently running a different repository.
 

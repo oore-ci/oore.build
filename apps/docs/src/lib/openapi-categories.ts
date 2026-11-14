@@ -23,7 +23,7 @@ export const OPENAPI_CATEGORIES = [
   {
     slug: 'artifacts',
     title: 'Artifacts',
-    tags: ['Artifacts', 'Scoped Download Tokens'],
+    tags: ['Artifacts', 'Scoped Download Tokens', 'Testers'],
   },
   {
     slug: 'sources',

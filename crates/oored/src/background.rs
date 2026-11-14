@@ -39,6 +39,14 @@ const RETENTION_BACKLOG_RETRY_SECS: i64 = 60;
 const TERMINAL_BUILD_STATUSES: [&str; 4] = ["succeeded", "failed", "canceled", "timed_out"];
 
 /// Which builds a cleanup run may touch.
+/// Whether release `r` keeps its build: still in progress, or the newest
+/// complete release on its store track, which is the version users get.
+pub(crate) const RELEASE_KEEPS_BUILD: &str = "(r.state NOT IN ('complete', 'failed') \
+     OR (r.state = 'complete' AND NOT EXISTS (SELECT 1 FROM releases newer \
+     WHERE newer.project_id = r.project_id AND newer.store = r.store \
+     AND newer.track = r.track AND COALESCE(newer.package_name, '') = COALESCE(r.package_name, '') \
+     AND newer.state = 'complete' AND newer.updated_at > r.updated_at)))";
+
 struct Eligible<'a> {
     /// Build statuses that are candidates.
     statuses: Vec<&'a str>,
@@ -73,9 +81,11 @@ impl<'a> Eligible<'a> {
         self.statuses.is_empty()
     }
 
-    /// Filter builds aliased `b` to eligible ones. A release that is not
-    /// `complete` or `failed` keeps its build and artifacts; any release keeps
-    /// an `expired` build so Full cleanup never deletes the release record.
+    /// Filter builds aliased `b` to eligible ones. A kept build stays; a
+    /// release in progress, or the newest complete release of a store track
+    /// (the version live there), keeps its build and artifacts; any release
+    /// keeps an `expired` build so Full cleanup never deletes the release
+    /// record.
     fn push_filter(&self, query: &mut QueryBuilder<Sqlite>) {
         query.push(" AND b.status IN (");
         let mut separated = query.separated(", ");
@@ -89,10 +99,9 @@ impl<'a> Eligible<'a> {
             separated.push_bind(*outcome);
         }
         separated.push_unseparated(")");
-        query.push(
-            " AND NOT EXISTS (SELECT 1 FROM releases r WHERE r.build_id = b.id \
-             AND (r.state NOT IN ('complete', 'failed') OR b.status = 'expired'))",
-        );
+        query.push(" AND b.kept_at IS NULL AND NOT EXISTS (SELECT 1 FROM releases r WHERE r.build_id = b.id AND (b.status = 'expired' OR ");
+        query.push(RELEASE_KEEPS_BUILD);
+        query.push("))");
     }
 }
 
@@ -1210,6 +1219,19 @@ mod tests {
         .unwrap();
     }
 
+    /// A newer complete release on the same track, so earlier ones are no
+    /// longer the live version.
+    async fn supersede_live_release(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO releases (id, project_id, build_id, artifact_id, store, track, state, \
+             rollout_fraction, created_at, updated_at, origin) \
+             VALUES ('r-newer', 'p1', NULL, NULL, 'google_play', 'production', 'complete', 1.0, 1, 1, 'adopted')",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
     async fn set_policy(pool: &SqlitePool, limit: &str, target: &str) {
         let (age, count, size) = match limit {
             "age" => (Some(30), None, None),
@@ -1311,9 +1333,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_live_release_and_kept_builds_keep_their_files() {
+        let pool = pool().await;
+        add_release(&pool, "b1", "complete").await;
+        sqlx::query("UPDATE builds SET kept_at = 1 WHERE id = 'b2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        set_policy(&pool, "count", "full").await;
+
+        cleanup(&pool).await;
+
+        assert_eq!(
+            build_status(&pool, "b1").await.as_deref(),
+            Some("succeeded")
+        );
+        assert_ne!(build_status(&pool, "b2").await.as_deref(), Some("expired"));
+        assert!(build_status(&pool, "b2").await.is_some());
+    }
+
+    #[tokio::test]
     async fn full_cleanup_keeps_the_record_of_a_finished_release() {
         let pool = pool().await;
         add_release(&pool, "b1", "complete").await;
+        supersede_live_release(&pool).await;
         set_policy(&pool, "count", "full").await;
 
         cleanup(&pool).await;
@@ -1509,6 +1552,7 @@ mod tests {
         ));
         // b1 is deleted outright; b2 keeps its row for a finished release.
         add_release(&pool, "b2", "complete").await;
+        supersede_live_release(&pool).await;
         for build_id in ["b1", "b2"] {
             let key = format!("feedback/p1/{build_id}/f.png");
             storage

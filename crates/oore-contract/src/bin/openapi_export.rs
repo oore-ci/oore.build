@@ -112,11 +112,20 @@ use utoipa::{
         operations::mark_operator_incident_read,
         // ── Projects ──
         operations::create_project,
+        operations::create_sample_project,
         operations::list_projects,
         operations::get_project,
         operations::update_project,
         operations::delete_project,
         operations::discover_repository_workflows,
+        operations::detect_project_app,
+        operations::add_project_favorite,
+        operations::remove_project_favorite,
+        operations::get_notification_preferences,
+        operations::update_notification_preferences,
+        operations::get_inbox,
+        operations::get_weekly_digest,
+        operations::send_weekly_digest,
         operations::list_repository_config_files,
         operations::refresh_repository_config_files,
         // ── Project Members ──
@@ -155,6 +164,7 @@ use utoipa::{
         operations::register_pipeline_ios_device,
         // ── Pipeline Publishing ──
         operations::get_pipeline_google_play_publish,
+        operations::get_pipeline_publish_readiness,
         operations::update_pipeline_google_play_publish,
         operations::test_pipeline_google_play_credentials,
         // ── Store Credentials ──
@@ -181,7 +191,32 @@ use utoipa::{
         operations::list_builds,
         operations::list_build_actors,
         operations::get_build_insights,
+        operations::get_build_trends,
+        operations::get_build_failure_hint,
+        operations::get_build_rehearsal,
+        operations::list_release_freezes,
+        operations::set_release_freeze,
+        operations::delete_release_freeze,
         operations::get_build,
+        operations::list_build_installs,
+        operations::list_build_shares,
+        operations::send_build_to_group,
+        operations::keep_build,
+        operations::unkeep_build,
+        operations::list_latest_install_links,
+        operations::create_latest_install_link,
+        operations::delete_latest_install_link,
+        operations::list_tester_groups,
+        operations::create_tester_group,
+        operations::update_tester_group,
+        operations::delete_tester_group,
+        operations::list_recent_feedback,
+        operations::create_device_registration,
+        operations::get_device_registration,
+        operations::get_web_push_config,
+        operations::subscribe_web_push,
+        operations::unsubscribe_web_push,
+        operations::send_test_web_push,
         operations::cancel_build,
         operations::approve_build,
         operations::reject_build,
@@ -202,6 +237,15 @@ use utoipa::{
         operations::halt_release,
         operations::complete_release,
         operations::approve_release,
+        operations::retry_release,
+        operations::release_now_release,
+        operations::resubmit_release,
+        operations::pull_from_review_release,
+        operations::mark_sent_for_review_release,
+        operations::mark_rejected_release,
+        operations::attach_schedule_release,
+        operations::detach_schedule_release,
+        operations::sync_store_releases,
         operations::list_release_events,
         // ── Environments ──
         operations::list_project_environments,
@@ -229,6 +273,7 @@ use utoipa::{
         operations::gitlab_checkout_discovery,
         operations::gitlab_checkout_upload_pack,
         operations::update_job_status,
+        operations::report_build_identity,
         operations::get_job_status,
         operations::get_job_android_signing,
         operations::get_job_ios_signing,
@@ -236,6 +281,7 @@ use utoipa::{
         operations::get_job_publish_plan,
         operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
+        operations::report_job_rehearsal,
         operations::report_job_test_results,
         operations::report_job_analysis,
         // ── Build Logs ──
@@ -375,7 +421,21 @@ use utoipa::{
         oore_contract::CreateProjectResponse,
         oore_contract::UpdateProjectRequest,
         oore_contract::ProjectDetailResponse,
+        oore_contract::ProjectSetupProgress,
+        oore_contract::ProjectAppDetection,
         oore_contract::ListProjectsResponse,
+        oore_contract::PersonalBuildEvents,
+        oore_contract::NotificationPreferences,
+        oore_contract::NotificationPreferencesResponse,
+        oore_contract::InboxItemKind,
+        oore_contract::InboxItem,
+        oore_contract::InboxResponse,
+        oore_contract::DigestPipeline,
+        oore_contract::DigestRelease,
+        oore_contract::DigestApp,
+        oore_contract::DigestExpiry,
+        oore_contract::WeeklyDigest,
+        oore_contract::BuildQueueEstimate,
         oore_contract::RepositoryWorkflowExecutionPreview,
         oore_contract::RepositoryWorkflowPreview,
         oore_contract::DiscoverRepositoryWorkflowsResponse,
@@ -454,6 +514,10 @@ use utoipa::{
         oore_contract::GooglePlayCredentialsTestRequest,
         oore_contract::GooglePlayCredentialsTestResponse,
         oore_contract::RunnerPublishPlan,
+        oore_contract::RunnerRehearsalPlan,
+        oore_contract::RehearsalCheck,
+        oore_contract::RunnerRehearsalReport,
+        oore_contract::RunnerRehearsalReportResponse,
         oore_contract::RunnerRetryArtifact,
         oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
@@ -509,6 +573,28 @@ use utoipa::{
         oore_contract::CreateBuildResponse,
         oore_contract::BuildChangelogPreviewResponse,
         oore_contract::BuildDetailResponse,
+        oore_contract::BuildRetention,
+        oore_contract::LatestInstallLink,
+        oore_contract::CreateLatestInstallLinkRequest,
+        oore_contract::ListLatestInstallLinksResponse,
+        oore_contract::TesterGroupMember,
+        oore_contract::TesterGroup,
+        oore_contract::TesterGroupRequest,
+        oore_contract::ListTesterGroupsResponse,
+        oore_contract::SendBuildToGroupRequest,
+        oore_contract::BuildShareRecipient,
+        oore_contract::BuildShare,
+        oore_contract::ListBuildSharesResponse,
+        oore_contract::ArtifactInstall,
+        oore_contract::ListArtifactInstallsResponse,
+        oore_contract::DeviceRegistrationState,
+        oore_contract::DeviceRegistration,
+        oore_contract::CreateDeviceRegistrationRequest,
+        oore_contract::RecentFeedback,
+        oore_contract::ListRecentFeedbackResponse,
+        oore_contract::WebPushConfig,
+        oore_contract::WebPushSubscriptionRequest,
+        oore_contract::WebPushUnsubscribeRequest,
         oore_contract::ListBuildsResponse,
         oore_contract::ListBuildActorsResponse,
         oore_contract::BuildOutcomeTotals,
@@ -518,6 +604,16 @@ use utoipa::{
         oore_contract::ProjectBuildInsights,
         oore_contract::FailingPipelineInsights,
         oore_contract::BuildInsightsResponse,
+        oore_contract::BuildTrendsResponse,
+        oore_contract::FlakyTest,
+        oore_contract::SlowerStep,
+        oore_contract::BuildFailureHint,
+        oore_contract::BuildFailureHintResponse,
+        oore_contract::BuildRehearsalResponse,
+        oore_contract::ReleaseFreeze,
+        oore_contract::SetReleaseFreezeRequest,
+        oore_contract::ListReleaseFreezesResponse,
+        oore_contract::AppStoreListing,
         oore_contract::CancelBuildResponse,
         oore_contract::BuildApprovalState,
         oore_contract::BuildApproval,
@@ -546,6 +642,15 @@ use utoipa::{
         oore_contract::ReleaseDetailResponse,
         oore_contract::ListReleaseActivityResponse,
         oore_contract::ReleaseActionRequest,
+        oore_contract::ReleaseOrigin,
+        oore_contract::BuildReleaseOutcome,
+        oore_contract::StoreSyncRequest,
+        oore_contract::StoreSyncResponse,
+        oore_contract::ReadinessLevel,
+        oore_contract::StoreReadinessItem,
+        oore_contract::StoreReadinessResponse,
+        oore_contract::PublishPreflight,
+        oore_contract::AppStoreReleaseType,
         oore_contract::CreateReleaseRequest,
         // Environments
         oore_contract::ProjectEnvironment,
@@ -563,6 +668,8 @@ use utoipa::{
         // Runners
         oore_contract::RunnerStatus,
         oore_contract::Runner,
+        oore_contract::RunnerToolchainStatus,
+        oore_contract::RunnerToolchainCheck,
         oore_contract::RunnerMetrics,
         oore_contract::RunnerDiskPressure,
         oore_contract::RegisterRunnerRequest,
@@ -575,6 +682,8 @@ use utoipa::{
         oore_contract::ClaimJobResponse,
         oore_contract::ClaimedJob,
         oore_contract::UpdateJobStatusRequest,
+        oore_contract::ReportBuildIdentityRequest,
+        oore_contract::BuildReference,
         oore_contract::ListRunnersResponse,
         oore_contract::JobStatusResponse,
         oore_contract::RunnerAndroidSigningProfile,
@@ -724,6 +833,7 @@ use utoipa::{
         (name = "API Tokens", description = "API token management — create, list, and revoke tokens for programmatic access."),
         (name = "Webhooks", description = "Incoming webhook receivers for GitHub and GitLab."),
         (name = "System", description = "Daemon runtime and metrics."),
+        (name = "Testers", description = "Getting builds to testers: latest-build install links, tester groups, sends, installs, feedback, device registration and browser push."),
         (name = "Scoped Download Tokens", description = "Time-limited share tokens and token-authorized artifact delivery."),
     ),
     modifiers(&BearerAuth),
@@ -1772,6 +1882,21 @@ mod operations {
     )]
     pub(super) fn create_project() {}
 
+    /// Create a sample Flutter app
+    ///
+    /// Local Only instances: runs `flutter create` in the backend's data
+    /// folder, commits it to a new Git repository and adds it as an app named
+    /// "Sample app", so a first build works before any code of your own.
+    #[utoipa::path(post, path = "/v1/projects/sample", tag = "Projects",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 201, description = "Sample app created", body = CreateProjectResponse),
+            (status = 403, description = "Owner or admin role and Local Only mode required", body = ApiError),
+            (status = 409, description = "Flutter or Git could not create the sample", body = ApiError),
+        )
+    )]
+    pub(super) fn create_sample_project() {}
+
     /// List projects
     #[utoipa::path(get, path = "/v1/projects", tag = "Projects",
         params(
@@ -1779,7 +1904,7 @@ mod operations {
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
             ("search" = Option<String>, Query, description = "Filter by name (case-insensitive partial match)"),
             ("integration_id" = Option<String>, Query, description = "Filter by linked integration"),
-            ("sort" = Option<String>, Query, description = "Sort by created_at, updated_at, or name"),
+            ("sort" = Option<String>, Query, description = "Sort by activity (pinned apps, then newest build), created_at, updated_at, or name"),
             ("direction" = Option<String>, Query, description = "Sort direction: asc or desc"),
         ),
         security(("bearer_auth" = [])),
@@ -1914,6 +2039,90 @@ mod operations {
         )
     )]
     pub(super) fn discover_repository_workflows() {}
+
+    /// Detect the app in the repository
+    ///
+    /// Reads `pubspec.yaml`, the platform folders and Oore config files on
+    /// the project's default branch through its source provider, so the web
+    /// UI can propose the app's first pipelines.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/app-detection", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "What Oore found in the repository", body = ProjectAppDetection),
+            (status = 403, description = "Read permission required", body = ApiError),
+            (status = 404, description = "Project or project source not found", body = ApiError),
+            (status = 502, description = "Source provider request failed", body = ApiError),
+        )
+    )]
+    pub(super) fn detect_project_app() {}
+
+    /// Pin an app
+    ///
+    /// Pins the app for the signed-in person: it sorts first in the app
+    /// list, and its store releases reach their notifications.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/favorite", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Pinned"),
+            (status = 404, description = "Project not found", body = ApiError),
+        )
+    )]
+    pub(super) fn add_project_favorite() {}
+
+    /// Unpin an app
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/favorite", tag = "Projects",
+        params(("project_id" = String, Path, description = "Project ID")),
+        security(("bearer_auth" = [])),
+        responses((status = 204, description = "Unpinned"))
+    )]
+    pub(super) fn remove_project_favorite() {}
+
+    /// Get my notification preferences
+    #[utoipa::path(get, path = "/v1/users/me/notification-preferences", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "Notification preferences", body = NotificationPreferencesResponse))
+    )]
+    pub(super) fn get_notification_preferences() {}
+
+    /// Update my notification preferences
+    #[utoipa::path(put, path = "/v1/users/me/notification-preferences", tag = "Users",
+        request_body = NotificationPreferences,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Saved preferences", body = NotificationPreferencesResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn update_notification_preferences() {}
+
+    /// Get my inbox
+    ///
+    /// Approvals I can give, my failed builds and release changes of apps I
+    /// pinned, from the last 7 days.
+    #[utoipa::path(get, path = "/v1/users/me/inbox", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "Inbox", body = InboxResponse))
+    )]
+    pub(super) fn get_inbox() {}
+
+    /// Get my weekly digest
+    #[utoipa::path(get, path = "/v1/users/me/digest", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "The last 7 days of my apps", body = WeeklyDigest))
+    )]
+    pub(super) fn get_weekly_digest() {}
+
+    /// Email my weekly digest now
+    #[utoipa::path(post, path = "/v1/users/me/digest/send", tag = "Users",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 202, description = "Queued"),
+            (status = 409, description = "No email channel to send through", body = ApiError),
+        )
+    )]
+    pub(super) fn send_weekly_digest() {}
 
     /// List config files found in the repository
     ///
@@ -2206,6 +2415,19 @@ mod operations {
         )
     )]
     pub(super) fn get_pipeline_google_play_publish() {}
+
+    /// Check store readiness
+    ///
+    /// What would stop the pipeline's next store submission: what App Store Connect shows now (unanswered age rating questions, missing App Review contact details, another open submission) and the refusals Apple or Google gave the last time, remembered until a submission goes through. Also the pre-flight level the next build uses. Requires project read access.
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/publish/readiness", tag = "Pipeline Publishing",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store readiness", body = StoreReadinessResponse),
+            (status = 404, description = "Pipeline not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_pipeline_publish_readiness() {}
 
     /// Update Google Play publish settings
     ///
@@ -2641,6 +2863,7 @@ mod operations {
             ("workflow" = Option<String>, Query, description = "Filter by exact .oore.yaml version 2 workflow name"),
             ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
             ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
+            ("mine" = Option<bool>, Query, description = "Only builds you started or builds of apps you pinned."),
             ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),
             ("created_before" = Option<i64>, Query, description = "Only builds created before this Unix time in seconds. Must be later than created_after."),
             ("q" = Option<String>, Query, description = "Search builds, case-insensitively, by build number (with or without #), part of the branch, the start of the commit SHA, or part of the pipeline or project name. At most 200 characters."),
@@ -2690,6 +2913,47 @@ mod operations {
     )]
     pub(super) fn get_build_insights() {}
 
+    /// Get build trends
+    ///
+    /// Tests that failed and then passed on the same commit, and build steps whose median run time grew, across apps the caller can read.
+    #[utoipa::path(get, path = "/v1/builds/trends", tag = "Builds",
+        params(
+            ("days" = Option<i64>, Query, description = "Window length in days: 7, 14, 30 (default) or 90"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Build trends", body = BuildTrendsResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_trends() {}
+
+    /// Get a failed build's likely cause
+    ///
+    /// The log line that explains a failed build, with the likely cause and fix. No hint for a build that did not fail or whose log has no line that stands out.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/failure-hint", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Failure hint", body = BuildFailureHintResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_failure_hint() {}
+
+    /// Get a release rehearsal's findings
+    ///
+    /// What a rehearsal build checked for each store, blocking findings first. A rehearsal (`rehearsal: true` on `POST /v1/projects/{project_id}/builds`) signs and checks every store submission and submits nothing. Empty for a build that is not a rehearsal or has not reached its store checks.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/rehearsal", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Rehearsal findings", body = BuildRehearsalResponse),
+            (status = 404, description = "Build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_rehearsal() {}
+
     /// Get store vitals
     ///
     /// Google Play crash and ANR rates with top issues, and App Store hang
@@ -2728,6 +2992,234 @@ mod operations {
         )
     )]
     pub(super) fn get_build() {}
+
+    /// List installs of a build
+    ///
+    /// Who downloaded this build's files through an install page, share link
+    /// or latest-build link.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/installs", tag = "Testers",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Installs, newest first", body = ListArtifactInstallsResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_build_installs() {}
+
+    /// List sends of a build to tester groups
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/shares", tag = "Testers",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Sends, newest first", body = ListBuildSharesResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_build_shares() {}
+
+    /// Send a build to a tester group
+    ///
+    /// Emails each member an install link and sends a browser notification to
+    /// members who turned them on. Members without access to the app are
+    /// listed with no_access and are not sent anything.
+    #[utoipa::path(post, path = "/v1/builds/{build_id}/shares", tag = "Testers",
+        params(("build_id" = String, Path, description = "Build ID")),
+        request_body = SendBuildToGroupRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Sent", body = BuildShare),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 404, description = "Build or group not found", body = ApiError),
+            (status = 409, description = "Build has not succeeded", body = ApiError),
+        )
+    )]
+    pub(super) fn send_build_to_group() {}
+
+    /// Keep a build's files
+    ///
+    /// Retention cleanup skips a kept build until it is unkept.
+    #[utoipa::path(put, path = "/v1/builds/{build_id}/keep", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Kept"),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn keep_build() {}
+
+    /// Stop keeping a build's files
+    #[utoipa::path(delete, path = "/v1/builds/{build_id}/keep", tag = "Builds",
+        params(("build_id" = String, Path, description = "Build ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "No longer kept"),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn unkeep_build() {}
+
+    /// List latest-build install links of a pipeline
+    #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}/latest-links", tag = "Testers",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Links", body = ListLatestInstallLinksResponse),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn list_latest_install_links() {}
+
+    /// Create a latest-build install link
+    ///
+    /// A permanent link that always opens the newest successful build of the
+    /// pipeline for one platform, optionally on one branch. The url is only
+    /// returned here.
+    #[utoipa::path(post, path = "/v1/pipelines/{pipeline_id}/latest-links", tag = "Testers",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = CreateLatestInstallLinkRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Created", body = LatestInstallLink),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn create_latest_install_link() {}
+
+    /// Delete a latest-build install link
+    #[utoipa::path(delete, path = "/v1/latest-links/{link_id}", tag = "Testers",
+        params(("link_id" = String, Path, description = "Link ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Deleted"),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_latest_install_link() {}
+
+    /// List tester groups
+    #[utoipa::path(get, path = "/v1/tester-groups", tag = "Testers",
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "Groups", body = ListTesterGroupsResponse))
+    )]
+    pub(super) fn list_tester_groups() {}
+
+    /// Create a tester group
+    #[utoipa::path(post, path = "/v1/tester-groups", tag = "Testers",
+        request_body = TesterGroupRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Created", body = TesterGroup),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Owner or admin only", body = ApiError),
+            (status = 409, description = "Name already used", body = ApiError),
+        )
+    )]
+    pub(super) fn create_tester_group() {}
+
+    /// Update a tester group
+    #[utoipa::path(put, path = "/v1/tester-groups/{group_id}", tag = "Testers",
+        params(("group_id" = String, Path, description = "Group ID")),
+        request_body = TesterGroupRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated", body = TesterGroup),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Owner or admin only", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Name already used", body = ApiError),
+        )
+    )]
+    pub(super) fn update_tester_group() {}
+
+    /// Delete a tester group
+    #[utoipa::path(delete, path = "/v1/tester-groups/{group_id}", tag = "Testers",
+        params(("group_id" = String, Path, description = "Group ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Deleted"),
+            (status = 403, description = "Owner or admin only", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_tester_group() {}
+
+    /// List recent tester feedback
+    ///
+    /// Feedback on builds of apps I can see, newest first.
+    #[utoipa::path(get, path = "/v1/feedback/recent", tag = "Testers",
+        params(("days" = Option<i64>, Query, description = "How far back, 1 to 30 days. Default 7.")),
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "Feedback", body = ListRecentFeedbackResponse))
+    )]
+    pub(super) fn list_recent_feedback() {}
+
+    /// Start registering an iPhone or iPad
+    ///
+    /// Returns a profile url to open on the device. Installing the profile
+    /// sends its UDID back and registers it on the pipeline's Apple team.
+    #[utoipa::path(post, path = "/v1/pipelines/{pipeline_id}/device-registrations", tag = "Testers",
+        params(("pipeline_id" = String, Path, description = "Pipeline ID")),
+        request_body = CreateDeviceRegistrationRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Started", body = DeviceRegistration),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Pipeline cannot register devices", body = ApiError),
+            (status = 412, description = "Needs an HTTPS public URL", body = ApiError),
+        )
+    )]
+    pub(super) fn create_device_registration() {}
+
+    /// Get a device registration
+    #[utoipa::path(get, path = "/v1/device-registrations/{registration_id}", tag = "Testers",
+        params(("registration_id" = String, Path, description = "Registration ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Registration", body = DeviceRegistration),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_device_registration() {}
+
+    /// Get browser push settings
+    #[utoipa::path(get, path = "/v1/web-push/config", tag = "Testers",
+        params(("endpoint" = Option<String>, Query, description = "This browser's push endpoint, to report whether it is subscribed.")),
+        security(("bearer_auth" = [])),
+        responses((status = 200, description = "VAPID public key", body = WebPushConfig))
+    )]
+    pub(super) fn get_web_push_config() {}
+
+    /// Subscribe this browser to push notifications
+    #[utoipa::path(post, path = "/v1/web-push/subscriptions", tag = "Testers",
+        request_body = WebPushSubscriptionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Subscribed"),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn subscribe_web_push() {}
+
+    /// Unsubscribe a browser from push notifications
+    #[utoipa::path(post, path = "/v1/web-push/unsubscribe", tag = "Testers",
+        request_body = WebPushUnsubscribeRequest,
+        security(("bearer_auth" = [])),
+        responses((status = 204, description = "Unsubscribed"))
+    )]
+    pub(super) fn unsubscribe_web_push() {}
+
+    /// Send a test push notification to my browsers
+    #[utoipa::path(post, path = "/v1/web-push/test", tag = "Testers",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 202, description = "Sent"),
+            (status = 502, description = "No browser accepted it", body = ApiError),
+        )
+    )]
+    pub(super) fn send_test_web_push() {}
 
     /// Cancel build
     ///
@@ -2785,6 +3277,7 @@ mod operations {
             ("project_id" = Option<String>, Query, description = "Filter by project"),
             ("build_id" = Option<String>, Query, description = "Filter by build"),
             ("state" = Option<String>, Query, description = "Filter by one state or comma-separated states"),
+            ("origin" = Option<String>, Query, description = "Filter by origin: oore or adopted"),
             ("limit" = Option<i64>, Query, description = "Page size, 1 to 200 (default 50)"),
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
         ),
@@ -2933,6 +3426,163 @@ mod operations {
     )]
     pub(super) fn approve_release() {}
 
+    /// Check the store again
+    ///
+    /// Reads App Store Connect on the next monitor pass, for a blocked release or one waiting on Apple. Requires developer or maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/retry", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn retry_release() {}
+
+    /// Release the approved version now
+    ///
+    /// Asks App Store Connect to release a version App Review approved and that waits for a manual or scheduled release. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/release_now", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn release_now_release() {}
+
+    /// Resubmit for review
+    ///
+    /// Submits a rejected App Store version for App Review again, with the build it has. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/resubmit", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn resubmit_release() {}
+
+    /// Pull from review
+    ///
+    /// Takes the App Store version out of App Review, waiting or in review, or approved and not yet released. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/pull_from_review", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn pull_from_review_release() {}
+
+    /// Mark sent for review
+    ///
+    /// Records that a Play release held in Play Console was sent for review there. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/mark_sent_for_review", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn mark_sent_for_review_release() {}
+
+    /// Mark rejected
+    ///
+    /// Records that Google Play rejected a release Play Console held for review. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/mark_rejected", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn mark_rejected_release() {}
+
+    /// Attach a rollout schedule
+    ///
+    /// Hands a Play rollout's steps to Oore with `policy`, also for a release made outside Oore. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/attach_schedule", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn attach_schedule_release() {}
+
+    /// Detach the rollout schedule
+    ///
+    /// Stops Oore stepping the rollout; it stays where it is until changed. Requires maintainer. Writes history and an audit log entry.
+    #[utoipa::path(post, path = "/v1/releases/{release_id}/detach_schedule", tag = "Releases",
+        params(("release_id" = String, Path, description = "Release ID")),
+        request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Updated release", body = Release),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+            (status = 409, description = "Not allowed in the current state", body = ApiError),
+            (status = 502, description = "The store rejected the change", body = ApiError),
+        )
+    )]
+    pub(super) fn detach_schedule_release() {}
+
+    /// Sync store releases
+    ///
+    /// Reads Google Play tracks and App Store Connect versions for the apps Oore's pipelines publish, and follows the releases made outside Oore as `adopted` releases. Runs every 15 minutes on its own. Requires maintainer of each project synced.
+    #[utoipa::path(post, path = "/v1/releases/store-sync", tag = "Releases",
+        request_body(content = StoreSyncRequest, description = "Optional project"),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "What the sync read and adopted", body = StoreSyncResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+        )
+    )]
+    pub(super) fn sync_store_releases() {}
+
     /// List release events
     ///
     /// Recent release history entries across projects the caller can read, newest first.
@@ -2948,6 +3598,43 @@ mod operations {
         )
     )]
     pub(super) fn list_release_events() {}
+
+    /// List release freezes
+    ///
+    /// The instance-wide freeze and the freezes of apps the caller can read. While a freeze holds an app, store uploads are skipped, promotions and rollout changes that reach more users are refused, and scheduled rollout steps wait.
+    #[utoipa::path(get, path = "/v1/release-freezes", tag = "Releases",
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release freezes", body = ListReleaseFreezesResponse),
+        )
+    )]
+    pub(super) fn list_release_freezes() {}
+
+    /// Freeze releases
+    ///
+    /// Freeze one app (maintainer) or every app (instance owner or admin, no project_id). Freezing again replaces the reason.
+    #[utoipa::path(put, path = "/v1/release-freezes", tag = "Releases",
+        request_body = SetReleaseFreezeRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "The freeze", body = ReleaseFreeze),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Forbidden", body = ApiError),
+        )
+    )]
+    pub(super) fn set_release_freeze() {}
+
+    /// Lift a release freeze
+    #[utoipa::path(delete, path = "/v1/release-freezes/{freeze_id}", tag = "Releases",
+        params(("freeze_id" = String, Path, description = "Freeze ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Lifted"),
+            (status = 403, description = "Forbidden", body = ApiError),
+            (status = 404, description = "Freeze not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_release_freeze() {}
 
     // ── Environments ──
 
@@ -3331,6 +4018,24 @@ mod operations {
     )]
     pub(super) fn update_job_status() {}
 
+    /// Report build identity
+    ///
+    /// Runner reports the commit title and author and the app version once
+    /// it has checked out the build's source.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/identity", tag = "Runners",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+        ),
+        request_body = ReportBuildIdentityRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 204, description = "Identity stored"),
+            (status = 403, description = "The build is not assigned to this runner", body = ApiError),
+        )
+    )]
+    pub(super) fn report_build_identity() {}
+
     /// Get job status
     ///
     /// Runner checks the current status of its assigned build.
@@ -3451,6 +4156,26 @@ mod operations {
         )
     )]
     pub(super) fn report_job_publish_result() {}
+
+    /// Report a release rehearsal
+    ///
+    /// Records what a rehearsal build's checks found for one store, and returns them with Oore's own store readiness findings added.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        request_body = RunnerRehearsalReport,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Recorded", body = RunnerRehearsalReportResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active or is not a rehearsal", body = ApiError),
+        )
+    )]
+    pub(super) fn report_job_rehearsal() {}
 
     /// Get job-scoped iOS signing material
     ///

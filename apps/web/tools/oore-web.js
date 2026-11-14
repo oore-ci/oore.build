@@ -1000,8 +1000,33 @@ function parseChecksum(text, filename) {
   throw new Error(`checksum not found for ${filename}`)
 }
 
-async function fetchVerifiedWebRelease(channel, repo) {
-  const release = await fetchReleaseManifest(channel, repo)
+/**
+ * A named release on the channel. The coordinated update in the web UI pins
+ * the frontend to the release the backend just installed, so the two cannot
+ * split when a newer release is published mid-update. Its signed checksum
+ * manifest still verifies every download.
+ */
+export function pinnedReleaseManifest(channel, repo, rawVersion) {
+  const version = parseVersion(rawVersion)
+  if (inferChannelFromVersion(version) !== channel) {
+    throw new Error(`release ${version.raw} is not on the ${channel} channel`)
+  }
+  const tag = `v${version.raw}`
+  return {
+    schema_version: 1,
+    channel,
+    tag,
+    version: version.raw,
+    download_base_url: `https://github.com/${repo}/releases/download/${tag}`,
+    release_name: tag,
+    release_url: `https://github.com/${repo}/releases/tag/${tag}`,
+  }
+}
+
+async function fetchVerifiedWebRelease(channel, repo, pinnedVersion = null) {
+  const release = pinnedVersion
+    ? pinnedReleaseManifest(channel, repo, pinnedVersion)
+    : await fetchReleaseManifest(channel, repo)
   const latest = parseVersion(release.version)
   const osName = releasePlatform()
   const arch = releaseArch()
@@ -2421,7 +2446,7 @@ async function runUpdateWithAcquiredLock(config, activeConfig = null) {
   )
 
   const { release, latest, archiveName, expectedHash } =
-    await fetchVerifiedWebRelease(channel, repo)
+    await fetchVerifiedWebRelease(channel, repo, config.version)
   validateManagedUpdateTransition(
     installed,
     latest,
@@ -3335,6 +3360,19 @@ async function main() {
             )
           }
         }
+        // The web UI pins the release the backend landed on, so a release
+        // published during the update cannot leave the two halves apart.
+        const requestedVersion = url.searchParams.get('version')
+        if (requestedVersion) {
+          try {
+            parseVersion(requestedVersion)
+          } catch (error) {
+            return Response.json(
+              { error: errorMessage(error) },
+              { status: 400 },
+            )
+          }
+        }
         const service = managedWebService()
         if (!service.managed) {
           return Response.json({ error: service.reason }, { status: 409 })
@@ -3359,6 +3397,7 @@ async function main() {
           {
             channel,
             switchChannel: !!channel,
+            version: requestedVersion || null,
             check: false,
             force: false,
             log,

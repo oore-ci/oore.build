@@ -36,6 +36,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 
 mod build_commands;
+mod init_command;
 mod install_lock;
 mod install_manifest;
 mod installer;
@@ -143,6 +144,8 @@ enum Commands {
     Config(ConfigArgs),
     /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
+    /// Write a starter .oore.yaml for the Flutter app in a folder
+    Init(init_command::InitArgs),
     /// Validate repository pipeline files and list a pipeline's workflows
     Pipeline(PipelineArgs),
     /// Start a build of a pipeline
@@ -867,6 +870,9 @@ enum PipelineSubcommand {
     Migrate(PipelineMigrateArgs),
     /// List the workflows a build of a pipeline can name, read from its file.
     Workflows(build_commands::PipelineWorkflowsArgs),
+    /// Check what would stop the pipeline's next store upload. Exits 2 when
+    /// something blocks it.
+    Readiness(build_commands::PipelineReadinessArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1438,6 +1444,31 @@ enum RunnerSubcommand {
     RotateToken,
     /// Stop and remove the managed macOS runner service
     UninstallService,
+    /// Show or change runner settings such as the cache size and VM image
+    Config(RunnerConfigArgs),
+}
+
+#[derive(Debug, Args)]
+struct RunnerConfigArgs {
+    #[command(subcommand)]
+    command: RunnerConfigCommand,
+    /// Path to the runner config file. Defaults to the installed runner's.
+    #[arg(long, global = true)]
+    config: Option<String>,
+}
+
+#[derive(Debug, Subcommand)]
+enum RunnerConfigCommand {
+    /// Print every runner setting and its value
+    Show,
+    /// Set a runner setting
+    Set {
+        /// Setting name, such as OORE_RUNNER_CACHE_MAX_GB
+        key: String,
+        value: String,
+    },
+    /// Remove a runner setting, so the runner uses its default
+    Unset { key: String },
 }
 
 #[derive(Debug, Args)]
@@ -1748,7 +1779,7 @@ fn save_cli_config(cfg: &CliConfigFile) -> anyhow::Result<PathBuf> {
     let path = resolve_cli_config_path()?;
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)
         .with_context(|| format!("failed to create CLI config directory {}", parent.display()))?;
@@ -3182,8 +3213,7 @@ async fn wait_for_oidc_callback(listener: TcpListener) -> anyhow::Result<(String
     if let Some(error) = params.get("error") {
         let desc = params
             .get("error_description")
-            .map(|d| format!(": {}", d))
-            .unwrap_or_default();
+            .map_or_default(|d| format!(": {}", d));
         let error_page = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n\
             <!DOCTYPE html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
@@ -4742,6 +4772,63 @@ async fn rollback_registered_runner(
     anyhow::bail!("daemon returned HTTP {status}")
 }
 
+/// Apply `runner.env` as environment variables the environment does not
+/// already set. Must run before any other thread starts. A file the runner
+/// cannot read or parse is reported and skipped, so it never stops the
+/// runner from starting.
+fn apply_runner_settings(config_path: &Path) -> anyhow::Result<()> {
+    let settings = match oore_runner::settings::read_settings(config_path) {
+        Ok(settings) => settings,
+        Err(error) => {
+            eprintln!("Ignoring runner settings: {error:#}");
+            return Ok(());
+        }
+    };
+    for (key, value) in
+        oore_runner::settings::settings_to_apply(&settings, |key| std::env::var(key).ok())
+    {
+        // SAFETY: called from `main` before the tokio runtime or any other
+        // thread exists, so nothing reads the environment concurrently.
+        unsafe { std::env::set_var(&key, &value) };
+        eprintln!(
+            "Runner setting {key}={value} (from {})",
+            oore_runner::settings::SETTINGS_FILE
+        );
+    }
+    Ok(())
+}
+
+fn handle_runner_config(args: RunnerConfigArgs) -> anyhow::Result<()> {
+    use oore_runner::settings::{SETTINGS_KEYS, read_settings, settings_path, write_setting};
+    let config_path = runner_config_path(args.config)?;
+    match args.command {
+        RunnerConfigCommand::Show => {
+            let settings = read_settings(&config_path)?;
+            println!("Settings file: {}", settings_path(&config_path).display());
+            for (key, about) in SETTINGS_KEYS {
+                let value = settings
+                    .get(*key)
+                    .map(String::as_str)
+                    .unwrap_or("(default)");
+                println!("  {key}={value}\n      {about}");
+            }
+            return Ok(());
+        }
+        RunnerConfigCommand::Set { key, value } => {
+            write_setting(&config_path, &key, Some(&value))?;
+            println!("Set {key}={}", value.trim());
+        }
+        RunnerConfigCommand::Unset { key } => {
+            write_setting(&config_path, &key, None)?;
+            println!("Removed {key}");
+        }
+    }
+    println!(
+        "Restart the runner to apply it: sudo launchctl kickstart -k system/{RUNNER_SERVICE_LABEL}"
+    );
+    Ok(())
+}
+
 async fn handle_runner_start(args: RunnerStartArgs) -> anyhow::Result<()> {
     let config_path = runner_config_path(args.config)?;
 
@@ -4788,7 +4875,7 @@ fn write_runner_config(path: &Path, config: &RunnerConfig) -> anyhow::Result<()>
 
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).with_context(|| {
         format!(
@@ -5620,14 +5707,13 @@ fn add_managed_runner_service_check(checks: &mut Vec<DoctorCheckResult>) {
 }
 
 fn android_sdk_root() -> Option<PathBuf> {
-    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
-        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
-        .collect::<Vec<_>>();
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from));
     #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
-    }
+    let roots = roots.chain(
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk")),
+    );
     roots
         .into_iter()
         .find(|path| path.join("platform-tools/adb").is_file())
@@ -6003,7 +6089,7 @@ fn read_trimmed_file(path: &Path) -> Option<String> {
 
 fn parse_semver_loose(raw: &str) -> anyhow::Result<semver::Version> {
     let trimmed = raw.trim();
-    let trimmed = trimmed.strip_prefix('v').unwrap_or(trimmed);
+    let trimmed = trimmed.trim_prefix('v');
     semver::Version::parse(trimmed).with_context(|| format!("invalid semver version: {raw}"))
 }
 
@@ -6407,8 +6493,8 @@ async fn check_daemon_running(client: &reqwest::Client, daemon_url: &str) -> boo
 }
 
 fn lsof_name_matches_socket(name: &str, listen: SocketAddr) -> bool {
-    let name = name.strip_prefix("TCP ").unwrap_or(name);
-    let name = name.strip_suffix(" (LISTEN)").unwrap_or(name);
+    let name = name.trim_prefix("TCP ");
+    let name = name.trim_suffix(" (LISTEN)");
     if name == listen.to_string() {
         return true;
     }
@@ -13280,6 +13366,9 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(handle_runner_register(args, false))?;
             }
             RunnerSubcommand::Start(args) => {
+                // Before the runtime starts any thread: settings become
+                // environment variables for the runner to read.
+                apply_runner_settings(&runner_config_path(args.config.clone())?)?;
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(handle_runner_start(args))?;
@@ -13295,6 +13384,7 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(handle_runner_rotate_token())?;
             }
             RunnerSubcommand::UninstallService => handle_runner_uninstall_service_direct()?,
+            RunnerSubcommand::Config(args) => handle_runner_config(args)?,
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
@@ -13321,6 +13411,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor(args) => {
             run_doctor_checks(args)?;
         }
+        Commands::Init(args) => init_command::handle_init(args)?,
         Commands::Pipeline(pipeline) => match pipeline.command {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
             PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
@@ -13329,6 +13420,11 @@ fn main() -> anyhow::Result<()> {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(build_commands::handle_pipeline_workflows(args))?;
+            }
+            PipelineSubcommand::Readiness(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_pipeline_readiness(args))?;
             }
         },
         Commands::Build(build) => match build.command {

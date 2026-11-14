@@ -1,0 +1,57 @@
+---
+title: '`oore init`'
+status: implemented
+description: 'Write a starter .oore.yaml for the Flutter app in a folder, already validated.'
+---
+
+```text
+oore init [DIR] [--force] [--print]
+```
+
+Run it in a Flutter app's repository. It reads `pubspec.yaml` and the
+`android/`, `ios/` and `macos/` folders, then writes a
+[version 2 `.oore.yaml`](/reference/config/oore-yaml-v2) with one target per
+platform it found, and checks the file with the runner's schema before it
+says so.
+
+| Option    | Effect                                                    |
+| --------- | --------------------------------------------------------- |
+| `DIR`     | The app's folder. Defaults to the current folder.         |
+| `--force` | Replace an existing `.oore.yaml` or `.oore.yml`.          |
+| `--print` | Print the file instead of writing it, such as to compare. |
+
+```text
+$ oore init
+Wrote ./.oore.yaml for coin (Android and iOS). It is valid.
+Next: commit and push it, then add the app in Oore. Oore finds the file and builds from it.
+iOS builds need signing: add a certificate and profiles to the pipeline first.
+```
+
+The file it writes for an app with Android, iOS and a `test/` folder:
+
+```yaml
+version: 2
+
+targets:
+  android:
+    # A debug APK anyone on the team can install. No signing needed.
+    build: flutter build apk --debug
+    artifacts: [build/app/outputs/flutter-apk/*.apk]
+  ios:
+    # An ad hoc IPA for registered iPhones. Turn on iOS signing for the
+    # pipeline in Oore before the first iOS build.
+    build: flutter build ipa --release --export-method ad-hoc
+    artifacts: [build/ios/ipa/*.ipa]
+
+steps:
+  - name: Get packages
+    run: flutter pub get
+  - name: Tests
+    run: flutter test
+  - build
+```
+
+It refuses a folder with no `pubspec.yaml`, a `pubspec.yaml` that does not
+depend on Flutter, or no platform folder. Change the file as the app needs,
+then check it with [`oore pipeline validate`](/reference/cli/oore-pipeline-validate)
+and [`oore pipeline plan`](/reference/cli/oore-pipeline-plan).

@@ -5,9 +5,9 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use oore_contract::{
     ApiError, GooglePlayCredentialsTestRequest, GooglePlayCredentialsTestResponse,
-    GooglePlayPublishConfig, OkResponse, PipelineGooglePlayPublishResponse, PublishStore,
-    ReleaseState, ReleaseStore, RunnerPublishPlan, RunnerPublishResult,
-    validate_google_play_publish_config,
+    GooglePlayPublishConfig, GooglePlayReleaseNotesSource, OkResponse,
+    PipelineGooglePlayPublishResponse, PublishStore, ReleaseState, ReleaseStore, RunnerPublishPlan,
+    RunnerPublishResult, RunnerRehearsalPlan, validate_google_play_publish_config,
 };
 use sqlx::{Row, SqlitePool};
 use tracing::{error, info, warn};
@@ -483,29 +483,98 @@ pub async fn get_job_publish_plan(
         require_active_job_signing_grant(&state.db, &job_id, &runner_id, &headers).await?;
     let disabled = crate::signing_identities::job_publish_disabled(&state.db, &job_id).await?;
 
-    let changelog: Option<String> =
-        sqlx::query_scalar("SELECT changelog FROM builds WHERE id = ?1")
+    let (changelog, store_notes): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT changelog, store_notes FROM builds WHERE id = ?1")
             .bind(&job_id)
             .fetch_optional(&state.db)
             .await
             .map_err(|e| store_error("Failed to load publish settings", e))?
-            .flatten();
+            .unwrap_or_default();
     let google_play = load_google_play(&state.db, &pipeline_id)
         .await
         .map_err(|e| store_error("Failed to load publish settings", e))?
         .map(|(config, _)| config)
         .filter(|config| config.enabled);
 
-    let app_store =
+    let mut app_store =
         crate::app_store_publish::runner_plan(&state.db, &state.encryption_key, &pipeline_id)
             .await
             .map_err(|e| store_error("Failed to load App Store publish settings", e))?;
+    // The runner gets a decided pre-flight level, not `auto`.
+    let mut google_play = google_play;
+    if let Some(config) = google_play.as_mut() {
+        config.preflight =
+            crate::store_readiness::resolve_preflight(&state.db, &pipeline_id, config.preflight)
+                .await;
+    }
+    // Notes written when the build was started replace the pipeline's.
+    let store_notes = store_notes.filter(|notes| !notes.trim().is_empty());
+    let changelog = match (google_play.as_mut(), store_notes) {
+        (Some(config), Some(notes)) => {
+            config.release_notes = GooglePlayReleaseNotesSource::Changelog;
+            config.release_notes_dir = None;
+            Some(notes)
+        }
+        _ => changelog,
+    };
+    let workflow_groups = crate::signing_identities::job_testflight_groups(&state.db, &job_id)
+        .await
+        .map_err(|e| store_error("Failed to load publish settings", e))?;
+    if let Some(plan) = app_store.as_mut() {
+        if let Some(groups) = workflow_groups
+            && plan.config.destination == oore_contract::AppStoreDestination::Testflight
+        {
+            plan.config.testflight_groups = groups;
+        }
+        plan.config.preflight = crate::store_readiness::resolve_preflight(
+            &state.db,
+            &pipeline_id,
+            plan.config.preflight,
+        )
+        .await;
+    }
 
+    let (project_id, snapshot): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT project_id, config_snapshot FROM builds WHERE id = ?1")
+            .bind(&job_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| store_error("Failed to load publish settings", e))?
+            .unwrap_or_default();
+    let rehearsal = snapshot
+        .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(&snapshot).ok())
+        .is_some_and(|snapshot| crate::builds::snapshot_rehearsal(&snapshot));
+    if rehearsal {
+        // Checked, not uploaded. The top level stays off so a runner that
+        // predates rehearsals uploads nothing.
+        return Ok(Json(RunnerPublishPlan {
+            changelog,
+            google_play: None,
+            app_store: None,
+            disabled: true,
+            frozen: None,
+            rehearsal: Some(RunnerRehearsalPlan {
+                disabled,
+                google_play,
+                app_store,
+            }),
+        }));
+    }
+    let frozen = match project_id {
+        Some(project_id) => crate::release_freezes::active_freeze(&state.db, &project_id)
+            .await
+            .map_err(|e| store_error("Failed to load release freezes", e))?
+            .map(|freeze| freeze.reason),
+        None => None,
+    };
+    let held = disabled || frozen.is_some();
     Ok(Json(RunnerPublishPlan {
         changelog,
-        google_play: google_play.filter(|_| !disabled),
-        app_store: app_store.filter(|_| !disabled),
+        google_play: google_play.filter(|_| !held),
+        app_store: app_store.filter(|_| !held),
         disabled,
+        frozen,
+        rehearsal: None,
     }))
 }
 
@@ -615,12 +684,29 @@ async fn record_play_release(
         .and_then(|(config, _)| config.rollout_policy)
         .unwrap_or_default();
     let (release_state, rollout_fraction) = match result.status.as_str() {
+        // Play Console keeps the change unsent: nothing reaches users until
+        // someone presses "Send for review", so the release is blocked.
+        _ if result.held_for_review => (
+            ReleaseState::Blocked,
+            if result.status == "completed" {
+                1.0
+            } else {
+                result.rollout_fraction.unwrap_or(0.0)
+            },
+        ),
         "completed" => (ReleaseState::Complete, 1.0),
         "draft" => (ReleaseState::Paused, 0.0),
         _ => (
             ReleaseState::Rolling,
             result.rollout_fraction.unwrap_or(1.0),
         ),
+    };
+    let reason = if result.held_for_review {
+        "Uploaded, but Play Console holds the change until someone sends it for review. \
+         Open Publishing overview in Play Console and press Send for review, then mark it \
+         sent here."
+    } else {
+        "uploaded by the runner"
     };
     let mut tx = deps.pool.begin_with("BEGIN IMMEDIATE").await?;
     if find_build_release(&mut tx, build_id, ReleaseStore::GooglePlay)
@@ -632,10 +718,6 @@ async fn record_play_release(
     let created = insert_release(
         &mut tx,
         NewRelease {
-            project_id,
-            build_id: build_id.to_string(),
-            artifact_id: None,
-            store: ReleaseStore::GooglePlay,
             track: result.track.clone(),
             package_name: Some(result.package_name.clone()),
             version_name: result.version_name.clone(),
@@ -643,11 +725,10 @@ async fn record_play_release(
             state: release_state,
             rollout_fraction,
             policy,
-            environment_id: None,
-            promoted_from_release_id: None,
+            ..NewRelease::uploaded(project_id, build_id.to_string())
         },
         &ReleaseActor::System,
-        Some("uploaded by the runner"),
+        Some(reason),
     )
     .await
     .map_err(|error| anyhow::anyhow!("{error:?}"))?;
@@ -681,6 +762,9 @@ mod tests {
             rollout_fraction: Some(0.05),
             status: "in_progress".into(),
             testflight_groups: None,
+            held_for_review: false,
+            release_notes: None,
+            listing: None,
         };
 
         let first = record_play_release(deps, "b1", "pl1", &result)

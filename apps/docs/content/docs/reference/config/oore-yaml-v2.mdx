@@ -244,17 +244,23 @@ file with different gates or identities. See
 
 `publish` on a target says where a build is uploaded after it succeeds:
 
-| Field                         | Target    | Description                                                                                                                  |
-| ----------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `play.track`                  | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                          |
-| `play.rollout`                | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide. |
-| `play.draft`                  | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.            |
-| `play.service_account`        | `android` | Name of the secret holding the Google service account JSON key. Set, the upload needs no pipeline Google Play settings.      |
-| `testflight.group`            | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.             |
-| `app_store.destination`       | `ios`     | `app_store` (default) attaches the build to the App Store version; `testflight` adds it to TestFlight groups.                |
-| `app_store.groups`            | `ios`     | TestFlight groups, for `destination: testflight`. Left out, the App Store settings' groups apply.                            |
-| `app_store.submit_for_review` | `ios`     | Submit the version for App Review, for `destination: app_store`. Left out, the settings decide.                              |
-| `app_store.phased_release`    | `ios`     | Release with Apple's seven-day phased release, for `destination: app_store`. Left out, the settings decide.                  |
+| Field                                  | Target    | Description                                                                                                                                                      |
+| -------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `play.track`                           | `android` | `internal`, `closed`, `open`, `production`, or a custom track name.                                                                                              |
+| `play.rollout`                         | `android` | Staged rollout as a fraction greater than 0 and at most 1, such as `0.05` for 5%. Left out, the Google Play settings decide.                                     |
+| `play.draft`                           | `android` | `true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.                                                |
+| `play.service_account`                 | `android` | Name of the secret holding the Google service account JSON key. Set, the upload needs no pipeline Google Play settings.                                          |
+| `testflight.group`                     | `ios`     | The TestFlight group to add the build to: one name, without commas, at most 128 characters, and not `app_store`.                                                 |
+| `app_store.destination`                | `ios`     | `app_store` (default) attaches the build to the App Store version; `testflight` adds it to TestFlight groups.                                                    |
+| `app_store.groups`                     | `ios`     | TestFlight groups, for `destination: testflight`. Left out, the App Store settings' groups apply.                                                                |
+| `app_store.submit_for_review`          | `ios`     | Submit the version for App Review, for `destination: app_store`. Left out, the settings decide.                                                                  |
+| `app_store.phased_release`             | `ios`     | Release with Apple's seven-day phased release, for `destination: app_store`. Left out, the settings decide.                                                      |
+| `play.preflight`                       | `android` | What a failed pre-flight check does: `auto` (default), `block`, `warn` or `off`. See [Pre-flight](/build/distribute/app-store#pre-flight).                       |
+| `app_store.release_type`               | `ios`     | When Apple releases the approved version: `after_approval` (default), `manual` (after **Release now**) or `scheduled`. For `destination: app_store`.             |
+| `app_store.earliest_release_date`      | `ios`     | RFC 3339 time such as `2026-12-01T09:00:00Z`, required with `release_type: scheduled` and only allowed with it.                                                  |
+| `app_store.cancel_previous_submission` | `ios`     | `true` cancels another open App Review submission for the app before submitting. Off, the release is blocked until you cancel it.                                |
+| `app_store.release_notes_dir`          | `ios`     | Repository directory with "What's New" per locale, as `<locale>.txt` or fastlane's `<locale>/release_notes.txt`. Replaces the settings' notes for those locales. |
+| `app_store.preflight`                  | `ios`     | What a failed pre-flight check does: `auto` (default), `block`, `warn` or `off`.                                                                                 |
 
 `testflight: { group: QA }` is the same as
 `app_store: { destination: testflight, groups: [QA] }`; a target sets one of
@@ -338,7 +344,7 @@ it with the plan's notes.
 
 ## Signing
 
-`signing` names identities from the project's signing library (**Project
+`signing` names identities from the app's signing library (**App
 settings > Signing**), so each workflow can sign with its own keys:
 
 ```yaml
@@ -366,7 +372,7 @@ The names carry no secrets; the key material stays in Oore. A workflow without
 `signing` uses the pipeline's signing settings, as before. The pipeline's
 **Workflows** settings can pick a different identity for a workflow, or turn
 its publishing off, without changing the file. See
-[Move credentials into the project library](/build/sign/project-library).
+[Move credentials into the app library](/build/sign/project-library).
 
 Oore checks the names when a build is created. A name the library does not
 hold, or an identity of the wrong kind, refuses a manual build with

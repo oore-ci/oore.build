@@ -656,7 +656,7 @@ fn remove_exact_legacy_path_block(
     const LEGACY_PATH_MARKER: &str = "# Oore CI";
 
     fn line_text(line: &str) -> &str {
-        line.strip_suffix('\n').unwrap_or(line)
+        line.trim_suffix('\n')
     }
 
     let lines = contents.split_inclusive('\n').collect::<Vec<_>>();
@@ -710,7 +710,7 @@ fn remove_exact_path_block(
     );
 
     fn line_text(line: &str) -> &str {
-        line.strip_suffix('\n').unwrap_or(line)
+        line.trim_suffix('\n')
     }
 
     let lines = contents.split_inclusive('\n').collect::<Vec<_>>();
@@ -1303,7 +1303,7 @@ fn read_bootstrap_metadata(root: &Path, name: &str) -> anyhow::Result<String> {
     let mut value = String::new();
     file.read_to_string(&mut value)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    let value = value.strip_suffix('\n').unwrap_or(&value);
+    let value = value.trim_suffix('\n');
     anyhow::ensure!(
         !value.is_empty() && !value.contains(['\n', '\r']) && value == value.trim(),
         "bootstrap metadata must contain one non-empty line: {}",
@@ -1885,7 +1885,7 @@ fn revalidate_target(root: &Path, target: &OwnedTarget) -> anyhow::Result<bool> 
 
 fn validate_relative_path(path: &Path) -> anyhow::Result<()> {
     anyhow::ensure!(
-        !path.as_os_str().is_empty()
+        !path.is_empty()
             && path
                 .components()
                 .all(|component| matches!(component, Component::Normal(_))),

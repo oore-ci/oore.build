@@ -45,9 +45,30 @@ import { toast } from '@/lib/toast'
 import type { LastPipelineBuild } from './-project-build-summary'
 import { RepositoryConfigFilesSection } from './-repository-config-files-section'
 import { Mono } from '@/components/layout/mono'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import type { PipelineHealth } from '@oore/client/models'
 import { splitRowVariants } from '@/lib/recipes'
 
 const PIPELINE_SORTS = ['created_at', 'name'] as const
+
+/** One sentence on what a pipeline's repository file state means. */
+function pipelineHealthSentence(health: PipelineHealth): string {
+  if (health.message) return health.message
+  switch (health.state) {
+    case 'ok':
+      return `Oore read this file on ${health.branch} and it is valid.`
+    case 'file_missing':
+      return `There is no file on ${health.branch}, so builds use the settings saved in Oore.`
+    case 'file_invalid':
+      return `The file on ${health.branch} could not be read. Builds will fail until it is fixed.`
+    case 'workflow_missing':
+      return `The file on ${health.branch} has no workflow this pipeline can run.`
+  }
+}
 
 function PipelineActions({
   canTriggerBuild,
@@ -212,7 +233,24 @@ export function ProjectPipelinesTab({
             <span className="inline-flex items-center gap-2">
               <Mono size="xs">{health?.path ?? path}</Mono>
               {health ? (
-                <StatusBadge kind="pipeline_health" value={health.state} />
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    <StatusBadge kind="pipeline_health" value={health.state} />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {pipelineHealthSentence(health)}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              {health?.state === 'file_missing' ? (
+                <Link
+                  to="/projects/$projectId/pipelines/$pipelineId/edit"
+                  params={{ projectId, pipelineId: row.original.id }}
+                  hash="plan"
+                  className="text-xs underline underline-offset-4"
+                >
+                  Add file
+                </Link>
               ) : null}
             </span>
           )

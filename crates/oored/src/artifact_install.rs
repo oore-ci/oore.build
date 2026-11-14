@@ -13,7 +13,7 @@ use tracing::{error, info};
 use url::Url;
 
 use crate::AppState;
-use crate::artifact_tokens::{create_download_token, validate_download_token};
+use crate::artifact_tokens::{create_download_token_for, validate_download_token};
 use crate::extractors::AuthUser;
 use crate::instance_settings::{
     load_effective_external_access_network_settings, load_warpgate_install_ticket,
@@ -316,10 +316,10 @@ fn install_platform(
 #[test]
 fn app_bundles_and_other_non_device_artifacts_are_not_installable() {
     let empty = Value::Object(Default::default());
-    assert!(matches!(
+    std::assert_matches!(
         install_platform("apk", &empty),
         Ok(ArtifactInstallPlatform::Android)
-    ));
+    );
     for artifact_type in ["aab", "app", "generic"] {
         let (status, Json(error)) = install_platform(artifact_type, &empty).unwrap_err();
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
@@ -328,15 +328,15 @@ fn app_bundles_and_other_non_device_artifacts_are_not_installable() {
 }
 
 /// `POST /v1/artifacts/{artifact_id}/install-link` — create a device install session.
-pub async fn create_install_link(
-    State(state): State<Arc<AppState>>,
-    auth: AuthUser,
-    Path(artifact_id): Path<String>,
-) -> ApiResult<ArtifactInstallLinkResponse> {
+/// A device install link for `artifact`, on a fresh download token made for
+/// `purpose`. Returns the link, the token's id and its prefix.
+async fn mint_install_link(
+    state: &AppState,
+    artifact: &InstallArtifact,
+    user_id: &str,
+    purpose: &str,
+) -> Result<(ArtifactInstallLinkResponse, String, String), (StatusCode, Json<ApiError>)> {
     let pool = state.db.clone();
-    let artifact = load_install_artifact(&pool, &artifact_id).await?;
-    require_artifact_read(&pool, &auth, &artifact.project_id).await?;
-
     let now = now_unix();
     if artifact
         .expires_at
@@ -372,7 +372,7 @@ pub async fn create_install_link(
         .map(|expires_at| (expires_at - now).min(INSTALL_TOKEN_TTL_SECS))
         .unwrap_or(INSTALL_TOKEN_TTL_SECS);
     let (token_id, token, prefix, expires_at) =
-        create_download_token(&pool, &artifact.id, &auth.0.user_id, ttl_secs, false)
+        create_download_token_for(&pool, &artifact.id, user_id, ttl_secs, false, purpose)
             .await
             .map_err(|e| {
                 error!(error = %e, "failed to create artifact install token");
@@ -406,6 +406,46 @@ pub async fn create_install_link(
         }
     };
 
+    Ok((
+        ArtifactInstallLinkResponse {
+            platform,
+            install_url,
+            download_url,
+            manifest_url,
+            expires_at,
+        },
+        token_id,
+        prefix,
+    ))
+}
+
+/// A device install link for an artifact, without a signed-in caller: for a
+/// latest link. Checks the artifact is still installable.
+pub(crate) async fn install_link_for_artifact(
+    state: &AppState,
+    artifact_id: &str,
+    created_by: &str,
+    purpose: &str,
+) -> Result<ArtifactInstallLinkResponse, (StatusCode, Json<ApiError>)> {
+    let artifact = load_install_artifact(&state.db, artifact_id).await?;
+    mint_install_link(state, &artifact, created_by, purpose)
+        .await
+        .map(|(link, _, _)| link)
+}
+
+pub async fn create_install_link(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(artifact_id): Path<String>,
+) -> ApiResult<ArtifactInstallLinkResponse> {
+    let pool = state.db.clone();
+    let artifact = load_install_artifact(&pool, &artifact_id).await?;
+    require_artifact_read(&pool, &auth, &artifact.project_id).await?;
+
+    let (link, token_id, prefix) =
+        mint_install_link(&state, &artifact, &auth.0.user_id, "install_page").await?;
+    let platform = link.platform.clone();
+    let expires_at = link.expires_at;
     let details = serde_json::json!({
         "artifact_id": artifact.id,
         "platform": match platform {
@@ -432,13 +472,7 @@ pub async fn create_install_link(
         "artifact install link generated"
     );
 
-    Ok(Json(ArtifactInstallLinkResponse {
-        platform,
-        install_url,
-        download_url,
-        manifest_url,
-        expires_at,
-    }))
+    Ok(Json(link))
 }
 
 /// `GET /install/ios/{token}/manifest.plist` — serve an Apple OTA manifest.

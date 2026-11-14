@@ -16,7 +16,7 @@ upload hosts.
 
 ## What you need
 
-- Project developer, maintainer, instance admin, or instance owner access.
+- App developer, maintainer, instance admin, or instance owner access.
 - iOS signing with an App Store Connect API key, as in
   [Configure App Store Connect signing](/build/sign/ios/app-store-connect).
 - The app already exists in App Store Connect with the pipeline's bundle ID.
@@ -47,9 +47,20 @@ Testers install them through TestFlight.
    - For TestFlight, enter the **TestFlight groups**.
    - For the App Store, turn on **Submit for review** to submit the version
      once the build is attached. Then **Phased release** turns on Apple's
-     seven-day phased release.
+     seven-day phased release, and **Replace an open submission** lets Oore
+     cancel another open App Review submission for the app first. Apple
+     allows one per app; with this off, the release is blocked until you
+     cancel the other one.
+   - **Release after approval** chooses **When approved**, **When I release
+     it** (press **Release now** on the release) or **On a date**, with the
+     date and time.
 5. Under **Release notes**, add **What to Test** or **What's New** text per
-   locale.
+   locale. **Notes from the repository** names a folder with one
+   `<locale>.txt` file, or fastlane's `<locale>/release_notes.txt`, per
+   language; those files replace the typed notes for their locales. Notes
+   written in **What's new in this release** when a build starts replace the
+   first locale's notes for that build (see
+   [Notes for one release](#notes-for-one-release)).
 6. Under **Export compliance**, turn on **Uses non-exempt encryption** only if
    the app uses encryption beyond what iOS provides, such as HTTPS.
 7. Select **Turn on App Store publishing**, or **Save changes** when
@@ -70,7 +81,38 @@ with `PUT /v1/pipelines/{pipeline_id}/publish/app-store`:
 ```
 
 For an App Store release, set `"destination": "app_store"`, then
-`submit_for_review` and `phased_release` as needed.
+`submit_for_review`, `phased_release`, `release_type` (`after_approval`,
+`manual` or `scheduled`), `earliest_release_date` and
+`cancel_previous_submission` as needed. `release_notes_dir` and `preflight`
+apply to both destinations.
+
+## Notes for one release
+
+The Run build drawer shows **Ready to submit?** and **What's new in this
+release** for a pipeline or workflow that uploads to a store. The checklist
+lists what Apple or Google would refuse, such as unanswered age rating
+questions, each with a link to the page that fixes it, so it shows before a
+long build. The pipeline's overview shows the same list, and
+[`oore pipeline readiness`](/reference/cli/oore-pipeline-readiness) prints
+it.
+
+The notes field starts empty, which keeps the pipeline's notes. **Draft from
+commits** fills it with the commit titles since the last build, and **Same
+as #N** copies the last notes written for the pipeline. Typed notes replace
+the App Store's first locale (or add `en-US`) and Google Play's notes for
+this build only; a re-run keeps them. `oore build run --notes` does the same
+from the command line.
+
+## TestFlight groups per workflow
+
+To send one workflow's builds to other testers, open the pipeline's
+**Workflows** tab, select the workflow, and list the groups under
+**TestFlight groups**. They replace the groups the file and the pipeline's
+settings name, for uploads to TestFlight only.
+
+Oore warns on Home two weeks before the newest TestFlight build of a group
+reaches Apple's 90 day limit, and again in its last three days, so testers
+are not left without the app.
 
 ## What happens after a build
 
@@ -88,6 +130,100 @@ For an App Store release, set `"destination": "app_store"`, then
 
 Pause, resume and complete on the release change Apple's phased release.
 Apple sets the percentages, so raising a step is not available.
+
+## Store listing from the repository
+
+To keep the description and keywords in Git, set **Store listing from the
+repository** in the pipeline's App Store settings to a directory in
+fastlane's layout, such as `fastlane/metadata`:
+
+```text
+fastlane/metadata/
+  en-US/
+    description.txt       # at most 4000 characters
+    keywords.txt          # at most 100 characters, comma separated
+    promotional_text.txt  # at most 170 characters
+    marketing_url.txt
+    support_url.txt
+    release_notes.txt     # read by "Notes from the repository"
+```
+
+The runner reads the files when it uploads the build, and Oore sets them on
+the version it submits, with "What's New". A file you leave out keeps what
+App Store Connect has, and `review_information` is skipped. A file over
+Apple's limit fails the upload. If Apple refuses a field, the submission goes
+ahead and the release shows the refusal as a warning. Screenshots are not
+uploaded; change them in App Store Connect.
+
+## Pre-flight
+
+Before the upload, the **Publishing** tab and the runner check what Apple
+would otherwise refuse after the upload:
+
+- the API key reaches App Store Connect and the app exists for the bundle ID;
+- the age rating and App Review contact details are filled in;
+- no other review submission is open, unless **Replace an open submission**
+  is on;
+- the app icon has no transparency;
+- anything Apple refused on an earlier submission of this app, until a later
+  submission goes through.
+
+**Pre-flight checks** decides what a failure does. **Automatic** stops the
+upload once the app has had a release in review or live, and only warns
+before that. **Stop the upload** and **Warn only** fix the choice, and
+**Off** skips the checks. The same levels apply to Google Play, where Oore
+validates the edit before committing it. Read the checks from the API with
+`GET /v1/pipelines/{pipeline_id}/publish/readiness`.
+
+## Release states
+
+A release shows where it is in the store, and what you need to do when the
+store is waiting on you:
+
+| State          | Meaning                                                                                                                                 |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **Processing** | Apple is processing the upload.                                                                                                         |
+| **Blocked**    | The store refused a step, or the version is ready but nobody submitted it. The release names the reason and links to App Store Connect. |
+| **In review**  | App Review or TestFlight beta review has the version.                                                                                   |
+| **Approved**   | App Review approved it and it waits for its release time, or for **Release now**.                                                       |
+| **Rejected**   | App Review rejected it. Read why in the Resolution Center, fix it, then **Resubmit for review**.                                        |
+| **Rolling**    | Live, with a phased release in progress.                                                                                                |
+| **Complete**   | Live for everyone, or added to the TestFlight groups.                                                                                   |
+
+A blocked release says what is wrong in one sentence when Oore knows the
+refusal (age rating, "What's New", App Review contact details, export
+compliance, App Privacy, agreements, screenshots, a build number already
+used), with a button to the App Store Connect page that fixes it. The
+store's own text is under **Details from the store**. A release in review
+says how long reviews usually take for the app, from its last five reviews.
+
+A rejected release shows the reviewer's message and the guidelines it
+names, with **Reply in App Store Connect** and **Resubmit with a new build**,
+which opens Run build for the same pipeline, branch and workflow.
+
+A store refusal blocks the release at once and notifies once per reason
+(`release_blocked`). A network or server error blocks it only after an hour
+of failures. A blocked release leaves the state on its own once the store
+accepts the next check; **Check again now** checks at once.
+
+The release menu offers what the store allows next: **Release now**,
+**Resubmit for review**, **Pull from review** and **Check again now**.
+Releases Oore was already following are read again with these states, and the
+release history notes the first change. Failed releases stay failed.
+
+When the same version waits as **Approved** in both stores, the app's
+**Releases** tab offers **Release both** under **Versions**, which releases
+each one now.
+
+## Releases made outside Oore
+
+Every 15 minutes, and when you select **Check stores** on Home, Oore reads
+the App Store versions and Google Play tracks of every app a pipeline
+publishes. A release it did not make shows on Home and the Releases page
+marked **Found in store**, with no build, and on its own release page with
+when Oore found it and its version code. Oore follows it like its own, but
+never schedules rollout steps for a Play release it found; **Manage rollout
+with Oore** on the release attaches a schedule.
 
 ## Verify the result
 
@@ -117,7 +253,7 @@ workflows:
 ```
 
 - `signing.ios` names an iOS distribution identity in the
-  [project's signing library](/build/sign/project-library). Its certificate
+  [app's signing library](/build/sign/project-library). Its certificate
   and profiles replace the pipeline's for that workflow, and the export
   follows its profiles. A workflow that uploads to App Store Connect needs an
   identity with App Store profiles; an ad hoc one refuses the build with
@@ -139,11 +275,11 @@ destination and export. Every field is in
 [Publish](/reference/config/oore-yaml-v2#publish) and
 [Signing](/reference/config/oore-yaml-v2#signing).
 
-## Store health on Home
+## Store health on Insights
 
 After the first release, the daemon reads the app's hang rate and launch time
 per version from App Store Connect power and performance metrics, using the
-App Store Connect key of the pipeline that made the newest release. Home shows
+App Store Connect key of the pipeline that made the newest release. **Insights** shows
 the latest version's numbers for a typical user on all iPhones. They refresh
 every six hours, and Apple only reports them once enough users have run a
 version.

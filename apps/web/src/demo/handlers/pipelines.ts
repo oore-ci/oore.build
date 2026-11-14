@@ -283,6 +283,11 @@ const demoAppStoreConfigs = new Map<
   ],
 ])
 
+/** Whether the pipeline uploads to App Store Connect. */
+export function demoAppStorePublishEnabled(pipelineId: string): boolean {
+  return demoAppStoreConfigs.get(pipelineId)?.config.enabled === true
+}
+
 const appStoreConfigSchema = z.object({
   enabled: z.boolean(),
   destination: z.enum(['testflight', 'app_store']),
@@ -293,6 +298,12 @@ const appStoreConfigSchema = z.object({
   uses_non_exempt_encryption: z.boolean(),
   submit_for_review: z.boolean(),
   phased_release: z.boolean(),
+  release_type: z.enum(['after_approval', 'manual', 'scheduled']).optional(),
+  earliest_release_date: z.string().nullish(),
+  release_notes_dir: z.string().nullish(),
+  listing_dir: z.string().nullish(),
+  cancel_previous_submission: z.boolean().optional(),
+  preflight: z.enum(['auto', 'block', 'warn', 'off']).optional(),
 })
 
 const iosSigningSummarySchema = z.object({
@@ -814,6 +825,34 @@ export const pipelineHandlers = [
     if (methodChanged) merged.provisioning_profiles = []
     demoState.iosSigning[id] = merged
     return HttpResponse.json(iosSigningResponse(merged))
+  }),
+
+  demoApi.getPipelinePublishReadiness(async ({ params }) => {
+    await delay(400)
+    const id = String(params.pipeline_id)
+    // The demo shop app shows what Apple refused last time.
+    const items =
+      id === PIPELINE_IDS.shopIos
+        ? [
+            {
+              store: 'app_store' as const,
+              code: 'age_rating',
+              level: 'block' as const,
+              title: 'Age rating questions are unanswered',
+              detail:
+                'Unanswered: messagingAndChat, userGeneratedContent, gambling.',
+              console_url:
+                'https://appstoreconnect.apple.com/apps/6450000001/distribution/info',
+              remembered: false,
+            },
+          ]
+        : []
+    return HttpResponse.json({
+      pipeline_id: id,
+      items,
+      preflight: 'block' as const,
+      checked_at: ago(0),
+    })
   }),
 
   demoApi.getPipelineAppStorePublish(async ({ params }) => {

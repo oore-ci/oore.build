@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router'
+import { useEffect } from 'react'
 
 import type {
   Build,
@@ -6,6 +7,7 @@ import type {
   ListBuildsResponse,
   ListRunnersResponse,
   OperatorIncident,
+  RecentFeedback,
   RunnerPolicyBlockReason,
 } from '@oore/client/models'
 import {
@@ -19,8 +21,20 @@ import {
 } from '@/hooks/use-operator-incidents'
 import { useHasPermission } from '@/hooks/use-permissions'
 import { useRunners } from '@/hooks/use-runners'
+import { useProjects } from '@/hooks/use-projects'
+import { useSigningIdentitiesOf } from '@/hooks/use-signing-identities'
+import { useTime } from '@/hooks/use-time'
+import { signingExpiries, type SigningExpiry } from '@/lib/signing-expiry'
+import {
+  testflightExpiries,
+  type TestflightExpiry,
+} from '@/lib/testflight-expiry'
+import { useReleases } from '@/hooks/use-releases'
+import { useRecentFeedback } from '@/hooks/use-testers'
+import { useAuthStore } from '@/stores/auth-store'
 import { relativeTime } from '@/lib/format-utils'
 import { getRunnerPolicyBlockLabel } from '@/lib/status-variants'
+import { useAttentionDismissals } from '@/stores/attention-dismiss-store'
 
 /**
  * The widest Build health window. A pipeline failing in any shorter window is
@@ -34,6 +48,11 @@ export type AttentionSeverity = 'blocking' | 'failing' | 'warning'
 
 export type AttentionItem = {
   key: string
+  /**
+   * What the item is about right now, such as the newest failed build. A
+   * dismissed item shows again once this changes.
+   */
+  revision: string
   severity: AttentionSeverity
   title: string
   description: string
@@ -87,6 +106,7 @@ function blockedItems(blocked: Array<Build>): Array<AttentionItem> {
   if (paused.length > 0) {
     items.push({
       key: 'instance-paused',
+      revision: paused[0].id,
       severity: 'blocking',
       title: 'Mac builds are paused',
       description: `${waitingCount(paused.length)} since ${relativeTime(paused[0].queued_at)} · Resume in Runners`,
@@ -107,6 +127,7 @@ function blockedItems(blocked: Array<Build>): Array<AttentionItem> {
     const reason = oldest.runner_policy_block_reason
     items.push({
       key: `blocked-${oldest.project_id}`,
+      revision: oldest.id,
       severity: 'blocking',
       title: `${oldest.context?.project_name ?? oldest.project_id} builds are blocked`,
       description: `${reason ? blockDescription(reason) : 'Waiting'} · ${waitingCount(builds.length)} since ${relativeTime(oldest.queued_at)}`,
@@ -143,6 +164,7 @@ function failingItems(
         : `${failing.length} pipelines failing`
     return {
       key: `failing-${worst.project_id}`,
+      revision: worst.last_failed_build_id,
       severity: 'failing',
       title: `${worst.project_name} builds are failing`,
       description: `${where} · #${worst.last_failed_build_number} ${relativeTime(worst.last_failed_at)}`,
@@ -162,12 +184,103 @@ function incidentItem(
 ): AttentionItem {
   return {
     key: `incident-${incident.id}`,
+    revision: incident.id,
     severity: incident.severity === 'critical' ? 'blocking' : 'warning',
     title: incidentTitle(incident),
     description: incident.repair_action,
     link: <Link {...incidentLinkProps(incident)} />,
     onSelect: () => onRead(incident.id),
   }
+}
+
+function expiryWhen(item: SigningExpiry, nowSeconds: number): string {
+  if (item.band === 'expired') return 'expired'
+  const days = Math.max(1, Math.round((item.expiresAt - nowSeconds) / 86_400))
+  return days === 1 ? 'expires tomorrow' : `expires in ${days} days`
+}
+
+/** Signing that stops working soon: 30 and 7 days ahead, and once expired. */
+function expiryItems(
+  expiring: Array<SigningExpiry>,
+  projectNames: ReadonlyMap<string, string>,
+  nowSeconds: number,
+): Array<AttentionItem> {
+  return expiring.map((item) => ({
+    key: `signing-${item.key}`,
+    // A dismissed reminder shows again at the next band.
+    revision: `${item.expiresAt}:${item.band}`,
+    severity:
+      item.band === 'expired'
+        ? 'blocking'
+        : item.band === 'week'
+          ? 'failing'
+          : 'warning',
+    title: `${projectNames.get(item.projectId) ?? 'An app'}: ${item.what.charAt(0).toLowerCase()}${item.what.slice(1)} ${expiryWhen(item, nowSeconds)}`,
+    description: `${item.identityName} · Replace it in the signing library before release builds fail`,
+    link: (
+      <Link
+        to="/projects/$projectId"
+        params={{ projectId: item.projectId }}
+        search={{ tab: 'settings' }}
+      />
+    ),
+  }))
+}
+
+/** TestFlight builds testers are about to lose, or just lost. */
+function testflightItems(
+  expiring: Array<TestflightExpiry>,
+  nowSeconds: number,
+): Array<AttentionItem> {
+  return expiring.map(({ release, expiresAt, band }) => {
+    const days = Math.max(1, Math.round((expiresAt - nowSeconds) / 86_400))
+    const when =
+      band === 'expired'
+        ? 'has expired'
+        : days === 1
+          ? 'expires tomorrow'
+          : `expires in ${days} days`
+    const version = release.version_name
+      ? `${release.version_name}${release.version_code != null ? ` (${release.version_code})` : ''}`
+      : 'The TestFlight build'
+    return {
+      key: `testflight-${release.project_id}-${release.track}`,
+      revision: `${release.id}:${band}`,
+      severity: band === 'fortnight' ? 'warning' : 'failing',
+      title: `${release.project_name ?? 'An app'}: TestFlight ${version} ${when}`,
+      description: `${release.track} · Apple stops TestFlight builds after 90 days. Send a new build so testers keep the app`,
+      link: (
+        <Link to="/releases/$releaseId" params={{ releaseId: release.id }} />
+      ),
+    } satisfies AttentionItem
+  })
+}
+
+/** One item per build testers wrote about in the last two days. */
+export function feedbackItems(
+  recent: Array<RecentFeedback>,
+): Array<AttentionItem> {
+  const byBuild = new Map<string, Array<RecentFeedback>>()
+  for (const item of recent) {
+    const id = item.feedback.build_id
+    byBuild.set(id, [...(byBuild.get(id) ?? []), item])
+  }
+  return [...byBuild.entries()].map(([buildId, notes]) => {
+    const newest = notes.reduce((a, b) =>
+      b.feedback.created_at > a.feedback.created_at ? b : a,
+    )
+    const count =
+      notes.length === 1 ? 'A tester wrote' : `${notes.length} tester notes`
+    const message = newest.feedback.message.trim()
+    return {
+      key: `feedback-${buildId}`,
+      revision: newest.feedback.id,
+      severity: 'warning',
+      title: `${newest.project_name} #${newest.build_number}: ${count}`,
+      description: `${message.length > 90 ? `${message.slice(0, 89)}…` : message} · ${relativeTime(newest.feedback.created_at)}`,
+      link: <Link to="/builds/$buildId" params={{ buildId }} />,
+    } satisfies AttentionItem
+  })
 }
 
 /**
@@ -185,12 +298,34 @@ export function useAttention() {
     { limit: 1 },
     { enabled: canReadRunners, select: selectNoRunnerOnline },
   )
+  // Signing reminders look across every app, so only people who can see
+  // every app's library get them.
+  const instanceRole = useAuthStore((state) => state.user?.role)
+  const seesAllSigning = instanceRole === 'owner' || instanceRole === 'admin'
+  const projectsQuery = useProjects({ limit: 100 }, { enabled: seesAllSigning })
+  const projects = projectsQuery.data?.projects ?? []
+  const identities = useSigningIdentitiesOf(
+    projects.map((project) => project.id),
+    { enabled: seesAllSigning },
+  )
+  const nowSeconds = useTime((time) => Math.floor(time / 3_600_000) * 3600)
+  const releasesQuery = useReleases(
+    { limit: 200 },
+    {
+      select: (data) => testflightExpiries(data.releases, nowSeconds),
+    },
+  )
+  const feedbackQuery = useRecentFeedback()
+  const projectNames = new Map(
+    projects.map((project) => [project.id, project.name]),
+  )
 
-  const items: Array<AttentionItem> = [
+  const listed: Array<AttentionItem> = [
     ...(runnersQuery.data
       ? [
           {
             key: 'no-runner',
+            revision: 'offline',
             severity: 'blocking',
             title: 'No runner is online',
             description: 'Builds wait until a runner checks in',
@@ -203,11 +338,35 @@ export function useAttention() {
       incidentItem(incident, (id) => markRead.mutate(id)),
     ),
     ...failingItems(insightsQuery.data?.failing_pipelines ?? []),
+    ...expiryItems(
+      signingExpiries(identities, nowSeconds),
+      projectNames,
+      nowSeconds,
+    ),
+    ...testflightItems(releasesQuery.data ?? [], nowSeconds),
+    ...feedbackItems(feedbackQuery.data?.feedback ?? []),
   ].sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 
   const queries = [insightsQuery, blockedQuery, runnersQuery, incidentsQuery]
+  const settled = queries.every((query) => !query.isLoading && !query.isError)
+
+  // Dismissed items stay hidden until what they are about changes; an item
+  // that clears forgets its dismissal, so it shows if it comes back.
+  const { dismissed, dismiss, prune } = useAttentionDismissals()
+  const listedKeys = listed.map((item) => item.key).join('\n')
+  useEffect(() => {
+    if (settled) prune(new Set(listedKeys ? listedKeys.split('\n') : []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keys stand in for the list
+  }, [settled, listedKeys])
+  const items = listed.filter((item) => dismissed[item.key] !== item.revision)
+
   return {
     items,
+    /** Hide an item until it changes. */
+    dismiss: (item: AttentionItem) => {
+      dismiss(item.key, item.revision)
+      item.onSelect?.()
+    },
     /** Still waiting on a source; the list may be incomplete. */
     isLoading: queries.some((query) => query.isLoading),
     /** A source failed, so an empty list does not mean all clear. */

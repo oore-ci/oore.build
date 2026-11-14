@@ -45,6 +45,12 @@ const DELIVERY_LEASE_SECS: i64 = 120;
 const MAX_CONCURRENT_SENDS: usize = 8;
 /// Keeps a slow Slack lookup from delaying the message itself.
 const SLACK_LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+/// Each Slack Web API call of a release thread; three fit in the lease.
+const SLACK_API_TIMEOUT: Duration = Duration::from_secs(15);
+/// How often certificates and profiles are checked for expiry reminders.
+const SIGNING_EXPIRY_SCAN_INTERVAL: Duration = Duration::from_secs(60 * 60);
+const SIGNING_CATEGORY: &str = "signing";
+const SIGNING_EXPIRING_EVENT: &str = "signing_expiring";
 
 fn notification_addresses_allowed(host: &str, addresses: &[std::net::SocketAddr]) -> bool {
     !addresses.is_empty()
@@ -123,19 +129,32 @@ async fn notification_http_client(url: &url::Url) -> anyhow::Result<reqwest::Cli
         .map_err(|_| anyhow::anyhow!("failed to initialize notification HTTP client"))
 }
 
+/// The channel event a release event sends, if any.
+#[cfg(test)]
+pub(crate) fn release_event_type_name(kind: ReleaseEventKind) -> Option<&'static str> {
+    release_event_type(kind)
+}
+
 /// Release kinds that notify, mapped to their event filter names.
 fn release_event_type(kind: ReleaseEventKind) -> Option<&'static str> {
     match kind {
         ReleaseEventKind::Uploaded => Some("release_uploaded"),
+        ReleaseEventKind::Blocked => Some("release_blocked"),
+        ReleaseEventKind::Submitted => Some("release_submitted"),
+        ReleaseEventKind::StoreApproved => Some("release_approved"),
+        ReleaseEventKind::Rejected => Some("release_rejected"),
+        ReleaseEventKind::Live => Some("release_live"),
         ReleaseEventKind::RolloutStepRaised => Some("rollout_step_raised"),
         ReleaseEventKind::RolloutHalted => Some("rollout_halted"),
         ReleaseEventKind::RolloutCompleted => Some("rollout_completed"),
         ReleaseEventKind::ApprovalNeeded => Some("release_approval_needed"),
         ReleaseEventKind::Failed => Some("release_failed"),
         ReleaseEventKind::Created
+        | ReleaseEventKind::Superseded
         | ReleaseEventKind::RolloutPaused
         | ReleaseEventKind::RolloutResumed
-        | ReleaseEventKind::Approved => None,
+        | ReleaseEventKind::Approved
+        | ReleaseEventKind::Updated => None,
     }
 }
 
@@ -207,6 +226,22 @@ pub fn start_notification_dispatcher(
                 Ok(deliveries) => deliver(retry_pool.clone(), retry_key.clone(), deliveries).await,
                 Err(e) => error!(error = %e, "notification retry scan failed"),
             }
+        }
+    });
+
+    // Certificate and profile expiry reminders.
+    let expiry_pool = pool.clone();
+    let expiry_key = encryption_key.clone();
+    tokio::spawn(async move {
+        loop {
+            match notify_signing_expiry(&expiry_pool, now_unix()).await {
+                Ok(deliveries) if !deliveries.is_empty() => {
+                    deliver(expiry_pool.clone(), expiry_key.clone(), deliveries).await;
+                }
+                Ok(_) => {}
+                Err(e) => error!(error = %e, "signing expiry scan failed"),
+            }
+            tokio::time::sleep(SIGNING_EXPIRY_SCAN_INTERVAL).await;
         }
     });
 
@@ -313,6 +348,12 @@ pub async fn dispatch_build_approval_needed(
         return Ok(());
     };
     let deliveries = enqueue(pool, &notification).await?;
+    {
+        let mut conn = pool.acquire().await?;
+        if let Err(error) = queue_personal(&mut conn, &notification).await {
+            warn!(%error, build_id, "personal approval email not queued");
+        }
+    }
     deliver(pool.clone(), encryption_key.into(), deliveries).await;
     Ok(())
 }
@@ -374,6 +415,123 @@ pub async fn dispatch_build_feedback(
     Ok(())
 }
 
+/// Record a reminder for each certificate or profile that reached 30 days,
+/// 7 days or expiry since the last scan. Returns the deliveries to send.
+pub(crate) async fn notify_signing_expiry(
+    pool: &SqlitePool,
+    now: i64,
+) -> anyhow::Result<Vec<String>> {
+    let mut deliveries = Vec::new();
+    for (expiry, band) in crate::signing_expiry::due_reminders(pool, now).await? {
+        let notification = Notification {
+            event_type: SIGNING_EXPIRING_EVENT.to_string(),
+            category: SIGNING_CATEGORY.to_string(),
+            project_id: Some(expiry.project_id.clone()),
+            build_id: None,
+            runner_id: None,
+            release_id: None,
+            actor_email: None,
+            actor_login: None,
+            payload: serde_json::json!({
+                "event": "signing.expiring",
+                "project_id": expiry.project_id,
+                "project_name": expiry.project_name,
+                "signing": {
+                    "key": expiry.key,
+                    "what": expiry.what,
+                    "holder": expiry.holder,
+                    "expires_at": expiry.expires_at,
+                    "band": band.as_str(),
+                    "when": crate::signing_expiry::when(expiry.expires_at, now),
+                    "path": expiry.path,
+                },
+                "timestamp": now,
+            }),
+        };
+        deliveries.extend(enqueue(pool, &notification).await?);
+    }
+    Ok(deliveries)
+}
+
+/// "FlutterShop: distribution certificate expires in 6 days".
+fn signing_summary(payload: &serde_json::Value, bold: &str, escape: fn(&str) -> String) -> String {
+    let signing = &payload["signing"];
+    let what = signing["what"].as_str().unwrap_or("Signing file");
+    let mut what_lower = what.to_string();
+    if let Some(first) = what_lower.get_mut(0..1) {
+        first.make_ascii_lowercase();
+    }
+    let emoji = if signing["band"] == "expired" {
+        ":no_entry:"
+    } else {
+        ":hourglass_flowing_sand:"
+    };
+    format!(
+        "{emoji} {bold}{}{bold}: {} {} ({})",
+        escape(payload["project_name"].as_str().unwrap_or("An app")),
+        escape(&what_lower),
+        escape(signing["when"].as_str().unwrap_or("expires soon")),
+        escape(signing["holder"].as_str().unwrap_or("")),
+    )
+}
+
+const SIGNING_ADVICE: &str = "Replace it before then, or iOS builds that sign with it fail.";
+const SIGNING_EXPIRED_ADVICE: &str = "iOS builds that sign with it fail until it is replaced.";
+
+fn signing_advice(payload: &serde_json::Value) -> &'static str {
+    if payload["signing"]["band"] == "expired" {
+        SIGNING_EXPIRED_ADVICE
+    } else {
+        SIGNING_ADVICE
+    }
+}
+
+fn signing_mattermost_payload(
+    payload: &serde_json::Value,
+    link: Option<&str>,
+) -> serde_json::Value {
+    let mut text = format!(
+        "{}\n{}",
+        signing_summary(payload, "**", |value| value.to_string()),
+        signing_advice(payload)
+    );
+    if let Some(link) = link {
+        text.push_str(&format!(" [Replace it]({link})"));
+    }
+    serde_json::json!({
+        "text": text,
+        "username": "Oore CI",
+        "icon_url": "https://static.oore.build/logo-avatar-192.png",
+    })
+}
+
+fn signing_email_html(payload: &serde_json::Value, link: Option<&str>) -> (String, String) {
+    let subject = signing_summary(payload, "", |value| value.to_string())
+        .split_once(' ')
+        .map_or_default(|(_, rest)| rest.to_string());
+    let summary = html_escape(&subject);
+    let advice = signing_advice(payload);
+    let button = link
+        .map_or_default(|link| {
+            format!(
+                r#"<p><a href="{}" style="display: inline-block; background: #111827; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">Replace it</a></p>"#,
+                html_escape(link)
+            )
+        });
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
+<div style="padding: 24px; border: 1px solid #e5e7eb; border-radius: 8px;">
+  <p><strong>{summary}</strong></p>
+  <p>{advice}</p>
+  {button}
+</div>
+<p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
+</body></html>"#
+    );
+    (subject, html)
+}
+
 /// Record notifications for builds that finished since the last scan.
 /// Returns the deliveries to send.
 pub(crate) async fn notify_due_builds(pool: &SqlitePool) -> anyhow::Result<Vec<String>> {
@@ -422,6 +580,7 @@ pub(crate) async fn notify_due_builds(pool: &SqlitePool) -> anyhow::Result<Vec<S
             && let Some(notification) = &notification
         {
             deliveries.extend(enqueue_on(&mut tx, notification).await?);
+            queue_personal(&mut tx, notification).await?;
         }
         tx.commit().await?;
     }
@@ -508,6 +667,12 @@ async fn dispatch_release_event(
         actor_login: None,
         payload: release_notification_payload(event, event_type, project_name.as_deref()),
     };
+    {
+        let mut conn = pool.acquire().await?;
+        if let Err(error) = queue_personal(&mut conn, &notification).await {
+            warn!(%error, release_id = %event.release_id, "personal release email not queued");
+        }
+    }
     enqueue(pool, &notification).await
 }
 
@@ -647,7 +812,14 @@ async fn attempt_delivery(
                 .ok()
                 .and_then(|settings| settings.public_url);
             let link = notification_link(public_url.as_deref(), &notification);
-            let result = send(&channel, encryption_key, &notification, link.as_deref()).await;
+            let result = send(
+                pool,
+                &channel,
+                encryption_key,
+                &notification,
+                link.as_deref(),
+            )
+            .await;
             (result, attempt < MAX_DELIVERY_ATTEMPTS)
         }
     };
@@ -694,6 +866,7 @@ async fn attempt_delivery(
 
 /// Render and send a notification to one channel.
 async fn send(
+    pool: &SqlitePool,
     channel_row: &sqlx::sqlite::SqliteRow,
     encryption_key: &[u8],
     notification: &Notification,
@@ -714,6 +887,7 @@ async fn send(
                 || match notification.category.as_str() {
                     "runner" => runner_email_html(payload),
                     "release" => release_email_html(payload),
+                    SIGNING_CATEGORY => signing_email_html(payload, link),
                     FEEDBACK_CATEGORY => feedback_email_html(payload, link),
                     _ => build_email_html(payload),
                 },
@@ -721,12 +895,21 @@ async fn send(
             .await
         }
         NotificationChannelType::Slack => {
-            dispatch_slack(channel_row, encryption_key, &channel_id, notification, link).await
+            dispatch_slack(
+                pool,
+                channel_row,
+                encryption_key,
+                &channel_id,
+                notification,
+                link,
+            )
+            .await
         }
         NotificationChannelType::Mattermost => {
             let body = match notification.category.as_str() {
                 "runner" => runner_mattermost_payload(payload),
                 "release" => release_mattermost_payload(payload),
+                SIGNING_CATEGORY => signing_mattermost_payload(payload, link),
                 FEEDBACK_CATEGORY => feedback_mattermost_payload(payload),
                 _ => build_mattermost_payload(payload),
             };
@@ -764,6 +947,11 @@ fn event_filter_matches(filter_json: Option<&str>, event_type: &str) -> bool {
 /// no public URL is configured.
 fn notification_link(public_url: Option<&str>, notification: &Notification) -> Option<String> {
     let base = public_url?.trim_end_matches('/');
+    if notification.category == SIGNING_CATEGORY {
+        return notification.payload["signing"]["path"]
+            .as_str()
+            .map(|path| format!("{base}{path}"));
+    }
     if let Some(release_id) = &notification.release_id {
         return Some(format!("{base}/releases/{release_id}"));
     }
@@ -810,6 +998,9 @@ fn release_notification_payload(
             "rollout_percent": event.rollout_percent,
             "actor": event.actor,
             "reason": event.reason,
+            "state": event.state,
+            "store_status": event.store_status,
+            "console_url": event.console_url,
         },
         "project_name": project_name,
         "timestamp": event.timestamp,
@@ -839,7 +1030,23 @@ fn build_notification_payload(
     event: &BuildStateEvent,
 ) -> serde_json::Value {
     let project_name: Option<String> = row.try_get("project_name").ok().flatten();
-    let pipeline_name: Option<String> = row.try_get("pipeline_name").ok().flatten();
+    let rehearsal = row
+        .try_get::<String, _>("config_snapshot")
+        .ok()
+        .and_then(|snapshot| serde_json::from_str::<serde_json::Value>(&snapshot).ok())
+        .is_some_and(|snapshot| crate::builds::snapshot_rehearsal(&snapshot));
+    // Every message names the pipeline, so a rehearsal says so there.
+    let pipeline_name: Option<String> = row
+        .try_get::<Option<String>, _>("pipeline_name")
+        .ok()
+        .flatten()
+        .map(|name| {
+            if rehearsal {
+                format!("{name} (rehearsal, nothing submitted)")
+            } else {
+                name
+            }
+        });
 
     serde_json::json!({
         "event": format!("build.{}", event.to_status),
@@ -855,6 +1062,7 @@ fn build_notification_payload(
             "trigger_actor": row.try_get::<Option<String>, _>("trigger_actor").ok().flatten(),
             "started_at": row.try_get::<Option<i64>, _>("started_at").ok().flatten(),
             "finished_at": row.try_get::<Option<i64>, _>("finished_at").ok().flatten(),
+            "rehearsal": rehearsal,
         },
         "project_name": project_name,
         "pipeline_name": pipeline_name,
@@ -928,16 +1136,23 @@ fn release_summary(payload: &serde_json::Value, bold: &str, escape: fn(&str) -> 
     };
     let track = release["track"]
         .as_str()
-        .map(|track| format!(" on `{}`", escape(track)))
-        .unwrap_or_default();
+        .map_or_default(|track| format!(" on `{}`", escape(track)));
     let percent = release["rollout_percent"]
         .as_f64()
-        .map(format_percent)
-        .unwrap_or_default();
+        .map_or_default(format_percent);
     let subject = format!("{bold}{project}{version}{bold}");
 
     match payload["event"].as_str().unwrap_or_default() {
         "release.release_uploaded" => format!(":package: {subject} uploaded{track}"),
+        "release.release_blocked" => {
+            format!(":warning: {subject} is {bold}blocked{bold} at the store{track}")
+        }
+        "release.release_submitted" => format!(":mag: {subject} submitted for review{track}"),
+        "release.release_approved" => format!(":ok_hand: {subject} approved by the store{track}"),
+        "release.release_rejected" => {
+            format!(":no_entry: {subject} {bold}rejected{bold} in store review{track}")
+        }
+        "release.release_live" => format!(":rocket: {subject} is live{track}"),
         "release.rollout_step_raised" => {
             format!(":arrow_up: {subject} rollout raised to {percent}{track}")
         }
@@ -972,6 +1187,9 @@ fn release_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value 
     let mut text = release_summary(payload, "**", |value| value.to_string());
     if let Some(reason) = payload["release"]["reason"].as_str() {
         text.push_str(&format!("\nReason: {reason}"));
+    }
+    if let Some(url) = payload["release"]["console_url"].as_str() {
+        text.push_str(&format!("\n[Open in the store console]({url})"));
     }
     serde_json::json!({
         "text": text,
@@ -1085,14 +1303,13 @@ fn feedback_email_html(payload: &serde_json::Value, link: Option<&str>) -> (Stri
         .collect::<Vec<_>>()
         .join(" · ");
     let button = link
-        .map(|link| {
+        .map_or_default(|link| {
             format!(
                 r#"
   <p style="margin-bottom: 0;"><a href="{}" style="display: inline-block; background: #2563eb; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none;">View feedback</a></p>"#,
                 html_escape(link)
             )
-        })
-        .unwrap_or_default();
+        });
     let html = format!(
         r#"<!DOCTYPE html>
 <html><body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -1134,6 +1351,11 @@ fn slack_message(
     let mut body = None;
     let (mut headline, context, button) = match category {
         "runner" => (runner_summary(payload, "*"), Vec::new(), None),
+        SIGNING_CATEGORY => (
+            signing_summary(payload, "*", slack_escape),
+            vec![signing_advice(payload).to_string()],
+            Some("Replace it"),
+        ),
         FEEDBACK_CATEGORY => {
             let feedback = &payload["feedback"];
             body = feedback["message"]
@@ -1155,6 +1377,12 @@ fn slack_message(
             let mut context = Vec::new();
             if let Some(reason) = payload["release"]["reason"].as_str() {
                 context.push(format!("Reason: {}", slack_escape(reason)));
+            }
+            if let Some(status) = payload["release"]["store_status"].as_str() {
+                context.push(format!("Store status `{}`", slack_escape(status)));
+            }
+            if let Some(url) = payload["release"]["console_url"].as_str() {
+                context.push(format!("<{url}|Open in the store console>"));
             }
             (
                 release_summary(payload, "*", slack_escape),
@@ -1329,6 +1557,7 @@ fn decrypt_channel_field(
 }
 
 async fn dispatch_slack(
+    pool: &SqlitePool,
     channel_row: &sqlx::sqlite::SqliteRow,
     encryption_key: &[u8],
     channel_id: &str,
@@ -1355,6 +1584,39 @@ async fn dispatch_slack(
         notification.actor_login.as_deref(),
     )
     .await;
+    // With a bot token and a channel ID, a release keeps one message that
+    // is edited as it moves, and each change goes in its thread.
+    let slack_channel: Option<String> = channel_row
+        .try_get::<Option<String>, _>("slack_channel_id")
+        .ok()
+        .flatten();
+    if notification.category == "release"
+        && let (Some(release_id), Some(token), Some(slack_channel)) = (
+            notification.release_id.as_deref(),
+            bot_token.as_deref(),
+            slack_channel.as_deref(),
+        )
+    {
+        let message = slack_message(&notification.category, &notification.payload, link, None);
+        let thread_reply = slack_message(
+            &notification.category,
+            &notification.payload,
+            None,
+            mention.as_deref(),
+        );
+        return slack_release_thread(
+            pool,
+            &SlackReleasePost {
+                channel_id,
+                release_id,
+                token,
+                slack_channel,
+            },
+            &message,
+            &thread_reply,
+        )
+        .await;
+    }
     let body = slack_message(
         &notification.category,
         &notification.payload,
@@ -1362,6 +1624,133 @@ async fn dispatch_slack(
         mention.as_deref(),
     );
     send_raw_http_payload(&url, None, NotificationChannelType::Slack, &body).await
+}
+
+struct SlackReleasePost<'a> {
+    channel_id: &'a str,
+    release_id: &'a str,
+    token: &'a str,
+    slack_channel: &'a str,
+}
+
+/// Posts or edits the one message that stands for a release in a Slack
+/// channel, then adds the change to its thread. A message deleted in Slack
+/// is posted again.
+async fn slack_release_thread(
+    pool: &SqlitePool,
+    post: &SlackReleasePost<'_>,
+    message: &serde_json::Value,
+    thread_reply: &serde_json::Value,
+) -> anyhow::Result<()> {
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT ts FROM slack_release_messages \
+         WHERE channel_id = ?1 AND release_id = ?2 AND slack_channel_id = ?3",
+    )
+    .bind(post.channel_id)
+    .bind(post.release_id)
+    .bind(post.slack_channel)
+    .fetch_optional(pool)
+    .await?;
+    let with_channel = |body: &serde_json::Value, extra: serde_json::Value| {
+        let mut body = body.clone();
+        body["channel"] = serde_json::json!(post.slack_channel);
+        if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
+            body.extend(extra.clone());
+        }
+        body
+    };
+    let ts = match existing {
+        Some(ts) => {
+            match slack_api(
+                post.token,
+                "chat.update",
+                &with_channel(message, serde_json::json!({ "ts": ts })),
+            )
+            .await
+            {
+                Ok(_) => Some(ts),
+                Err(error) if error.to_string().contains("message_not_found") => None,
+                Err(error) => return Err(error),
+            }
+        }
+        None => None,
+    };
+    let ts = match ts {
+        Some(ts) => {
+            slack_api(
+                post.token,
+                "chat.postMessage",
+                &with_channel(thread_reply, serde_json::json!({ "thread_ts": ts })),
+            )
+            .await?;
+            ts
+        }
+        None => {
+            let response = slack_api(
+                post.token,
+                "chat.postMessage",
+                &with_channel(message, serde_json::json!({})),
+            )
+            .await?;
+            let ts = response["ts"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("Slack returned no message timestamp"))?
+                .to_string();
+            slack_api(
+                post.token,
+                "chat.postMessage",
+                &with_channel(thread_reply, serde_json::json!({ "thread_ts": ts })),
+            )
+            .await?;
+            ts
+        }
+    };
+    let now = now_unix();
+    sqlx::query(
+        "INSERT INTO slack_release_messages \
+         (channel_id, release_id, slack_channel_id, ts, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5) \
+         ON CONFLICT(channel_id, release_id) DO UPDATE SET \
+           slack_channel_id = excluded.slack_channel_id, ts = excluded.ts, \
+           updated_at = excluded.updated_at",
+    )
+    .bind(post.channel_id)
+    .bind(post.release_id)
+    .bind(post.slack_channel)
+    .bind(&ts)
+    .bind(now)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Calls a Slack Web API method with the bot token. Slack answers 200 with
+/// `ok: false` on failure; its error code becomes the error.
+async fn slack_api(
+    token: &str,
+    method: &str,
+    body: &serde_json::Value,
+) -> anyhow::Result<serde_json::Value> {
+    let url = url::Url::parse(&format!("https://slack.com/api/{method}"))?;
+    let client = notification_http_client(&url).await?;
+    let response = client
+        .post(url)
+        .bearer_auth(token)
+        .header("Content-Type", "application/json; charset=utf-8")
+        .timeout(SLACK_API_TIMEOUT)
+        .json(body)
+        .send()
+        .await
+        .map_err(safe_notification_transport_error)?;
+    let reply: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|_| anyhow::anyhow!("Slack {method} returned an invalid response"))?;
+    if reply["ok"].as_bool() != Some(true) {
+        let error = reply["error"].as_str().unwrap_or("unknown_error");
+        anyhow::bail!("Slack {method} failed: {}", slack_escape(error));
+    }
+    Ok(reply)
 }
 
 /// Send a Slack test message that mentions the person who pressed test, so
@@ -1600,7 +1989,7 @@ async fn bounded_notification_error_body(mut response: reqwest::Response) -> Str
         }
     }
 
-    String::from_utf8_lossy(&body).into_owned()
+    String::from_utf8_lossy_owned(body)
 }
 
 // ── Email notification functions ─────────────────────────────────
@@ -1652,6 +2041,67 @@ async fn send_email_notification(
             .map_err(|_| anyhow::anyhow!("SMTP send timed out after 30s"))??;
     }
 
+    Ok(())
+}
+
+/// Send one email with an SMTP configuration; personal email uses this.
+pub(crate) async fn send_email(
+    config: &SmtpConfig,
+    subject: &str,
+    html_body: &str,
+) -> anyhow::Result<()> {
+    send_email_notification(config, subject, html_body).await
+}
+
+/// Queue personal email for the people a build or release event concerns.
+async fn queue_personal(
+    conn: &mut sqlx::SqliteConnection,
+    notification: &Notification,
+) -> anyhow::Result<()> {
+    use crate::personal::Audience;
+    let Some(project_id) = notification.project_id.as_deref() else {
+        return Ok(());
+    };
+    let payload = &notification.payload;
+    match notification.category.as_str() {
+        "build" if notification.event_type == "build_approval_needed" => {
+            let (subject, html) = build_email_html(payload);
+            crate::personal::queue_for_audience(
+                conn,
+                Audience::Approvers { project_id },
+                &subject,
+                &html,
+            )
+            .await?;
+        }
+        "build" => {
+            let Some(email) = notification.actor_email.as_deref() else {
+                return Ok(());
+            };
+            let (subject, html) = build_email_html(payload);
+            crate::personal::queue_for_audience(
+                conn,
+                Audience::BuildOwner {
+                    email,
+                    status: &notification.event_type,
+                },
+                &subject,
+                &html,
+            )
+            .await?;
+        }
+        "release" => {
+            let (subject, html) = release_email_html(payload);
+            crate::personal::queue_for_audience(
+                conn,
+                Audience::Followers { project_id },
+                &subject,
+                &html,
+            )
+            .await?;
+        }
+        _ => {}
+    }
     Ok(())
 }
 
@@ -1781,11 +2231,25 @@ fn release_email_html(payload: &serde_json::Value) -> (String, String) {
         .unwrap_or(summary);
     let reason = payload["release"]["reason"]
         .as_str()
-        .map(|reason| format!("<p>Reason: {}</p>", html_escape(reason)))
-        .unwrap_or_default();
+        .map_or_default(|reason| {
+            format!(
+                "<p>Reason: {}</p>",
+                html_escape(reason).replace('\n', "<br>")
+            )
+        });
+    let console = payload["release"]["console_url"]
+        .as_str()
+        .map_or_default(|url| {
+            format!(
+                r#"<p><a href="{}">Open in the store console</a></p>"#,
+                html_escape(url)
+            )
+        });
     let color = match payload["event"].as_str().unwrap_or_default() {
-        "release.rollout_halted" | "release.release_failed" => "#dc2626",
-        "release.release_approval_needed" => "#d97706",
+        "release.rollout_halted" | "release.release_failed" | "release.release_rejected" => {
+            "#dc2626"
+        }
+        "release.release_approval_needed" | "release.release_blocked" => "#d97706",
         _ => "#16a34a",
     };
     let heading = html_escape(&summary.replace('`', ""));
@@ -1798,6 +2262,7 @@ fn release_email_html(payload: &serde_json::Value) -> (String, String) {
 </div>
 <div style="padding: 24px; border: 1px solid #e5e7eb; border-top: none; border-radius: 0 0 8px 8px;">
   {reason}
+  {console}
   <p>Open the release in the Oore CI dashboard for details.</p>
 </div>
 <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
@@ -1838,6 +2303,9 @@ mod tests {
             rollout_percent: Some(20.0),
             actor: Some("dev@example.com".to_string()),
             reason: reason.map(String::from),
+            state: None,
+            store_status: None,
+            console_url: None,
             timestamp: 0,
         };
         release_notification_payload(&event, event_type, Some("Kite"))
@@ -1997,6 +2465,52 @@ mod tests {
             Some(r#"["failed"]"#),
             "rollout_halted"
         ));
+    }
+
+    #[test]
+    fn signing_reminders_name_the_file_and_link_to_where_it_is_replaced() {
+        let payload = serde_json::json!({
+            "project_name": "Shop <iOS>",
+            "signing": {
+                "what": "Distribution certificate",
+                "holder": "Release",
+                "band": "week",
+                "when": "expires in 6 days",
+                "path": "/projects/p1/pipelines/pl1/edit?signing=ios",
+            },
+        });
+        let mut notification = notification(None, None);
+        notification.category = SIGNING_CATEGORY.to_string();
+        notification.payload = payload.clone();
+        let link = notification_link(Some("https://oore.example.com/"), &notification);
+        assert_eq!(
+            link.as_deref(),
+            Some("https://oore.example.com/projects/p1/pipelines/pl1/edit?signing=ios")
+        );
+
+        let slack = slack_message(SIGNING_CATEGORY, &payload, link.as_deref(), None);
+        let text = slack["blocks"][0]["text"]["text"].as_str().unwrap();
+        assert_eq!(
+            text,
+            ":hourglass_flowing_sand: *Shop &lt;iOS&gt;*: distribution certificate expires in 6 days (Release)"
+        );
+        assert!(slack.to_string().contains("Replace it"));
+
+        let (subject, html) = signing_email_html(&payload, link.as_deref());
+        assert_eq!(
+            subject,
+            "Shop <iOS>: distribution certificate expires in 6 days (Release)"
+        );
+        assert!(html.contains("Shop &lt;iOS&gt;"));
+        assert!(html.contains("edit?signing=ios"));
+
+        let mattermost = signing_mattermost_payload(&payload, link.as_deref());
+        assert!(
+            mattermost["text"]
+                .as_str()
+                .unwrap()
+                .contains("[Replace it](https://")
+        );
     }
 
     #[test]
@@ -2184,6 +2698,9 @@ mod tests {
             rollout_percent: Some(20.0),
             actor: None,
             reason: None,
+            state: None,
+            store_status: None,
+            console_url: None,
             timestamp: 0,
         };
         let deliveries = dispatch_release_event(&pool, &event).await.unwrap();

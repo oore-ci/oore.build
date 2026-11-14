@@ -50,6 +50,8 @@ const CreateProjectDialog = lazy(loadCreateProjectDialog)
 interface ProjectsSearch {
   direction?: SortDirection
   openCreate?: 1
+  /** A local repository path to add, from `oore setup`. */
+  repo?: string
   page?: number
   pageSize?: 20 | 50 | 100
   q?: string
@@ -57,6 +59,7 @@ interface ProjectsSearch {
 }
 
 const PROJECT_SORT_VALUES = new Set<ProjectSort>([
+  'activity',
   'created_at',
   'updated_at',
   'name',
@@ -83,6 +86,7 @@ function parseSearch(search: SearchInput): ProjectsSearch {
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
     openCreate: searchNumber(search, 'openCreate') === 1 ? 1 : undefined,
+    repo: searchString(search, 'repo')?.trim() || undefined,
   }
 }
 
@@ -106,7 +110,7 @@ function ProjectsListPage() {
   const navigate = Route.useNavigate()
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
-  const sort = search.sort ?? 'updated_at'
+  const sort = search.sort ?? 'activity'
   const direction = search.direction ?? 'desc'
   const projectsQuery = useProjects({
     search: search.q,
@@ -164,7 +168,7 @@ function ProjectsListPage() {
   function handleCreateOpenChange(open: boolean) {
     setCreateOpen(open)
     if (!open && search.openCreate === 1) {
-      updateSearch({ openCreate: undefined })
+      updateSearch({ openCreate: undefined, repo: undefined })
     }
   }
 
@@ -190,9 +194,9 @@ function ProjectsListPage() {
 
   return (
     <PageLayout width="wide" fill>
-      <PageMeta title="Projects" noindex />
+      <PageMeta title="Apps" noindex />
       <PageHeader
-        title="Projects"
+        title="Apps"
         actions={
           // While the page is empty its one next step lives in the empty
           // state, and without a connected source the dialog has nothing to
@@ -200,7 +204,7 @@ function ProjectsListPage() {
           canWriteProjects && !showTrueEmpty && !needsSource ? (
             <Button onClick={() => setCreateOpen(true)}>
               <HugeiconsIcon icon={Add01Icon} />
-              New project
+              Add app
             </Button>
           ) : undefined
         }
@@ -219,10 +223,10 @@ function ProjectsListPage() {
                 <EmptyMedia variant="icon">
                   <HugeiconsIcon icon={Folder02Icon} />
                 </EmptyMedia>
-                <EmptyTitle>Create your first project</EmptyTitle>
+                <EmptyTitle>Create your first app</EmptyTitle>
                 <EmptyDescription>
                   {runtimeMode === 'local'
-                    ? 'Choose a local Git repository to create your first project.'
+                    ? 'Choose a local Git repository to create your first app.'
                     : noConnectedSources
                       ? 'Connect GitHub or GitLab so Oore can see your repositories, then create a project from one.'
                       : 'Pick a repository from a connected source, then add a pipeline to start building.'}
@@ -232,7 +236,7 @@ function ProjectsListPage() {
                 {needsSource ? (
                   canWriteIntegrations ? (
                     <Button
-                      render={<Link to="/settings/integrations" />}
+                      render={<Link to="/settings/sources" />}
                       onClick={() =>
                         updateProgress(scope, { projectDraft: { name: '' } })
                       }
@@ -253,7 +257,7 @@ function ProjectsListPage() {
                   </Button>
                 ) : (
                   <Text variant="caption">
-                    Ask an owner or admin to create the first project.
+                    Ask an owner or admin to create the first app.
                   </Text>
                 )}
               </EmptyContent>
@@ -281,7 +285,11 @@ function ProjectsListPage() {
 
       {isCreateOpen ? (
         <Suspense fallback={null}>
-          <CreateProjectDialog open onOpenChange={handleCreateOpenChange} />
+          <CreateProjectDialog
+            open
+            onOpenChange={handleCreateOpenChange}
+            initialPath={search.repo}
+          />
         </Suspense>
       ) : null}
     </PageLayout>

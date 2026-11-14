@@ -5,11 +5,12 @@ use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, CreateProjectRequest, CreateProjectResponse, ListProjectsResponse, OkResponse,
-    Project, ProjectDetailResponse, ProjectRole, RuntimeMode, ScmProvider, UpdateProjectRequest,
+    Project, ProjectDetailResponse, ProjectRole, ProjectSetupProgress, RuntimeMode, ScmProvider,
+    UpdateProjectRequest,
 };
 use serde::Deserialize;
 use sqlx::{QueryBuilder, Row, Sqlite};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -76,6 +77,10 @@ fn row_to_project(
         updated_at: row.get("updated_at"),
         current_user_role,
         auto_add_pipelines: row.try_get::<i64, _>("auto_add_pipelines").unwrap_or(0) != 0,
+        is_favorite: false,
+        last_build_at: None,
+        platforms: Vec::new(),
+        live_version: None,
     })
 }
 
@@ -337,6 +342,8 @@ fn project_order_clause(
     direction: Option<&str>,
 ) -> Result<String, (StatusCode, Json<ApiError>)> {
     let column = match sort.unwrap_or("created_at") {
+        // Pinned apps first, then the newest build; bound per user by the caller.
+        "activity" => return Ok(String::new()),
         "created_at" => "p.created_at",
         "updated_at" => "p.updated_at",
         "name" => "p.name COLLATE NOCASE",
@@ -344,7 +351,7 @@ fn project_order_clause(
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
                 "invalid_input",
-                "sort must be created_at, updated_at, or name",
+                "sort must be activity, created_at, updated_at, or name",
             ));
         }
     };
@@ -539,6 +546,10 @@ pub async fn create_project(
         updated_at: now,
         current_user_role,
         auto_add_pipelines,
+        is_favorite: false,
+        last_build_at: None,
+        platforms: Vec::new(),
+        live_version: None,
     };
 
     Ok((StatusCode::CREATED, Json(CreateProjectResponse { project })))
@@ -607,9 +618,16 @@ pub async fn list_projects(
         params.integration_id.as_deref(),
         params.search.as_deref(),
     );
+    projects_query.push(" ORDER BY ");
+    if order_by.is_empty() {
+        projects_query
+            .push("EXISTS (SELECT 1 FROM user_favorite_projects f WHERE f.project_id = p.id AND f.user_id = ")
+            .push_bind(auth.0.user_id.clone())
+            .push(") DESC, COALESCE((SELECT MAX(b.created_at) FROM builds b WHERE b.project_id = p.id), p.created_at) DESC, p.id DESC");
+    } else {
+        projects_query.push(order_by);
+    }
     projects_query
-        .push(" ORDER BY ")
-        .push(order_by)
         .push(" LIMIT ")
         .push_bind(limit)
         .push(" OFFSET ")
@@ -645,6 +663,17 @@ pub async fn list_projects(
             .collect::<Result<Vec<_>, (StatusCode, Json<ApiError>)>>()?
     };
 
+    let mut projects = projects;
+    crate::personal::decorate_projects(pool, &auth.0.user_id, &mut projects)
+        .await
+        .map_err(|e| {
+            error!(error = %e, "failed to describe projects");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                "Failed to list projects",
+            )
+        })?;
     Ok(Json(ListProjectsResponse { projects, total }))
 }
 
@@ -683,7 +712,16 @@ pub async fn get_project(
     .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Project not found"))?;
 
     let current_user_role = project_role_for_response(&effective)?;
-    let project = row_to_project(&project_row, current_user_role)?;
+    let mut project = row_to_project(&project_row, current_user_role)?;
+    if let Err(e) = crate::personal::decorate_projects(
+        &pool,
+        &auth.0.user_id,
+        std::slice::from_mut(&mut project),
+    )
+    .await
+    {
+        warn!(error = %e, "failed to describe project");
+    }
 
     let pipeline_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pipelines WHERE project_id = ?1")
@@ -698,12 +736,48 @@ pub async fn get_project(
         .await
         .unwrap_or(0);
 
+    let setup = project_setup_progress(&pool, &project_id)
+        .await
+        .unwrap_or_default();
+
     Ok(Json(ProjectDetailResponse {
         project,
         pipeline_count,
         build_count,
         current_user_role,
+        setup,
     }))
+}
+
+/// Which steps after the first install the project has done.
+async fn project_setup_progress(
+    pool: &sqlx::SqlitePool,
+    project_id: &str,
+) -> Result<ProjectSetupProgress, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT \
+           EXISTS (SELECT 1 FROM pipeline_android_signing_profiles s \
+                   JOIN pipelines p ON p.id = s.pipeline_id \
+                   WHERE p.project_id = ?1 AND s.build_type = 'release' AND s.enabled = 1) \
+           OR EXISTS (SELECT 1 FROM pipeline_ios_signing_settings s \
+                   JOIN pipelines p ON p.id = s.pipeline_id \
+                   WHERE p.project_id = ?1 AND s.enabled = 1) \
+           OR EXISTS (SELECT 1 FROM project_signing_identities WHERE project_id = ?1) \
+             AS release_signing, \
+           EXISTS (SELECT 1 FROM pipeline_publish_targets t \
+                   JOIN pipelines p ON p.id = t.pipeline_id \
+                   WHERE p.project_id = ?1 AND t.enabled = 1) AS store_publishing, \
+           EXISTS (SELECT 1 FROM project_members \
+                   WHERE project_id = ?1 AND role = 'viewer') AS testers",
+    )
+    .bind(project_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(ProjectSetupProgress {
+        release_signing: row.get::<bool, _>("release_signing"),
+        store_publishing: row.get::<bool, _>("store_publishing"),
+        testers: row.get::<bool, _>("testers"),
+    })
 }
 
 /// `PATCH /v1/projects/{project_id}` — partial update.

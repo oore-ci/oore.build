@@ -12,7 +12,7 @@ revision verification.
 
 - Access to the connected source in Oore.
 - Access to the provider's webhook delivery history.
-- A project linked to the repository and an enabled pipeline with source
+- An app linked to the repository and an enabled pipeline with source
   triggers.
 
 The public endpoints are:
@@ -44,7 +44,7 @@ GitLab accepts only the current token for the repository named by the payload.
 If the provider reports an authentication failure, create a new token from
 that repository's action menu, replace the token in GitLab, and test again.
 
-Do not reuse a GitLab token from another project, even when both projects use
+Do not reuse a GitLab token from another app, even when both apps use
 the same source connection.
 
 ## 3. Check the pipeline filters
@@ -72,7 +72,7 @@ the delivered commit.
 **A successful delivery creates no build**
 
 Compare the event and branch with the pipeline's **Triggers** settings. Then
-confirm the project still links to the repository in the delivery.
+confirm the app still links to the repository in the delivery.
 
 **A retry appears more than once in the provider**
 

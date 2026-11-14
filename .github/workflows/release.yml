@@ -499,14 +499,18 @@ jobs:
             channel="beta"
           fi
 
-          prev=""
+          # Compare against the closest earlier tag on the channel. Tags can be
+          # cut ahead of their releases (a queued train), so the newest tag is
+          # not always older than this one.
+          tags=""
           if [ "$channel" = "alpha" ]; then
-            prev="$(git tag -l 'v*-alpha.*' --sort=-v:refname | grep -v -F "$tag" | head -n1 || true)"
+            tags="$(git tag -l 'v*-alpha.*')"
           elif [ "$channel" = "beta" ]; then
-            prev="$(git tag -l 'v*-beta.*' --sort=-v:refname | grep -v -F "$tag" | head -n1 || true)"
+            tags="$(git tag -l 'v*-beta.*')"
           else
-            prev="$(git tag -l 'v*' --sort=-v:refname | grep -v -- '-' | grep -v -F "$tag" | head -n1 || true)"
+            tags="$(git tag -l 'v*' | grep -v -- '-' || true)"
           fi
+          prev="$(printf '%s\n' "$tags" | tools/previous-release-tag.sh "$tag")"
 
           repo="${GITHUB_REPOSITORY}"
           out="dist/releases/$tag/RELEASE_NOTES.md"

@@ -103,7 +103,7 @@ checking that it exists. Guard both as in step 1.
 
 The build still succeeds, because the **Verify Android signing** step signed the output
 with the pipeline key. The build does not apply the injected properties, for
-example because the repository has no `android/gradle.properties` project at
+example because the repository has no `android/gradle.properties` app at
 its root, the file is a symbolic link, or the Gradle build sets signing in a
 way that ignores them.
 

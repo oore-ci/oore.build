@@ -10,6 +10,8 @@ interface PageHeaderProps {
   actions?: React.ReactNode
   meta?: React.ReactNode
   divided?: boolean
+  /** One short action that stays beside the title on phones too. */
+  inlineActions?: boolean
 }
 
 export default function PageHeader({
@@ -18,10 +20,17 @@ export default function PageHeader({
   actions,
   meta,
   divided = false,
+  inlineActions = false,
 }: PageHeaderProps) {
   return (
     <header className={cn('space-y-3', divided && 'border-b pb-5')}>
-      <Stack gap={4} className="sm:flex-row sm:items-start sm:justify-between">
+      <Stack
+        gap={4}
+        className={cn(
+          'sm:flex-row sm:items-start sm:justify-between',
+          inlineActions && 'flex-row items-start justify-between',
+        )}
+      >
         <div className="min-w-0 space-y-1">
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           {description ? (
@@ -31,7 +40,13 @@ export default function PageHeader({
           ) : null}
         </div>
         {actions ? (
-          <Row gap={2} className="w-full flex-wrap sm:w-auto sm:justify-end">
+          <Row
+            gap={2}
+            className={cn(
+              'flex-wrap sm:w-auto sm:justify-end',
+              inlineActions ? 'shrink-0' : 'w-full',
+            )}
+          >
             {actions}
           </Row>
         ) : null}

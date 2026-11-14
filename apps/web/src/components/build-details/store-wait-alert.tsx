@@ -33,7 +33,8 @@ export function StoreWaitAlert({
       : null
     return summary ? [{ release, summary }] : []
   })
-  if (!waiting.length) return null
+  // The Release tab carries the full detail; repeating it here says it twice.
+  if (!waiting.length || !onOpenRelease) return null
 
   return (
     <>
@@ -55,14 +56,13 @@ export function StoreWaitAlert({
             </AlertTitle>
             <AlertDescription className="flex min-w-0 flex-col items-start gap-2">
               {storeError ? (
-                <StoreErrorMessage message={storeError.message} />
-              ) : null}
-              <span>{summary.description}</span>
-              {onOpenRelease ? (
-                <Button variant="outline" size="xs" onClick={onOpenRelease}>
-                  View release
-                </Button>
-              ) : null}
+                <span>The store refused it. The release says what to fix.</span>
+              ) : (
+                <span>{summary.description}</span>
+              )}
+              <Button variant="outline" size="xs" onClick={onOpenRelease}>
+                View release
+              </Button>
             </AlertDescription>
           </Alert>
         )

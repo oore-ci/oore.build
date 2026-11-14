@@ -13,12 +13,12 @@ use serde::de::{self, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AppStoreDestination, BuildIsolation, BuildPlatform, GooglePlayPublishConfig,
-    PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlatformBuildArgs,
-    PlatformBuildCommands, RunnerAppStorePublishPlan, RunnerPublishPlan, SizeBudget,
-    TargetSizeBudget, default_artifact_patterns_for_platforms, is_valid_pipeline_env_key,
-    normalize_runner_labels, parse_repository_pipeline_yaml, validate_artifact_pattern,
-    validate_build_number_offset, validate_repository_config_path,
+    AppStoreDestination, AppStoreReleaseType, BuildIsolation, BuildPlatform,
+    GooglePlayPublishConfig, PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig,
+    PlatformBuildArgs, PlatformBuildCommands, PublishPreflight, RunnerAppStorePublishPlan,
+    RunnerPublishPlan, SizeBudget, TargetSizeBudget, default_artifact_patterns_for_platforms,
+    is_valid_pipeline_env_key, normalize_runner_labels, parse_repository_pipeline_yaml,
+    validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
 };
 
 /// Longest step name a v2 file may use.
@@ -253,6 +253,8 @@ pub struct EffectivePublish {
     pub app_store: Result<Option<RunnerAppStorePublishPlan>, String>,
     /// Adjustments made to fit Play's rules, for the publish log.
     pub notes: Vec<String>,
+    /// Check each store submission instead of making it.
+    pub rehearsal: bool,
 }
 
 impl PlanPublish {
@@ -269,10 +271,31 @@ impl PlanPublish {
             google_play,
             app_store,
             disabled,
+            frozen,
+            rehearsal,
         } = settings;
+        let is_rehearsal = rehearsal.is_some();
+        // A rehearsal checks its plan instead and uploads nothing, so a
+        // freeze does not hold it.
+        let (google_play, app_store, disabled, frozen) = match rehearsal {
+            Some(plan) => (plan.google_play, plan.app_store, plan.disabled, None),
+            None => (google_play, app_store, disabled, frozen),
+        };
+        if let Some(reason) = frozen {
+            return EffectivePublish {
+                changelog,
+                rehearsal: is_rehearsal,
+                google_play: Ok(None),
+                app_store: Ok(None),
+                notes: vec![format!(
+                    "Store uploads are frozen: {reason}. Lift the freeze in Releases to upload again"
+                )],
+            };
+        }
         if disabled {
             return EffectivePublish {
                 changelog,
+                rehearsal: is_rehearsal,
                 google_play: Ok(None),
                 app_store: Ok(None),
                 notes: vec![
@@ -302,6 +325,9 @@ impl PlanPublish {
                         if let Some(secret) = &play.spec.service_account {
                             config.service_account_secret = secret.clone();
                         }
+                        if let Some(preflight) = play.spec.preflight {
+                            config.preflight = preflight;
+                        }
                         // The rules the settings form enforces, applied to the
                         // combination instead of failing the upload.
                         if let Some(percent) = config.rollout_percent.filter(|p| *p < 100.0) {
@@ -329,6 +355,7 @@ impl PlanPublish {
                                 |percent| *percent < 100.0 && play.spec.track != "internal",
                             ),
                             draft: play.spec.draft.unwrap_or(false),
+                            preflight: play.spec.preflight.unwrap_or_default(),
                             ..GooglePlayPublishConfig::from_file_defaults()
                         })),
                         None => Err(format!(
@@ -350,6 +377,11 @@ impl PlanPublish {
                     groups: vec![testflight.spec.group.clone()],
                     submit_for_review: None,
                     phased_release: None,
+                    release_type: None,
+                    earliest_release_date: None,
+                    release_notes_dir: None,
+                    cancel_previous_submission: None,
+                    preflight: None,
                 },
                 source: testflight.source.clone(),
                 error: testflight.error.clone(),
@@ -381,7 +413,22 @@ impl PlanPublish {
                             if let Some(phased) = spec.phased_release {
                                 plan.config.phased_release = phased;
                             }
+                            if let Some(release_type) = spec.release_type {
+                                plan.config.release_type = release_type;
+                            }
+                            if let Some(date) = &spec.earliest_release_date {
+                                plan.config.earliest_release_date = Some(date.clone());
+                            }
+                            if let Some(cancel) = spec.cancel_previous_submission {
+                                plan.config.cancel_previous_submission = cancel;
+                            }
                         }
+                    }
+                    if let Some(dir) = &spec.release_notes_dir {
+                        plan.config.release_notes_dir = Some(dir.clone());
+                    }
+                    if let Some(preflight) = spec.preflight {
+                        plan.config.preflight = preflight;
                     }
                     if plan.config.destination == AppStoreDestination::Testflight
                         && plan.config.testflight_groups.is_empty()
@@ -405,6 +452,7 @@ impl PlanPublish {
             google_play,
             app_store,
             notes,
+            rehearsal: is_rehearsal,
         }
     }
 }
@@ -1001,6 +1049,24 @@ pub struct AppStorePublishSpec {
     /// Release with Apple's seven-day phased release, for destination app_store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phased_release: Option<bool>,
+    /// When Apple releases the approved version: after_approval, manual or
+    /// scheduled. For destination app_store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_type: Option<AppStoreReleaseType>,
+    /// RFC 3339 time a scheduled release goes out, for release_type scheduled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub earliest_release_date: Option<String>,
+    /// Repository directory with "What's New" per locale: `<locale>.txt` or
+    /// fastlane's `<locale>/release_notes.txt`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes_dir: Option<String>,
+    /// Cancel another open App Review submission before submitting, for
+    /// destination app_store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_previous_submission: Option<bool>,
+    /// What a failed pre-flight check does: auto, block, warn or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<PublishPreflight>,
 }
 
 fn default_app_store_destination() -> AppStoreDestination {
@@ -1049,6 +1115,9 @@ pub struct PlayPublishSpec {
     /// upload needs no pipeline Google Play settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_account: Option<String>,
+    /// What a failed pre-flight check does: auto, block, warn or off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<PublishPreflight>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1868,9 +1937,7 @@ impl ConfigV2 {
             let Ok(plan) = self.plan(workflow, None) else {
                 continue;
             };
-            let scope = workflow
-                .map(|name| format!("workflow {name}: "))
-                .unwrap_or_default();
+            let scope = workflow.map_or_default(|name| format!("workflow {name}: "));
             for error in [
                 &plan.publish.play.as_ref().and_then(|p| p.error.clone()),
                 &plan
@@ -2172,9 +2239,7 @@ impl ConfigV2 {
             .select_workflow(workflow)
             .map_err(|error| vec![error])?;
         let workflow_spec = selected_workflow.map(|(_, spec)| spec);
-        let prefix = selected_workflow
-            .map(|(name, _)| format!("workflows.{name}."))
-            .unwrap_or_default();
+        let prefix = selected_workflow.map_or_default(|(name, _)| format!("workflows.{name}."));
         let mut errors = Vec::new();
 
         // Vars: the workflow's replace the top-level ones by name.
@@ -2806,9 +2871,14 @@ fn check_target(
         }
         match app_store.destination {
             AppStoreDestination::Testflight => {
-                if app_store.submit_for_review.is_some() || app_store.phased_release.is_some() {
+                if app_store.submit_for_review.is_some()
+                    || app_store.phased_release.is_some()
+                    || app_store.release_type.is_some()
+                    || app_store.earliest_release_date.is_some()
+                    || app_store.cancel_previous_submission.is_some()
+                {
                     errors.push(format!(
-                        "{path}.publish.app_store.submit_for_review and phased_release apply to destination app_store only"
+                        "{path}.publish.app_store.submit_for_review, phased_release, release_type, earliest_release_date and cancel_previous_submission apply to destination app_store only"
                     ));
                 }
             }
@@ -2817,6 +2887,23 @@ fn check_target(
                     errors.push(format!(
                         "{path}.publish.app_store.groups applies to destination testflight only"
                     ));
+                }
+                match (app_store.release_type, &app_store.earliest_release_date) {
+                    (Some(AppStoreReleaseType::Scheduled), None) => errors.push(format!(
+                        "{path}.publish.app_store.release_type scheduled needs earliest_release_date"
+                    )),
+                    (Some(AppStoreReleaseType::Scheduled), Some(date))
+                        if !crate::is_rfc3339_date_time(date) =>
+                    {
+                        errors.push(format!(
+                            "{path}.publish.app_store.earliest_release_date must be an RFC 3339 time such as 2026-12-01T09:00:00Z"
+                        ))
+                    }
+                    (Some(AppStoreReleaseType::Scheduled), Some(_)) => {}
+                    (_, Some(_)) => errors.push(format!(
+                        "{path}.publish.app_store.earliest_release_date applies to release_type scheduled only"
+                    )),
+                    _ => {}
                 }
             }
         }
@@ -3831,6 +3918,7 @@ mod tests {
                 rollout: None,
                 draft: None,
                 service_account: None,
+                preflight: None,
             }
         );
         assert_eq!(
@@ -3907,6 +3995,8 @@ mod tests {
             google_play: Some(serde_json::from_value(config).unwrap()),
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         }
     }
 
@@ -4121,12 +4211,49 @@ mod tests {
     }
 
     #[test]
+    fn rehearsal_checks_its_own_plan_and_old_runners_upload_nothing() {
+        // The file names its own service account, so it needs no settings.
+        let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: production, service_account: PLAY_JSON }\n";
+        let rehearsal = RunnerPublishPlan {
+            changelog: None,
+            google_play: None,
+            app_store: None,
+            disabled: true,
+            frozen: Some("Sale weekend".to_string()),
+            rehearsal: Some(crate::RunnerRehearsalPlan {
+                disabled: false,
+                google_play: Some(play_settings()),
+                app_store: Some(app_store_settings()),
+            }),
+        };
+        let effective = publish_of(yaml, None).apply(rehearsal.clone());
+        assert!(effective.rehearsal);
+        assert_eq!(
+            effective.google_play.unwrap().unwrap().track,
+            "production".to_string()
+        );
+        assert!(effective.app_store.unwrap().is_some());
+
+        // A runner without rehearsals sees the top-level plan: off.
+        let old_runner_view = RunnerPublishPlan {
+            rehearsal: None,
+            ..rehearsal
+        };
+        let effective = publish_of(yaml, None).apply(old_runner_view);
+        assert!(!effective.rehearsal);
+        assert_eq!(effective.google_play.unwrap(), None);
+        assert!(effective.app_store.unwrap().is_none());
+    }
+
+    #[test]
     fn file_publish_replaces_where_the_settings_upload() {
         let settings = RunnerPublishPlan {
             changelog: Some("Fixes".to_string()),
             google_play: Some(play_settings()),
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         };
         let yaml = "version: 2\ntargets:\n  android:\n    build: flutter build appbundle\n    publish:\n      play: { track: closed, rollout: 0.07 }\n  ios:\n    build: flutter build ipa\n    publish:\n      testflight: { group: Beta }\n";
         let effective = publish_of(yaml, None).apply(settings.clone());
@@ -4197,6 +4324,8 @@ mod tests {
             google_play: None,
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         });
         let play = effective.google_play.unwrap().unwrap();
         assert_eq!(play.service_account_secret, "PLAY_RELEASE");
@@ -4240,6 +4369,8 @@ mod tests {
             google_play: None,
             app_store: Some(app_store_settings()),
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         });
         assert_eq!(
             effective
@@ -4259,6 +4390,8 @@ mod tests {
             google_play: None,
             app_store: None,
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         };
         let effective = publish_of(PUBLISHING, None).apply(settings);
         let play = effective.google_play.unwrap_err();
@@ -4281,6 +4414,8 @@ mod tests {
             google_play: None,
             app_store: None,
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         });
         assert_eq!(none.google_play.unwrap(), None);
         assert!(none.app_store.unwrap().is_none());

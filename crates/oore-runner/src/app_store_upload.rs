@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use oore_contract::{
-    AppStoreDestination, AppStorePublishConfig, PublishStore, RunnerAppStoreUploadCredentials,
-    RunnerPublishResult,
+    AppStoreDestination, AppStoreListing, AppStorePublishConfig, AppStoreReleaseNote,
+    PublishPreflight, PublishStore, RunnerAppStoreUploadCredentials, RunnerPublishResult,
 };
 use serde_json::Value;
 
@@ -65,9 +65,23 @@ fn write_private_key(
 }
 
 fn altool_upload_args(ipa: &Path, credentials: &RunnerAppStoreUploadCredentials) -> Vec<String> {
+    altool_args("--upload-app", ipa, credentials)
+}
+
+/// `--validate-app` runs App Store Connect's checks on the IPA without
+/// uploading it, so it uses no build number.
+fn altool_validate_args(ipa: &Path, credentials: &RunnerAppStoreUploadCredentials) -> Vec<String> {
+    altool_args("--validate-app", ipa, credentials)
+}
+
+fn altool_args(
+    action: &str,
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+) -> Vec<String> {
     vec![
         "altool".to_string(),
-        "--upload-app".to_string(),
+        action.to_string(),
         "--type".to_string(),
         "ios".to_string(),
         "--file".to_string(),
@@ -328,7 +342,7 @@ fn summarize_altool_failure(stdout: &str, stderr: &str) -> String {
         }
         // A bare "Validation failed" says nothing; show everything altool
         // returned so Apple's reason is in the log wherever it put it.
-        let mut raw = result.map(|value| value.to_string()).unwrap_or_default();
+        let mut raw = result.map_or_default(|value| value.to_string());
         if !stderr.trim().is_empty() {
             raw = format!("{raw} {}", stderr.trim());
         }
@@ -367,14 +381,7 @@ pub(crate) async fn upload_ipa(
     .await
 }
 
-async fn upload_ipa_with(
-    program: &Path,
-    ipa: &Path,
-    credentials: &RunnerAppStoreUploadCredentials,
-    key_dir: &Path,
-    limit: Duration,
-    retry_delay: Duration,
-) -> anyhow::Result<String> {
+fn check_credentials(credentials: &RunnerAppStoreUploadCredentials) -> anyhow::Result<()> {
     anyhow::ensure!(
         is_valid_key_id(&credentials.key_id),
         "App Store Connect API key ID is invalid"
@@ -387,6 +394,18 @@ async fn upload_ipa_with(
         !credentials.private_key_pem.trim().is_empty(),
         "App Store Connect API private key is empty"
     );
+    Ok(())
+}
+
+async fn upload_ipa_with(
+    program: &Path,
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+    key_dir: &Path,
+    limit: Duration,
+    retry_delay: Duration,
+) -> anyhow::Result<String> {
+    check_credentials(credentials)?;
     let _key = write_private_key(key_dir, credentials)?;
     // Whether an earlier attempt may have delivered the IPA before failing.
     let mut maybe_uploaded = false;
@@ -430,11 +449,74 @@ async fn upload_ipa_with(
     }
 }
 
+/// Has App Store Connect validate the signed IPA without uploading it, for
+/// a release rehearsal. `Err` carries Apple's reasons.
+pub(crate) async fn validate_ipa(
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+    key_dir: &Path,
+) -> anyhow::Result<String> {
+    validate_ipa_with(
+        Path::new("xcrun"),
+        ipa,
+        credentials,
+        key_dir,
+        ALTOOL_TIMEOUT,
+        ALTOOL_RETRY_DELAY,
+    )
+    .await
+}
+
+async fn validate_ipa_with(
+    program: &Path,
+    ipa: &Path,
+    credentials: &RunnerAppStoreUploadCredentials,
+    key_dir: &Path,
+    limit: Duration,
+    retry_delay: Duration,
+) -> anyhow::Result<String> {
+    check_credentials(credentials)?;
+    let _key = write_private_key(key_dir, credentials)?;
+    let mut attempt = 1;
+    loop {
+        let output = run_altool(
+            program,
+            altool_validate_args(ipa, credentials),
+            key_dir,
+            limit,
+        )
+        .await?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let result = altool_result(&stdout);
+        if output.status.success() && altool_product_errors(result.as_ref()).is_empty() {
+            return Ok(result
+                .as_ref()
+                .and_then(|value| value.get("success-message"))
+                .and_then(Value::as_str)
+                .unwrap_or("App Store Connect validated the IPA")
+                .to_string());
+        }
+        let combined = format!("{stdout}\n{stderr}");
+        // Validation sends nothing that counts, so it is always safe to retry.
+        if attempt == 1 && is_transient_altool_failure(&combined) {
+            attempt += 1;
+            tokio::time::sleep(retry_delay).await;
+            continue;
+        }
+        anyhow::bail!(
+            "App Store Connect validation failed: {}",
+            summarize_altool_failure(&stdout, &stderr)
+        );
+    }
+}
+
 /// The publish result for an uploaded IPA, from the app identity the runner
 /// recorded when it signed the archive.
 pub(crate) fn publish_result(
     ios_metadata: &Value,
     config: &AppStorePublishConfig,
+    release_notes: Option<Vec<AppStoreReleaseNote>>,
 ) -> anyhow::Result<RunnerPublishResult> {
     let field = |key: &str| {
         ios_metadata
@@ -465,7 +547,232 @@ pub(crate) fn publish_result(
             AppStoreDestination::Testflight => Some(config.testflight_groups.clone()),
             AppStoreDestination::AppStore => None,
         },
+        held_for_review: false,
+        release_notes,
+        listing: None,
     })
+}
+
+/// Longest "What's New" App Store Connect takes.
+const MAX_WHATS_NEW_CHARS: usize = 4000;
+
+/// Reads "What's New" per locale from the repository: `<dir>/<locale>.txt`,
+/// or fastlane's `<dir>/<locale>/release_notes.txt`. `None` when the
+/// directory is missing or holds no notes.
+pub(crate) fn read_release_notes_dir(
+    workspace: &Path,
+    dir: &str,
+) -> anyhow::Result<Option<Vec<AppStoreReleaseNote>>> {
+    let root = workspace.join(dir);
+    let canonical_workspace = workspace.canonicalize()?;
+    let Ok(canonical) = root.canonicalize() else {
+        return Ok(None);
+    };
+    if !canonical.starts_with(&canonical_workspace) {
+        anyhow::bail!("release_notes_dir {dir} is outside the repository");
+    }
+    let mut notes = Vec::new();
+    for entry in fs::read_dir(&canonical)? {
+        let entry = entry?;
+        let path = entry.path();
+        let (locale, file) = if path.is_dir() {
+            let file = path.join("release_notes.txt");
+            if !file.is_file() {
+                continue;
+            }
+            (entry.file_name().to_string_lossy().to_string(), file)
+        } else if path.extension().is_some_and(|extension| extension == "txt") {
+            let Some(stem) = path.file_stem() else {
+                continue;
+            };
+            (stem.to_string_lossy().to_string(), path.clone())
+        } else {
+            continue;
+        };
+        let text = fs::read_to_string(&file)?;
+        let text = text.trim();
+        if text.is_empty() || locale.is_empty() || locale == "default" {
+            continue;
+        }
+        notes.push(AppStoreReleaseNote {
+            locale,
+            whats_new: text.chars().take(MAX_WHATS_NEW_CHARS).collect(),
+        });
+    }
+    notes.sort_by(|a, b| a.locale.cmp(&b.locale));
+    Ok((!notes.is_empty()).then_some(notes))
+}
+
+/// Longest App Store listing fields, per App Store Connect.
+const MAX_DESCRIPTION_CHARS: usize = 4000;
+const MAX_KEYWORDS_CHARS: usize = 100;
+const MAX_PROMOTIONAL_TEXT_CHARS: usize = 170;
+
+fn listing_file(
+    dir: &Path,
+    file: &str,
+    max_chars: Option<usize>,
+) -> anyhow::Result<Option<String>> {
+    let path = dir.join(file);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if let Some(max) = max_chars
+        && text.chars().count() > max
+    {
+        anyhow::bail!(
+            "{} is {} characters; App Store Connect takes at most {max}",
+            path.display(),
+            text.chars().count()
+        );
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// Reads the App Store listing in fastlane's layout:
+/// `<dir>/<locale>/description.txt`, `keywords.txt`,
+/// `promotional_text.txt`, `marketing_url.txt` and `support_url.txt`.
+/// `None` when the directory is missing or holds no listing.
+pub(crate) fn read_listing_dir(
+    workspace: &Path,
+    dir: &str,
+) -> anyhow::Result<Option<Vec<AppStoreListing>>> {
+    let canonical_workspace = workspace.canonicalize()?;
+    let Ok(canonical) = workspace.join(dir).canonicalize() else {
+        return Ok(None);
+    };
+    if !canonical.starts_with(&canonical_workspace) {
+        anyhow::bail!("listing_dir {dir} is outside the repository");
+    }
+    let mut listings = Vec::new();
+    for entry in fs::read_dir(&canonical)? {
+        let path = entry?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let locale = path
+            .file_name()
+            .map_or_default(|name| name.to_string_lossy().to_string());
+        if locale.is_empty() || locale == "default" || locale == "review_information" {
+            continue;
+        }
+        let listing = AppStoreListing {
+            locale,
+            description: listing_file(&path, "description.txt", Some(MAX_DESCRIPTION_CHARS))?,
+            keywords: listing_file(&path, "keywords.txt", Some(MAX_KEYWORDS_CHARS))?,
+            promotional_text: listing_file(
+                &path,
+                "promotional_text.txt",
+                Some(MAX_PROMOTIONAL_TEXT_CHARS),
+            )?,
+            marketing_url: listing_file(&path, "marketing_url.txt", None)?,
+            support_url: listing_file(&path, "support_url.txt", None)?,
+        };
+        if listing
+            != (AppStoreListing {
+                locale: listing.locale.clone(),
+                ..AppStoreListing::default()
+            })
+        {
+            listings.push(listing);
+        }
+    }
+    listings.sort_by(|a, b| a.locale.cmp(&b.locale));
+    Ok((!listings.is_empty()).then_some(listings))
+}
+
+/// Whether a PNG has an alpha channel, from its IHDR colour type (4 is grey
+/// with alpha, 6 is RGBA). `None` when the file is not a PNG.
+fn png_has_alpha(bytes: &[u8]) -> Option<bool> {
+    const SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+    if bytes.len() < 26 || &bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some(matches!(bytes[25], 4 | 6))
+}
+
+fn find_app_icon_sets(dir: &Path, depth: usize, found: &mut Vec<PathBuf>) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if matches!(
+            name.as_ref(),
+            "Pods" | "build" | "DerivedData" | ".git" | ".dart_tool" | "node_modules" | ".symlinks"
+        ) {
+            continue;
+        }
+        if name == "AppIcon.appiconset" {
+            found.push(path);
+        } else {
+            find_app_icon_sets(&path, depth - 1, found);
+        }
+    }
+}
+
+/// Local checks for what App Store Connect refuses after the upload: an app
+/// icon with transparency. Returns one line per finding.
+pub(crate) fn preflight_findings(workspace: &Path) -> Vec<String> {
+    let mut sets = Vec::new();
+    find_app_icon_sets(workspace, 8, &mut sets);
+    let mut findings = Vec::new();
+    for set in sets {
+        let Ok(entries) = fs::read_dir(&set) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|extension| extension == "png") {
+                continue;
+            }
+            let Ok(bytes) = fs::read(&path) else {
+                continue;
+            };
+            if png_has_alpha(&bytes) == Some(true) {
+                let shown = path.trim_prefix(workspace);
+                findings.push(format!(
+                    "App icon {} has an alpha channel; App Store Connect refuses app icons with transparency",
+                    shown.display()
+                ));
+            }
+        }
+    }
+    findings
+}
+
+/// Applies the pre-flight level to the findings: `Err` when they block the
+/// upload, otherwise warning lines to log.
+pub(crate) fn apply_preflight(
+    level: PublishPreflight,
+    findings: Vec<String>,
+) -> anyhow::Result<Vec<String>> {
+    if findings.is_empty() || level == PublishPreflight::Off {
+        return Ok(Vec::new());
+    }
+    if level == PublishPreflight::Block {
+        anyhow::bail!(
+            "Pre-flight found what App Store Connect would refuse; nothing was uploaded:\n{}",
+            findings.join("\n")
+        );
+    }
+    Ok(findings
+        .into_iter()
+        .map(|finding| format!("[oore-publish] Pre-flight warning: {finding}"))
+        .collect())
 }
 
 #[cfg(test)]
@@ -517,6 +824,68 @@ mod tests {
     }
 
     #[test]
+    fn reads_alpha_from_the_png_header() {
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend_from_slice(&[0, 0, 4, 0, 0, 0, 4, 0, 8, 6, 0, 0, 0]);
+        assert_eq!(png_has_alpha(&png), Some(true));
+        png[25] = 2;
+        assert_eq!(png_has_alpha(&png), Some(false));
+        assert_eq!(png_has_alpha(b"not a png at all, really not"), None);
+    }
+
+    #[test]
+    fn preflight_blocks_or_warns() {
+        let findings = vec!["icon".to_string()];
+        assert!(apply_preflight(PublishPreflight::Block, findings.clone()).is_err());
+        assert_eq!(
+            apply_preflight(PublishPreflight::Warn, findings.clone())
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            apply_preflight(PublishPreflight::Off, findings)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn reads_release_notes_from_the_repository() {
+        let dir = test_dir("release-notes");
+        fs::create_dir_all(dir.join("notes/de-DE")).unwrap();
+        fs::write(dir.join("notes/en-US.txt"), "Faster sync\n").unwrap();
+        fs::write(dir.join("notes/de-DE/release_notes.txt"), "Schneller").unwrap();
+        let notes = read_release_notes_dir(&dir, "notes").unwrap().unwrap();
+        assert_eq!(notes.len(), 2);
+        assert_eq!(notes[0].locale, "de-DE");
+        assert_eq!(notes[1].whats_new, "Faster sync");
+        assert!(read_release_notes_dir(&dir, "missing").unwrap().is_none());
+        assert!(read_release_notes_dir(&dir, "../").is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+    #[test]
+    fn reads_the_listing_from_the_repository() {
+        let dir = std::env::temp_dir().join(format!("oore-listing-{}", std::process::id()));
+        fs::create_dir_all(dir.join("meta/en-US")).unwrap();
+        fs::create_dir_all(dir.join("meta/review_information")).unwrap();
+        fs::create_dir_all(dir.join("meta/de-DE")).unwrap();
+        fs::write(dir.join("meta/en-US/description.txt"), "Shop faster\n").unwrap();
+        fs::write(dir.join("meta/en-US/keywords.txt"), "shop,cart").unwrap();
+        fs::write(dir.join("meta/review_information/notes.txt"), "x").unwrap();
+        fs::write(dir.join("meta/de-DE/release_notes.txt"), "only notes").unwrap();
+        let listing = read_listing_dir(&dir, "meta").unwrap().unwrap();
+        assert_eq!(listing.len(), 1);
+        assert_eq!(listing[0].locale, "en-US");
+        assert_eq!(listing[0].description.as_deref(), Some("Shop faster"));
+        assert_eq!(listing[0].keywords.as_deref(), Some("shop,cart"));
+        fs::write(dir.join("meta/en-US/keywords.txt"), "k".repeat(101)).unwrap();
+        assert!(read_listing_dir(&dir, "meta").is_err());
+        assert!(read_listing_dir(&dir, "missing").unwrap().is_none());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn publish_result_uses_signed_app_identity() {
         let metadata = serde_json::json!({
             "ios_app": { "bundle_identifier": "com.example.app", "version": "1.2.0", "build_number": "42" }
@@ -526,7 +895,7 @@ mod tests {
             testflight_groups: vec!["QA".to_string(), "Beta".to_string()],
             ..AppStorePublishConfig::default()
         };
-        let result = publish_result(&metadata, &config).unwrap();
+        let result = publish_result(&metadata, &config, None).unwrap();
         assert_eq!(result.store, PublishStore::AppStore);
         assert_eq!(result.track, "QA, Beta");
         assert_eq!(
@@ -536,7 +905,7 @@ mod tests {
         assert_eq!(result.package_name, "com.example.app");
         assert_eq!(result.version_code, 42);
         assert_eq!(result.version_name.as_deref(), Some("1.2.0"));
-        assert!(publish_result(&serde_json::json!({}), &config).is_err());
+        assert!(publish_result(&serde_json::json!({}), &config, None).is_err());
     }
 
     #[test]
@@ -675,7 +1044,8 @@ mod tests {
             Path::new("/tmp/Runner.ipa"),
             &credentials(),
             &key_dir,
-            Duration::from_millis(500),
+            // Long enough for a busy host to start the script and record its pid.
+            Duration::from_secs(3),
             Duration::ZERO,
         )
         .await
@@ -686,7 +1056,12 @@ mod tests {
             "{error}"
         );
         assert!(!key_dir.join("AuthKey_ABC123DEF4.p8").exists());
-        let pid = fs::read_to_string(dir.join("altool.pid")).unwrap();
+        // No pid file means the timeout stopped the script before it ran
+        // its first line, so nothing it started can be left behind.
+        let Ok(pid) = fs::read_to_string(dir.join("altool.pid")) else {
+            let _ = fs::remove_dir_all(dir);
+            return;
+        };
         let pid: libc::pid_t = pid.trim().parse().unwrap();
         let mut gone = false;
         for _ in 0..50 {
@@ -760,6 +1135,41 @@ exit 1"#,
         .unwrap_err()
         .to_string();
         assert!(error.contains("Redundant Binary Upload"), "{error}");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn validation_validates_and_reports_apples_reasons() {
+        let dir = test_dir("validate");
+        let program = fake_xcrun(
+            &dir,
+            r#"echo "$@" > args
+case "$*" in
+  *--upload-app*) echo 'uploaded'; exit 0 ;;
+esac
+echo '{"product-errors":[{"message":"Invalid Bundle. The bundle version must be higher than the previously uploaded version: 41."}]}'
+exit 1"#,
+        );
+        let error = validate_ipa_with(
+            &program,
+            Path::new("/tmp/Runner.ipa"),
+            &credentials(),
+            &dir.join("keys"),
+            Duration::from_secs(10),
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.starts_with("App Store Connect validation failed"),
+            "{error}"
+        );
+        assert!(error.contains("must be higher"), "{error}");
+        let args = fs::read_to_string(dir.join("args")).unwrap();
+        assert!(args.contains("--validate-app"), "{args}");
+        assert!(!args.contains("--upload-app"), "{args}");
+        assert!(!dir.join("keys").join("AuthKey_ABC123DEF4.p8").exists());
         let _ = fs::remove_dir_all(dir);
     }
 

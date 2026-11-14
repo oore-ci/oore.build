@@ -1,6 +1,5 @@
 import { Link } from '@tanstack/react-router'
 
-import type { ReleaseActivityEvent } from '@oore/client/models'
 import {
   DashboardList,
   DashboardSection,
@@ -18,16 +17,20 @@ import {
 import { useReleaseEvents } from '@/hooks/use-releases'
 import { relativeTime } from '@/lib/format-utils'
 import {
-  RELEASE_STORE_LABEL,
+  latestChangePerRelease,
   releaseAppName,
-  releaseTransitionLabel,
+  releaseChangeDestination,
+  releaseChangeShare,
+  type ReleaseLatestChange,
 } from '@/lib/releases'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
 
 /**
- * Recent release and rollout changes. Renders nothing until there is
- * something to show, so apps that never ship to a store see no new section.
+ * Recent release and rollout changes, one row per app version with where
+ * it stands now; each step is in the release's own history. Renders nothing
+ * until there is something to show, so apps that never ship to a store see
+ * no new section.
  */
 export function ReleaseActivity({
   limit = 5,
@@ -40,8 +43,12 @@ export function ReleaseActivity({
   showProject?: boolean
   title?: string
 }) {
-  const eventsQuery = useReleaseEvents({ project_id: projectId, limit })
-  const events = eventsQuery.data?.events ?? []
+  // Read enough changes that a busy rollout doesn't crowd other releases out.
+  const eventsQuery = useReleaseEvents({
+    project_id: projectId,
+    limit: Math.min(200, Math.max(50, limit * 20)),
+  })
+  const events = latestChangePerRelease(eventsQuery.data?.events ?? [], limit)
 
   // Apps that never shipped stay quiet, once the server has said so.
   if (eventsQuery.isSuccess && events.length === 0) return null
@@ -57,10 +64,10 @@ export function ReleaseActivity({
         <Skeleton className="h-32 w-full" />
       ) : (
         <DashboardList>
-          {events.map((event) => ({
-            key: event.id,
+          {events.map((change) => ({
+            key: change.event.id,
             node: (
-              <ReleaseActivityItem event={event} showProject={showProject} />
+              <ReleaseActivityItem change={change} showProject={showProject} />
             ),
           }))}
         </DashboardList>
@@ -70,14 +77,15 @@ export function ReleaseActivity({
 }
 
 function ReleaseActivityItem({
-  event,
+  change,
   showProject,
 }: {
-  event: ReleaseActivityEvent
+  change: ReleaseLatestChange
   showProject: boolean
 }) {
-  const transition = releaseTransitionLabel(event)
+  const { event, changes } = change
   const version = event.version_name ?? 'Unversioned'
+  const share = releaseChangeShare(event)
 
   return (
     <Item
@@ -94,17 +102,16 @@ function ReleaseActivityItem({
         <ItemTitle className="block w-full truncate">
           {showProject ? `${releaseAppName(event)} ` : ''}
           <span className="tabular-nums">{version}</span>
-          {transition ? (
-            <span className="font-normal text-muted-foreground">
+          {share ? (
+            <span className="font-normal text-muted-foreground tabular-nums">
               {' '}
-              · {transition}
+              · {share}
             </span>
           ) : null}
         </ItemTitle>
         <ItemDescription className="truncate">
-          {RELEASE_STORE_LABEL[event.store]} {event.track} ·{' '}
-          {event.actor_email ?? 'Oore'}
-          {event.reason ? ` · ${event.reason}` : ''}
+          {releaseChangeDestination(change)}
+          {changes > 1 ? ` · ${changes} changes` : ''}
         </ItemDescription>
       </ItemContent>
       <ItemActions className="shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">

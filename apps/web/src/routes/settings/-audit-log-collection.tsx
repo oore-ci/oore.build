@@ -119,7 +119,7 @@ function AuditResourceId({
   if (type === 'integration')
     return (
       <Link
-        to="/settings/integrations/$integrationId"
+        to="/settings/sources/$integrationId"
         params={{ integrationId: id }}
         title={id}
         className={linkClassName}

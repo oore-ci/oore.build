@@ -86,6 +86,27 @@ pub async fn create_download_token(
     ttl_secs: i64,
     single_use: bool,
 ) -> Result<(String, String, String, i64), sqlx::Error> {
+    create_download_token_for(
+        pool,
+        artifact_id,
+        created_by,
+        ttl_secs,
+        single_use,
+        "share_link",
+    )
+    .await
+}
+
+/// A download token for `purpose`: `share_link`, `install_page` or
+/// `latest_link`, which decides how an install through it is recorded.
+pub async fn create_download_token_for(
+    pool: &SqlitePool,
+    artifact_id: &str,
+    created_by: &str,
+    ttl_secs: i64,
+    single_use: bool,
+    purpose: &str,
+) -> Result<(String, String, String, i64), sqlx::Error> {
     let id = Uuid::new_v4().to_string();
     let token = generate_token();
     let hashed = hash_token(&token);
@@ -95,8 +116,8 @@ pub async fn create_download_token(
 
     sqlx::query(
         "INSERT INTO artifact_download_tokens \
-         (id, artifact_id, token_hash, prefix, created_by, expires_at, single_use, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (id, artifact_id, token_hash, prefix, created_by, expires_at, single_use, created_at, purpose) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
     )
     .bind(&id)
     .bind(artifact_id)
@@ -106,6 +127,7 @@ pub async fn create_download_token(
     .bind(expires_at)
     .bind(single_use as i32)
     .bind(now)
+    .bind(purpose)
     .execute(pool)
     .await?;
 
@@ -120,6 +142,8 @@ pub struct ValidatedDownloadToken {
     pub file_path: String,
     pub artifact_name: String,
     pub single_use: bool,
+    pub created_by: String,
+    pub purpose: String,
 }
 
 pub async fn validate_download_token(
@@ -130,7 +154,7 @@ pub async fn validate_download_token(
     let now = now_unix();
 
     let row = sqlx::query(
-        "SELECT t.token_hash, t.artifact_id, t.single_use, t.used_at, \
+        "SELECT t.token_hash, t.artifact_id, t.single_use, t.used_at, t.created_by, t.purpose, \
                 a.artifact_type, a.file_path, a.name AS artifact_name, a.expires_at AS artifact_expires_at \
          FROM artifact_download_tokens t \
          JOIN artifacts a ON a.id = t.artifact_id \
@@ -152,6 +176,8 @@ pub async fn validate_download_token(
         file_path: r.get("file_path"),
         artifact_name: r.get("artifact_name"),
         single_use: r.get::<i32, _>("single_use") != 0,
+        created_by: r.get("created_by"),
+        purpose: r.get("purpose"),
     }))
 }
 
@@ -481,6 +507,8 @@ pub async fn download_via_scoped_token(
             "Download token is invalid, expired, or already used",
         ));
     }
+
+    crate::testers::record_install(&pool, &validated).await;
 
     // Serve the file via storage backend
     let network_settings =

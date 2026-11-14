@@ -33,7 +33,7 @@ export interface SetupNext {
 export function setupSteps(input: SetupInput): Array<SetupStep> {
   return [
     { id: 'repository', label: 'Connect repository', done: input.hasSource },
-    { id: 'project', label: 'Create project', done: true },
+    { id: 'project', label: 'Create app', done: true },
     { id: 'pipeline', label: 'Add pipeline', done: input.hasPipeline },
     {
       id: 'build',
@@ -59,7 +59,7 @@ export function setupNext(input: SetupInput): SetupNext {
       id: 'repository',
       title: 'Connect a repository',
       detail:
-        'Builds need a source. Choose the repository this project builds from.',
+        'Builds need a source. Choose the repository this app builds from.',
     }
   }
   if (!input.hasPipeline) {
@@ -67,7 +67,7 @@ export function setupNext(input: SetupInput): SetupNext {
       id: 'pipeline',
       title: 'Add a pipeline',
       detail:
-        'A pipeline says what to build. Start from a Flutter starter or a checked-in Oore workflow.',
+        'Oore reads the repository and proposes what to build. Pick what you want, and the first build starts.',
     }
   }
   if (input.latestBuildStatus === undefined) {
@@ -97,4 +97,54 @@ export function setupNext(input: SetupInput): SetupNext {
     title: 'Follow your first build',
     detail: 'Watch progress and any errors. You can come back here later.',
   }
+}
+
+export type NextStepId = 'signing' | 'store' | 'testers'
+
+export interface NextStep {
+  action: string
+  detail: string
+  id: NextStepId
+  title: string
+}
+
+/** The steps after the first install that the app has not done yet. */
+export function nextSteps(progress: {
+  release_signing: boolean
+  store_publishing: boolean
+  testers: boolean
+}): Array<NextStep> {
+  const steps: Array<{ step: NextStep; done: boolean }> = [
+    {
+      step: {
+        id: 'signing',
+        title: 'Sign a release',
+        detail:
+          'Add your keystore or certificate once, and release builds sign themselves.',
+        action: 'Set up signing',
+      },
+      done: progress.release_signing,
+    },
+    {
+      step: {
+        id: 'store',
+        title: 'Send to a store',
+        detail:
+          'Upload each build to Google Play or TestFlight, with the access checked first.',
+        action: 'Set up a store',
+      },
+      done: progress.store_publishing,
+    },
+    {
+      step: {
+        id: 'testers',
+        title: 'Invite a tester',
+        detail:
+          'Testers install each build from their phone and send feedback from it.',
+        action: 'Invite',
+      },
+      done: progress.testers,
+    },
+  ]
+  return steps.filter((entry) => !entry.done).map((entry) => entry.step)
 }

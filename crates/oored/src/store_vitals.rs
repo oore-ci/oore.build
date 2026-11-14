@@ -213,10 +213,27 @@ macro_rules! configured_play_apps {
     };
 }
 
+/// App Store apps named by a pipeline set up to publish to App Store Connect:
+/// its iOS signing's app bundle id (the shortest one, since extensions extend
+/// the app's id), read with that signing's API key.
+macro_rules! configured_app_store_apps {
+    () => {
+        "SELECT p.project_id, t.pipeline_id, t.updated_at, \
+           (SELECT TRIM(j.value) FROM json_each(s.bundle_ids_json) j \
+            WHERE TRIM(j.value) <> '' ORDER BY length(TRIM(j.value)), TRIM(j.value) LIMIT 1) \
+             AS bundle_id \
+         FROM pipeline_publish_targets t JOIN pipelines p ON p.id = t.pipeline_id \
+         JOIN pipeline_ios_signing_settings s ON s.pipeline_id = t.pipeline_id \
+         WHERE t.store = 'app_store' AND s.api_key_id IS NOT NULL \
+           AND json_valid(s.bundle_ids_json)"
+    };
+}
+
 /// Track every app a project has released, read through the pipeline of its
-/// newest release, and every Google Play app a pipeline is set up to publish,
-/// so an app shows before Oore has released it.
-async fn discover_apps(pool: &SqlitePool) -> sqlx::Result<()> {
+/// newest release, and every app a pipeline is set up to publish, so an app
+/// shows (and releases made outside Oore are found) before Oore has
+/// released it.
+pub(crate) async fn discover_apps(pool: &SqlitePool) -> sqlx::Result<()> {
     sqlx::query(
         "INSERT INTO store_app_vitals (project_id, store, app_identifier, pipeline_id) \
          SELECT r.project_id, 'google_play', r.package_name, b.pipeline_id \
@@ -268,6 +285,31 @@ async fn discover_apps(pool: &SqlitePool) -> sqlx::Result<()> {
          DO UPDATE SET pipeline_id = excluded.pipeline_id, \
            asc_app_id = COALESCE(excluded.asc_app_id, store_app_vitals.asc_app_id)",
     )
+    .execute(pool)
+    .await?;
+    sqlx::query(concat!(
+        "INSERT INTO store_app_vitals (project_id, store, app_identifier, pipeline_id) \
+         SELECT project_id, 'app_store', bundle_id, pipeline_id FROM (",
+        configured_app_store_apps!(),
+        ") WHERE bundle_id IS NOT NULL \
+         ORDER BY updated_at \
+         ON CONFLICT (project_id, store, app_identifier) \
+         DO UPDATE SET pipeline_id = excluded.pipeline_id \
+         WHERE NOT EXISTS (SELECT 1 FROM app_store_release_links l \
+           JOIN releases r ON r.id = l.release_id \
+           WHERE r.project_id = excluded.project_id AND l.bundle_id = excluded.app_identifier)"
+    ))
+    .execute(pool)
+    .await?;
+    sqlx::query(concat!(
+        "DELETE FROM store_app_vitals AS v WHERE v.store = 'app_store' \
+           AND NOT EXISTS (SELECT 1 FROM app_store_release_links l \
+             JOIN releases r ON r.id = l.release_id \
+             WHERE r.project_id = v.project_id AND l.bundle_id = v.app_identifier) \
+           AND NOT EXISTS (SELECT 1 FROM (",
+        configured_app_store_apps!(),
+        ") c WHERE c.project_id = v.project_id AND c.bundle_id = v.app_identifier)"
+    ))
     .execute(pool)
     .await?;
     Ok(())
@@ -537,18 +579,15 @@ fn parse_xcode_metrics(document: &Value) -> Vec<StoreVital> {
             (device.contains("all") as u8) * 2
                 + (percentile.contains("50") || percentile.contains("typical")) as u8
         })?;
-        let points: Vec<StoreVitalPoint> = dataset["points"]
-            .as_array()
-            .map(|points| {
-                points
-                    .iter()
-                    .map(|point| StoreVitalPoint {
-                        label: point["version"].as_str().unwrap_or_default().to_string(),
-                        value: point["value"].as_f64(),
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let points: Vec<StoreVitalPoint> = dataset["points"].as_array().map_or_default(|points| {
+            points
+                .iter()
+                .map(|point| StoreVitalPoint {
+                    label: point["version"].as_str().unwrap_or_default().to_string(),
+                    value: point["value"].as_f64(),
+                })
+                .collect()
+        });
         Some(StoreVital {
             kind,
             value: points.iter().rev().find_map(|point| point.value),
@@ -733,6 +772,59 @@ mod tests {
         assert_eq!(
             play_apps(&pool).await,
             expected(&[("com.shop", "pl2"), ("com.shop.tv", "pl6")])
+        );
+    }
+
+    #[tokio::test]
+    async fn discovers_app_store_apps_a_pipeline_is_set_up_for_before_their_first_release() {
+        let pool = pool().await;
+        for statement in [
+            "INSERT INTO pipelines (id, project_id, name, created_at, updated_at) VALUES \
+             ('pl8', 'p1', 'ios-pulse', 0, 0), ('pl9', 'p1', 'ios-nokey', 0, 0)",
+            "INSERT INTO pipeline_ios_signing_settings (id, pipeline_id, enabled, mode, \
+             export_method, bundle_ids_json, api_key_id, created_at, updated_at) VALUES \
+             ('s8', 'pl8', 1, 'api', 'app_store', \
+              '[\"com.pulse.app.widget\",\"com.pulse.app\"]', 'KEY', 0, 0), \
+             ('s9', 'pl9', 1, 'manual', 'app_store', '[\"com.nokey\"]', NULL, 0, 0)",
+            "INSERT INTO pipeline_publish_targets (id, pipeline_id, store, enabled, config, \
+             created_at, updated_at) VALUES \
+             ('t8', 'pl8', 'app_store', 0, '{}', 0, 0), \
+             ('t9', 'pl9', 'app_store', 1, '{}', 0, 0)",
+        ] {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+
+        discover_apps(&pool).await.unwrap();
+        discover_apps(&pool).await.unwrap();
+
+        let app_store = |pool: SqlitePool| async move {
+            sqlx::query_as::<_, (String, String)>(
+                "SELECT app_identifier, pipeline_id FROM store_app_vitals \
+                 WHERE store = 'app_store' ORDER BY app_identifier",
+            )
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        };
+        // The released app keeps its release's pipeline; the configured app
+        // shows by its main bundle id, not the widget's; a pipeline without
+        // an API key can't read the store.
+        assert_eq!(
+            app_store(pool.clone()).await,
+            [
+                ("com.pulse.app".to_string(), "pl8".to_string()),
+                ("com.shop.ios".to_string(), "pl3".to_string()),
+            ]
+        );
+
+        sqlx::query("DELETE FROM pipeline_publish_targets WHERE id = 't8'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        discover_apps(&pool).await.unwrap();
+        assert_eq!(
+            app_store(pool.clone()).await,
+            [("com.shop.ios".to_string(), "pl3".to_string())]
         );
     }
 

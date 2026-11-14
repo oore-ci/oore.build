@@ -1,4 +1,7 @@
 import { Suspense, lazy } from 'react'
+import { Stack } from '@/components/layout/stack'
+import { QrCode } from '@/components/qr-code'
+import { RegisterIphone } from './register-iphone'
 import { useNavigate } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -288,6 +291,20 @@ function QaReleaseDetail({
                     : 'Download the APK, allow installs from this browser if asked, then confirm installation.'}
                 </p>
               </div>
+              {isIos && device.startsWith('iphone') && !expired ? (
+                <RegisterIphone pipelineId={build.pipeline_id} />
+              ) : null}
+              {device === 'other' && !expired ? (
+                <Stack gap={2} className="items-center text-center">
+                  <QrCode
+                    value={globalThis.location?.href ?? ''}
+                    label={`Code that opens this ${isIos ? 'iOS' : 'Android'} install page on a phone`}
+                  />
+                  <Text variant="caption">
+                    Scan with your phone's camera to open this page there.
+                  </Text>
+                </Stack>
+              ) : null}
             </CardContent>
             <CardFooter className="hidden sm:flex">
               <Button

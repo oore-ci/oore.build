@@ -43,6 +43,7 @@ const createChannelSchema = z.toZod<CreateNotificationChannelRequest>()(
     secret: z.string().nullish(),
     smtp_config: smtpConfigSchema.nullish(),
     slack_mentions: slackMentionsSchema.optional(),
+    slack_channel_id: z.string().nullish(),
   }),
 )
 const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
@@ -55,6 +56,7 @@ const updateChannelSchema = z.toZod<UpdateNotificationChannelRequest>()(
     secret: z.string().nullish(),
     smtp_config: updateSmtpConfigSchema.nullish(),
     slack_mentions: slackMentionsSchema.nullish(),
+    slack_channel_id: z.string().nullish(),
   }),
 )
 
@@ -154,6 +156,7 @@ export const notificationHandlers = [
           }
         : undefined,
       slack_mentions: body.slack_mentions ?? [],
+      slack_channel_id: body.slack_channel_id || undefined,
       created_by: 'usr-demo-owner-001',
       created_at: now(),
       updated_at: now(),
@@ -226,6 +229,10 @@ export const notificationHandlers = [
             }
           : existing.smtp_summary,
       slack_mentions: body.slack_mentions ?? existing.slack_mentions,
+      slack_channel_id:
+        body.slack_channel_id == null
+          ? existing.slack_channel_id
+          : body.slack_channel_id || undefined,
       updated_at: now(),
     }
 

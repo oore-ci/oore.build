@@ -67,12 +67,9 @@ export default function InstanceSwitcher() {
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                 <HugeiconsIcon icon={ActiveInstanceIcon} className="size-4" />
               </div>
-              <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">
-                  {activeInstance?.label}
-                </span>
-                <span className="truncate text-xs">{activeInstance?.url}</span>
-              </div>
+              <span className="flex-1 truncate text-left text-sm font-medium">
+                {activeInstance?.label}
+              </span>
               <HugeiconsIcon icon={ChevronsUpDown} className="ml-auto" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -97,10 +94,20 @@ export default function InstanceSwitcher() {
                       className="min-w-0 gap-2 rounded-r-none p-2"
                       aria-selected={candidate.id == activeInstance?.id}
                     >
-                      <div className="flex size-6 items-center justify-center rounded-md border">
+                      <div className="flex size-6 shrink-0 items-center justify-center rounded-md border">
                         <HugeiconsIcon icon={CandidateIcon} />
                       </div>
-                      {candidate.label}
+                      <div className="grid min-w-0 leading-tight">
+                        <span className="truncate">{candidate.label}</span>
+                        <span
+                          className={textVariants({
+                            variant: 'caption',
+                            className: 'truncate',
+                          })}
+                        >
+                          {candidate.url}
+                        </span>
+                      </div>
                       <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   )

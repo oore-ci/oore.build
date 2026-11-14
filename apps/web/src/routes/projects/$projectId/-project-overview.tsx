@@ -229,28 +229,14 @@ export default function ProjectOverview({
   }, [latest?.id, latest?.status, refetch])
   const showApps = !(setup && !loading && builds.length === 0)
 
+  // The setup checklist already says builds appear after the first run.
+  const showRecent = !(setup && !loading && !error && builds.length === 0)
+
   return (
     <Stack gap={8} className="pt-3">
       {setup}
-      {pipelines.length > 0 ? (
-        <OverviewSection
-          title="Pipelines"
-          action={
-            pipelines.length > OVERVIEW_PIPELINE_LIMIT ? (
-              <ViewAllLink projectId={projectId} tab="pipelines" />
-            ) : undefined
-          }
-        >
-          <PipelineSummary
-            lastBuildByPipeline={lastBuildByPipeline}
-            pipelines={pipelines}
-            projectId={projectId}
-          />
-        </OverviewSection>
-      ) : null}
-      <ReleaseBoard projectId={projectId} />
       {showApps ? (
-        <OverviewSection title="Latest apps">
+        <OverviewSection title="Ready to install">
           {artifacts.error ? (
             <Alert>
               <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
@@ -274,40 +260,59 @@ export default function ProjectOverview({
           )}
         </OverviewSection>
       ) : null}
-      <OverviewSection
-        title="Recent activity"
-        action={
-          builds.length > 0 ? (
-            <ViewAllLink projectId={projectId} tab="builds" />
-          ) : undefined
-        }
-      >
-        {error ? (
-          <Alert>
-            <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
-              Could not load recent activity.
-              <Button variant="outline" size="sm" onClick={onRetry}>
-                Retry
-              </Button>
-            </AlertDescription>
-          </Alert>
-        ) : loading ? (
-          <Skeleton className="h-40 w-full" />
-        ) : builds.length ? (
-          <Stack role="list" gap={2}>
-            {builds.slice(0, 5).map((build) => (
-              <BuildItem key={build.id} build={build} />
-            ))}
-          </Stack>
-        ) : (
-          <Text variant="muted">
-            {setup
-              ? 'Builds show up here after the first run.'
-              : 'No builds yet. Add a pipeline, then run a build.'}
-          </Text>
-        )}
-      </OverviewSection>
-      <ReleaseActivity projectId={projectId} />
+      <ReleaseBoard projectId={projectId} />
+      {showRecent ? (
+        <OverviewSection
+          title="Recent activity"
+          action={
+            builds.length > 0 ? (
+              <ViewAllLink projectId={projectId} tab="builds" />
+            ) : undefined
+          }
+        >
+          {error ? (
+            <Alert>
+              <AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+                Could not load recent activity.
+                <Button variant="outline" size="sm" onClick={onRetry}>
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : loading ? (
+            <Skeleton className="h-40 w-full" />
+          ) : builds.length ? (
+            <Stack role="list" gap={2}>
+              {builds.slice(0, 5).map((build) => (
+                <BuildItem key={build.id} build={build} />
+              ))}
+            </Stack>
+          ) : (
+            <Text variant="muted">
+              No builds yet. Add a pipeline, then run a build.
+            </Text>
+          )}
+        </OverviewSection>
+      ) : null}
+      <div className="grid items-start gap-8 lg:grid-cols-2">
+        {pipelines.length > 0 ? (
+          <OverviewSection
+            title="Pipelines"
+            action={
+              pipelines.length > OVERVIEW_PIPELINE_LIMIT ? (
+                <ViewAllLink projectId={projectId} tab="pipelines" />
+              ) : undefined
+            }
+          >
+            <PipelineSummary
+              lastBuildByPipeline={lastBuildByPipeline}
+              pipelines={pipelines}
+              projectId={projectId}
+            />
+          </OverviewSection>
+        ) : null}
+        <ReleaseActivity projectId={projectId} />
+      </div>
     </Stack>
   )
 }

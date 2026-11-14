@@ -1,14 +1,17 @@
 ---
-title: 'Create a project'
+title: 'Create an app'
 status: implemented
-description: 'Create an Oore project from a trusted local or connected Git repository.'
+description: 'Create an Oore app from a trusted local or connected Git repository.'
 ---
 
-Create one project for the repository you want Oore to build. In Local Only,
+Create one app for the repository you want Oore to build. In Local Only,
 the default path uses a Git repository on the backend Mac. External Access
 uses a repository discovered through a connected source.
 
-Creating a project trusts the repository's code to run on your runner.
+The API and command line call an app a project, as in `project_id` and
+`oore pipeline validate --project`.
+
+Creating an app trusts the repository's code to run on your runner.
 [How Oore trusts Direct macOS runners](/concepts/runner-trust) explains why.
 
 ## What you need
@@ -20,13 +23,13 @@ Creating a project trusts the repository's code to run on your runner.
 
 > **Important — Repository trust**
 >
-> Creating or relinking a project trusts that repository's checkout,
+> Creating or relinking an app trusts that repository's checkout,
 > dependencies, and commands to run with the Direct macOS runner account's
 > permissions. Use a repository you would run on that Mac yourself.
 
-## 1. Open the project form
+## 1. Open the app form
 
-Open **Projects**, then select **New project**.
+Open **Apps**, then select **New app**.
 
 ## 2. Choose the repository
 
@@ -41,16 +44,16 @@ Folder browsing is available only from loopback. You can always paste the
 absolute path.
 
 In External Access, select **Repository** from the connected source, then
-confirm the project name and optional default branch.
+confirm the app name and optional default branch.
 
-## 3. Create the project
+## 3. Create the app
 
-Select **Create project**. Oore links the repository as part of this action;
+Select **Create app**. Oore links the repository as part of this action;
 there is no separate repository-approval step.
 
 ## Verify the result
 
-The new project opens and appears in **Projects**. Its page shows the linked
+The new app opens and appears in **Apps**. Its page shows the linked
 repository and offers **Set up a build** under **Pipelines**.
 
 ## Troubleshooting
@@ -63,12 +66,12 @@ backend Mac. Local repository paths are available only in Local Only.
 **The connected repository is missing**
 
 Open **Sources**, confirm the source is active, and sync its repositories or
-projects. Then reopen **New project**.
+apps. Then reopen **New app**.
 
-**The project action is unavailable**
+**The app action is unavailable**
 
 Only an instance owner or admin can make the repository trust decision. Ask
-one of them to create or relink the project.
+one of them to create or relink the app.
 
 ## Next step
 

@@ -37,6 +37,7 @@ import { useProject } from '@/hooks/use-projects'
 import {
   usePipelineAppStorePublish,
   usePipelineGooglePlayPublish,
+  usePipelinePublishReadiness,
 } from '@/hooks/use-pipeline-publish'
 import { CollectionError } from '@/components/collection'
 import { enabledStatus } from '@/lib/status-variants'
@@ -66,6 +67,8 @@ import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { LatestInstallLinksCard } from '@/components/latest-install-links-card'
+import { StoreReadinessChecklist } from '@/components/trigger-build-store-section'
 import {
   Empty,
   EmptyContent,
@@ -76,7 +79,11 @@ import {
 } from '@/components/ui/empty'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
-import { BuildSourceValue, EmptyValue } from '@/components/table-values'
+import {
+  BuildNumberValue,
+  BuildSourceValue,
+  EmptyValue,
+} from '@/components/table-values'
 import {
   Select,
   SelectContent,
@@ -104,15 +111,7 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'build_number',
     header: 'Build',
-    cell: ({ row }) => (
-      <Link
-        to="/builds/$buildId"
-        params={{ buildId: row.original.id }}
-        className="font-mono font-medium"
-      >
-        #{row.original.build_number}
-      </Link>
-    ),
+    cell: ({ row }) => <BuildNumberValue build={row.original} />,
     enableSorting: false,
   },
   {
@@ -123,12 +122,14 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   },
   {
     accessorKey: 'branch',
-    header: 'Branch',
+    header: 'Source',
     cell: ({ row }) => (
       <BuildSourceValue
         branch={row.original.branch}
         commitSha={row.original.commit_sha}
         context={row.original.context}
+        title={row.original.commit_title}
+        author={row.original.commit_author}
       />
     ),
     enableSorting: false,
@@ -371,18 +372,25 @@ function PipelineDetailPage() {
   const navigate = useNavigate()
   const { tab = 'overview', workflow: workflowFilter } = Route.useSearch()
   const { data, isLoading, error } = usePipeline(pipelineId)
-  const [canWriteGlobally, canTriggerBuildGlobally, canReadInstanceSettings] =
-    useHasPermissions([
-      'pipelines:write',
-      'builds:write',
-      'instance_settings:read',
-    ])
+  const [
+    canWriteGlobally,
+    canTriggerBuildGlobally,
+    canReadInstanceSettings,
+    canShareGlobally,
+  ] = useHasPermissions([
+    'pipelines:write',
+    'builds:write',
+    'instance_settings:read',
+    'artifacts:write',
+  ])
   const { data: projectData } = useProject(projectId)
   const projectRole = projectData?.project.current_user_role
   const instanceRole = useAuthStore((state) => state.user?.role)
   const canWrite =
     canWriteGlobally && hasProjectPermission(projectRole, 'pipelines:write')
   const canDelete = hasProjectPermission(projectRole, 'pipelines:delete')
+  const canShareBuilds =
+    canShareGlobally && hasProjectPermission(projectRole, 'artifacts:write')
   const canTriggerBuild =
     canTriggerBuildGlobally && hasProjectPermission(projectRole, 'builds:write')
   const signingQuery = usePipelineAndroidSigning(pipelineId, {
@@ -701,8 +709,8 @@ function PipelineDetailPage() {
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription>
-            This project has no linked source repository. Link a repository
-            before triggering builds.
+            This app has no linked source repository. Link a repository before
+            triggering builds.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -734,6 +742,14 @@ function PipelineDetailPage() {
             manualOnlyTriggers={manualOnlyTriggers}
             pipeline={pipeline}
             publishing={publishingSummary}
+          />
+          <PipelineStoreReadiness pipelineId={pipelineId} />
+          <LatestInstallLinksCard
+            pipelineId={pipelineId}
+            platforms={pipeline.execution_config.platforms.filter(
+              (platform) => platform !== 'macos',
+            )}
+            canWrite={canShareBuilds}
           />
           {/* Recent builds */}
           <Card>
@@ -947,5 +963,25 @@ function PipelineDetailPage() {
         onConfirm={handleDelete}
       />
     </PageLayout>
+  )
+}
+
+/**
+ * The pipeline's store checklist on its overview, so a missing age rating
+ * or contract shows before someone starts a long release build. Hidden for
+ * pipelines without store uploads.
+ */
+function PipelineStoreReadiness({ pipelineId }: { pipelineId: string }) {
+  const readiness = usePipelinePublishReadiness(pipelineId)
+  if (!readiness.data?.items.length) return null
+  return (
+    <Card size="sm">
+      <CardContent>
+        <StoreReadinessChecklist
+          readiness={readiness}
+          title="Ready to submit to the stores?"
+        />
+      </CardContent>
+    </Card>
   )
 }

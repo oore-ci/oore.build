@@ -28,7 +28,7 @@ export function UsersToolbar({
         size="sm"
         onClick={() => onGrantAccess(selectedRows.map((row) => row.original))}
       >
-        Give project access
+        Give app access
       </Button>
       <Button
         variant="destructive"

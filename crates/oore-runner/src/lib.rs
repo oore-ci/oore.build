@@ -10,6 +10,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod settings;
 pub mod store_version;
 
 use anyhow::Context;
@@ -20,11 +21,12 @@ use oore_contract::{
     ClaimJobResponse, ClaimedJob, CompleteArtifactRequest, CompleteArtifactResponse,
     IosExportMethod, JobStatusResponse, PUBLISH_APP_STORE_STEP, PUBLISH_PLAY_STEP,
     PipelineCommandStages, PipelineEnvVar, PipelineExecutionConfig, PlanPublish, PlanRequest,
-    PlanStep, PlatformBuildArgs, PlatformBuildCommands, RUNNER_PROTOCOL_VERSION,
-    RunnerAndroidSigningProfile, RunnerAndroidSigningResponse, RunnerHeartbeatResponse,
-    RunnerIosSigningBundle, RunnerIosSigningResponse, RunnerJobSecretsResponse, RunnerPublishPlan,
-    RunnerPublishResult, RunnerRetryArtifactsResponse, StepPhase, StepResult, TargetSizeBudget,
-    artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
+    PlanStep, PlatformBuildArgs, PlatformBuildCommands, PublishStore, RUNNER_PROTOCOL_VERSION,
+    ReadinessLevel, RehearsalCheck, RunnerAndroidSigningProfile, RunnerAndroidSigningResponse,
+    RunnerHeartbeatResponse, RunnerIosSigningBundle, RunnerIosSigningResponse,
+    RunnerJobSecretsResponse, RunnerPublishPlan, RunnerPublishResult, RunnerRehearsalReport,
+    RunnerRehearsalReportResponse, RunnerRetryArtifactsResponse, StepPhase, StepResult,
+    TargetSizeBudget, artifact_pattern_matches, is_valid_pipeline_env_key, missing_runner_labels,
     normalize_runner_labels, parse_repository_config, pipeline_config::select_v1_platforms,
     plan_execution_config, replace_secret_references, store_version_code,
     validate_artifact_pattern, validate_build_number_offset, validate_repository_config_path,
@@ -41,6 +43,7 @@ mod metrics;
 mod publish;
 mod tart;
 mod test_reports;
+mod toolchain;
 
 const AUTO_CONFIG_PATHS: [&str; 2] = [".oore.yaml", ".oore.yml"];
 const OORE_ANDROID_KEYSTORE_PATH_ENV: &str = "OORE_ANDROID_KEYSTORE_PATH";
@@ -351,8 +354,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+        .map_or_default(|s| s.trim().to_string());
 
     let xcode_version = std::process::Command::new("xcodebuild")
         .arg("-version")
@@ -370,6 +372,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
     let tart_version = tart::find_tart()
         .and_then(|tart| tart::tart_version(&tart))
         .unwrap_or_default();
+    let toolchain = toolchain::refresh().await;
 
     serde_json::json!({
         "os": std::env::consts::OS,
@@ -379,6 +382,7 @@ pub async fn detect_capabilities() -> serde_json::Value {
         "tart_version": tart_version,
         "version": version,
         "protocol_version": RUNNER_PROTOCOL_VERSION,
+        "toolchain": toolchain,
     })
 }
 
@@ -562,7 +566,7 @@ fn refreshed_runner_service_ack(
 fn write_runner_service_ack(path: &Path, ack: &RunnerServiceAck) -> anyhow::Result<()> {
     let parent = path
         .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .context("runner service acknowledgement path has no parent")?;
     fs::create_dir_all(parent).with_context(|| {
         format!(
@@ -966,14 +970,13 @@ fn fixed_system_executable(name: &str) -> Option<PathBuf> {
 }
 
 fn find_apksigner() -> PathBuf {
-    let mut roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
+    let roots = ["ANDROID_HOME", "ANDROID_SDK_ROOT"]
         .into_iter()
-        .filter_map(|key| std::env::var_os(key).map(PathBuf::from))
-        .collect::<Vec<_>>();
+        .filter_map(|key| std::env::var_os(key).map(PathBuf::from));
     #[cfg(target_os = "macos")]
-    if let Some(home) = std::env::var_os("HOME") {
-        roots.push(PathBuf::from(home).join("Library/Android/sdk"));
-    }
+    let roots = roots.chain(
+        std::env::var_os("HOME").map(|home| PathBuf::from(home).join("Library/Android/sdk")),
+    );
 
     for root in roots {
         let build_tools = root.join("build-tools");
@@ -1471,7 +1474,7 @@ fn parse_flutter_machine_version(stdout: &str) -> Option<String> {
 fn check_host_flutter(requested: &str, found: Result<String, String>) -> Result<String, String> {
     // FVM writes `3.47.7@beta` for a release from a channel.
     let pinned = requested.split('@').next().unwrap_or(requested).trim();
-    let pinned = pinned.strip_prefix('v').unwrap_or(pinned);
+    let pinned = pinned.trim_prefix('v');
     let is_version = pinned.starts_with(|c: char| c.is_ascii_digit());
     match (is_version, found) {
         (true, Ok(found)) if found == pinned => Ok(format!(
@@ -1995,7 +1998,7 @@ fn run_security_command_with_strings(args: &[String]) -> anyhow::Result<String> 
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("security command failed: {stderr}");
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    Ok(String::from_utf8_lossy_owned(output.stdout))
 }
 
 fn cleanup_ios_signing_state(journal: &IosCleanupJournal) -> anyhow::Result<()> {
@@ -2120,6 +2123,7 @@ fn parse_keychain_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
 fn is_missing_legacy_oore_keychain(path: &str) -> bool {
     let path = Path::new(path);
     if path.exists() {
@@ -2220,9 +2224,7 @@ fn choose_ios_export_method(help_text: &str, export_method: IosExportMethod) -> 
 
 fn resolve_ios_export_method(export_method: IosExportMethod) -> String {
     let help_text = match Command::new("xcodebuild").arg("-help").output() {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).into_owned()
-        }
+        Ok(output) if output.status.success() => String::from_utf8_lossy_owned(output.stdout),
         _ => String::new(),
     };
     choose_ios_export_method(&help_text, export_method).to_string()
@@ -2274,9 +2276,9 @@ fn write_export_options_plist(
         provisioning_dict.push_str("</string>\n");
     }
 
-    let signing_cert_entry = signing_identity_sha1
-        .map(|sha1| format!("  <key>signingCertificate</key>\n  <string>{sha1}</string>\n"))
-        .unwrap_or_default();
+    let signing_cert_entry = signing_identity_sha1.map_or_default(|sha1| {
+        format!("  <key>signingCertificate</key>\n  <string>{sha1}</string>\n")
+    });
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -3570,8 +3572,7 @@ fn heartbeat_capabilities(
     let mut capabilities = capabilities.clone();
     let (stats, vm_images) = cache_report
         .lock()
-        .map(|report| (report.stats.clone(), report.vm_images.clone()))
-        .unwrap_or_default();
+        .map_or_default(|report| (report.stats.clone(), report.vm_images.clone()));
     if let (Some(object), Some(stats)) = (capabilities.as_object_mut(), stats)
         && let Ok(value) = serde_json::to_value(stats)
     {
@@ -3581,6 +3582,9 @@ fn heartbeat_capabilities(
         && let Ok(value) = serde_json::to_value(vm_images)
     {
         object.insert("vm_images".to_string(), value);
+    }
+    if let (Some(object), Some(toolchain)) = (capabilities.as_object_mut(), toolchain::snapshot()) {
+        object.insert("toolchain".to_string(), toolchain);
     }
     capabilities
 }
@@ -3837,6 +3841,14 @@ pub async fn run_runner_forever(
                     eprintln!("Runner heartbeat is temporarily unavailable: {error:#}");
                 }
             }
+        }
+    });
+
+    // Tools installed while the runner runs show up in the web UI.
+    tokio::spawn(async {
+        loop {
+            tokio::time::sleep(toolchain::REFRESH_INTERVAL).await;
+            toolchain::refresh().await;
         }
     });
 
@@ -5783,6 +5795,18 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
+    report_build_identity(
+        client,
+        daemon_url,
+        config,
+        &job.build_id,
+        &oore_contract::ReportBuildIdentityRequest {
+            version_name: version_name.clone(),
+            version_code: Some(version_code),
+            ..read_head_commit_identity(&workspace).await
+        },
+    )
+    .await;
 
     let mut signing_source: Option<&str> = None;
     let mut signing_variant: Option<AndroidSigningBuildType> = None;
@@ -6025,28 +6049,26 @@ async fn execute_build_steps(
                 &step_start_marker("vm-start", "Start a clean Tart VM for this build"),
             )
             .await;
-            let shares = caches
-                .map(|caches| {
-                    caches
-                        .mounts()
-                        .into_iter()
-                        .map(|mount| tart::HostShare {
-                            name: mount.name,
-                            env: mount.env,
-                            // Every VM build runs from the same guest path, so
-                            // Xcode names DerivedData the same for every
-                            // project; keep one saved copy per project.
-                            host_dir: if mount.name == "derived-data" {
-                                mount.host_dir.join(hex::encode(
-                                    &Sha256::digest(job.project_id.as_bytes())[..16],
-                                ))
-                            } else {
-                                mount.host_dir
-                            },
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
+            let shares = caches.map_or_default(|caches| {
+                caches
+                    .mounts()
+                    .into_iter()
+                    .map(|mount| tart::HostShare {
+                        name: mount.name,
+                        env: mount.env,
+                        // Every VM build runs from the same guest path, so
+                        // Xcode names DerivedData the same for every
+                        // project; keep one saved copy per project.
+                        host_dir: if mount.name == "derived-data" {
+                            mount.host_dir.join(hex::encode(
+                                &Sha256::digest(job.project_id.as_bytes())[..16],
+                            ))
+                        } else {
+                            mount.host_dir
+                        },
+                    })
+                    .collect::<Vec<_>>()
+            });
             let result = start_build_vm(
                 job,
                 client,
@@ -6906,6 +6928,335 @@ async fn fail_publish_step(
     anyhow::anyhow!(error).context(format!("{step_name} failed"))
 }
 
+const REHEARSE_PLAY_STEP: &str = "rehearse-play";
+const REHEARSE_APP_STORE_STEP: &str = "rehearse-app-store";
+
+struct RehearsalInputs<'a> {
+    workspace: &'a Path,
+    signing_workspace: &'a Path,
+    secrets: &'a std::collections::BTreeMap<String, String>,
+    signed_ipa_path: Option<&'a Path>,
+    builds_android: bool,
+    builds_ios: bool,
+    plan: oore_contract::pipeline_config::EffectivePublish,
+}
+
+fn rehearsal_block(code: &str, title: &str, detail: String) -> RehearsalCheck {
+    RehearsalCheck {
+        code: code.to_string(),
+        level: ReadinessLevel::Block,
+        title: title.to_string(),
+        detail: Some(detail),
+    }
+}
+
+/// Checks the App Store Connect submission without making it: the local
+/// pre-flight checks, the repository's notes and listing files, then
+/// `altool --validate-app`, which uses no build number.
+async fn rehearse_app_store(
+    workspace: &Path,
+    signing_workspace: &Path,
+    signed_ipa_path: Option<&Path>,
+    plan: &oore_contract::RunnerAppStorePublishPlan,
+) -> Vec<RehearsalCheck> {
+    let Some(ipa) = signed_ipa_path else {
+        return vec![rehearsal_block(
+            "asc_ipa",
+            "No signed App Store IPA",
+            "App Store publishing is on, but this build produced no signed App Store IPA. Check the pipeline's iOS signing exports for the App Store.".to_string(),
+        )];
+    };
+    let mut checks: Vec<RehearsalCheck> = app_store_upload::preflight_findings(workspace)
+        .into_iter()
+        .map(|finding| rehearsal_block("app_icon", "The app icon has transparency", finding))
+        .collect();
+    if let Some(dir) = plan.config.release_notes_dir.as_deref()
+        && let Err(error) = app_store_upload::read_release_notes_dir(workspace, dir)
+    {
+        checks.push(rehearsal_block(
+            "asc_release_notes",
+            "The release notes files could not be read",
+            format!("{error:#}"),
+        ));
+    }
+    if let Some(dir) = plan.config.listing_dir.as_deref()
+        && let Err(error) = app_store_upload::read_listing_dir(workspace, dir)
+    {
+        checks.push(rehearsal_block(
+            "asc_listing",
+            "The store listing files could not be read",
+            format!("{error:#}"),
+        ));
+    }
+    let key_dir = signing_workspace.join(".oore").join("asc-keys");
+    checks.push(
+        match app_store_upload::validate_ipa(ipa, &plan.credentials, &key_dir).await {
+            Ok(message) => RehearsalCheck {
+                code: "asc_validate".to_string(),
+                level: ReadinessLevel::Ok,
+                title: "App Store Connect accepts the signed IPA".to_string(),
+                detail: Some(format!("{message}. Validated, not uploaded.")),
+            },
+            Err(error) => rehearsal_block(
+                "asc_validate",
+                "App Store Connect would refuse the IPA",
+                format!("{error:#}"),
+            ),
+        },
+    );
+    checks
+}
+
+async fn report_rehearsal(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    signing_token: &str,
+    report: &RunnerRehearsalReport,
+) -> anyhow::Result<RunnerRehearsalReportResponse> {
+    let mut last_error = None;
+    for delay in &PUBLISH_REPORT_DELAYS {
+        if !delay.is_zero() {
+            tokio::time::sleep(*delay).await;
+        }
+        let sent = client
+            .post(format!(
+                "{}/v1/runners/{}/jobs/{}/rehearsal",
+                daemon_url, config.runner_id, build_id
+            ))
+            .bearer_auth(&config.runner_token)
+            .header("x-oore-signing-token", signing_token)
+            .timeout(PUBLISH_REPORT_TIMEOUT)
+            .json(report)
+            .send()
+            .await;
+        let resp = match sent {
+            Ok(resp) => resp,
+            Err(error) => {
+                last_error = Some(anyhow::Error::new(error));
+                continue;
+            }
+        };
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(resp.json().await?);
+        }
+        let body = resp.text().await.unwrap_or_default();
+        let error = anyhow::anyhow!("the daemon answered {status}: {body}");
+        if runner_response_is_terminal(status) {
+            return Err(error);
+        }
+        last_error = Some(error);
+    }
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("the rehearsal report was not sent")))
+}
+
+fn rehearsal_line(item: &oore_contract::StoreReadinessItem) -> String {
+    let mark = match item.level {
+        ReadinessLevel::Ok => "passed",
+        ReadinessLevel::Warn => "check",
+        ReadinessLevel::Block => "fix first",
+    };
+    match &item.detail {
+        Some(detail) => format!("[oore-rehearsal] {mark}: {}. {detail}", item.title),
+        None => format!("[oore-rehearsal] {mark}: {}", item.title),
+    }
+}
+
+/// Checks each store submission the pipeline would make, and submits
+/// nothing. Runs every store, so one rehearsal lists every fix; fails when
+/// any check blocks.
+async fn run_rehearsal_steps(
+    job: &ClaimedJob,
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    log_seq: &mut BuildLogCursor,
+    steps: &mut Vec<StepResult>,
+    inputs: RehearsalInputs<'_>,
+) -> anyhow::Result<()> {
+    let RehearsalInputs {
+        workspace,
+        signing_workspace,
+        secrets,
+        signed_ipa_path,
+        builds_android,
+        builds_ios,
+        plan,
+    } = inputs;
+    let mut log = async |stream: &str, line: String| {
+        let _ = append_runner_log_line(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            log_seq,
+            stream,
+            &line,
+        )
+        .await;
+    };
+    let play_planned = !matches!(plan.google_play, Ok(None));
+    let app_store_planned = !matches!(plan.app_store, Ok(None));
+    if !play_planned && !app_store_planned {
+        log(
+            "stdout",
+            "[oore-rehearsal] Nothing to rehearse: this build publishes to no store".to_string(),
+        )
+        .await;
+        return Ok(());
+    }
+    let mut blocked = Vec::new();
+    for store in [PublishStore::GooglePlay, PublishStore::AppStore] {
+        let (step_name, title, planned, built, platform_name) = match store {
+            PublishStore::GooglePlay => (
+                REHEARSE_PLAY_STEP,
+                "Rehearse the Google Play release",
+                play_planned,
+                builds_android,
+                "Android",
+            ),
+            PublishStore::AppStore => (
+                REHEARSE_APP_STORE_STEP,
+                "Rehearse the App Store Connect submission",
+                app_store_planned,
+                builds_ios,
+                "iOS",
+            ),
+        };
+        if !planned {
+            continue;
+        }
+        if !built {
+            log(
+                "stdout",
+                format!(
+                    "[oore-rehearsal] Skipping {title}: this build did not build {platform_name}."
+                ),
+            )
+            .await;
+            continue;
+        }
+        let started = now_unix();
+        log("stdout", step_start_marker(step_name, title)).await;
+        let checks = match store {
+            PublishStore::GooglePlay => match &plan.google_play {
+                Ok(Some(play)) => {
+                    publish::rehearse_google_play(
+                        client,
+                        workspace,
+                        secrets,
+                        plan.changelog.as_deref(),
+                        play,
+                    )
+                    .await
+                }
+                Err(error) => vec![rehearsal_block(
+                    "publish_settings",
+                    "The publish settings stop this upload",
+                    error.clone(),
+                )],
+                Ok(None) => Vec::new(),
+            },
+            PublishStore::AppStore => match &plan.app_store {
+                Ok(Some(app_store)) => {
+                    rehearse_app_store(workspace, signing_workspace, signed_ipa_path, app_store)
+                        .await
+                }
+                Err(error) => vec![rehearsal_block(
+                    "publish_settings",
+                    "The publish settings stop this upload",
+                    error.clone(),
+                )],
+                Ok(None) => Vec::new(),
+            },
+        };
+        let report = RunnerRehearsalReport { store, checks };
+        let items = match report_rehearsal(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &job.signing_token,
+            &report,
+        )
+        .await
+        {
+            Ok(response) => response.checks,
+            Err(error) => {
+                log(
+                    "stderr",
+                    format!("[oore-rehearsal] Warning: Oore could not record this rehearsal, so the build page will not list it: {error:#}"),
+                )
+                .await;
+                let release_store = match store {
+                    PublishStore::GooglePlay => oore_contract::ReleaseStore::GooglePlay,
+                    PublishStore::AppStore => oore_contract::ReleaseStore::AppStore,
+                };
+                report
+                    .checks
+                    .into_iter()
+                    .map(|check| oore_contract::StoreReadinessItem {
+                        store: release_store,
+                        code: check.code,
+                        level: check.level,
+                        title: check.title,
+                        detail: check.detail,
+                        console_url: None,
+                        remembered: false,
+                    })
+                    .collect()
+            }
+        };
+        for item in &items {
+            log("stdout", rehearsal_line(item)).await;
+        }
+        let failed = items.iter().any(|item| item.level == ReadinessLevel::Block);
+        log(
+            "stdout",
+            if failed {
+                format!(
+                    "[oore-rehearsal] {title}: fix the items above first. Nothing was submitted."
+                )
+            } else {
+                format!("[oore-rehearsal] {title}: ready. Nothing was submitted.")
+            },
+        )
+        .await;
+        log(
+            "stdout",
+            step_end_marker(
+                step_name,
+                if failed { "failed" } else { "succeeded" },
+                Some(i32::from(failed)),
+            ),
+        )
+        .await;
+        let finished = now_unix();
+        steps.push(StepResult {
+            name: step_name.to_string(),
+            status: if failed { "failed" } else { "succeeded" }.to_string(),
+            exit_code: Some(i32::from(failed)),
+            started_at: started,
+            finished_at: finished,
+            duration_ms: (finished - started) * 1000,
+            publish_from_file: false,
+        });
+        if failed {
+            blocked.push(step_name);
+        }
+    }
+    if blocked.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "The rehearsal found what a store would refuse; see the build's Rehearsal findings"
+        )
+        .context(format!("{} failed", blocked.join(", "))))
+    }
+}
+
 /// Runs the store uploads the pipeline turns on, stopping at the first failure.
 async fn run_publish_steps(
     job: &ClaimedJob,
@@ -6954,6 +7305,26 @@ async fn run_publish_steps(
             log_seq,
             "stdout",
             &format!("[oore-publish] {note}"),
+        )
+        .await;
+    }
+    if publish_plan.rehearsal {
+        return run_rehearsal_steps(
+            job,
+            client,
+            daemon_url,
+            config,
+            log_seq,
+            steps,
+            RehearsalInputs {
+                workspace,
+                signing_workspace,
+                secrets,
+                signed_ipa_path,
+                builds_android: built(BuildPlatform::Android),
+                builds_ios: built(BuildPlatform::Ios),
+                plan: publish_plan,
+            },
         )
         .await;
     }
@@ -7176,8 +7547,46 @@ async fn run_publish_steps(
         )
         .await;
         let result = match (signed_ipa_path, ios_artifact_metadata) {
-            (Some(ipa), Some(metadata)) => {
+            (Some(ipa), Some(metadata)) => 'upload: {
                 let key_dir = signing_workspace.join(".oore").join("asc-keys");
+                let preflight = app_store_upload::apply_preflight(
+                    app_store.config.preflight,
+                    app_store_upload::preflight_findings(workspace),
+                );
+                let warnings = match preflight {
+                    Ok(warnings) => warnings,
+                    Err(error) => break 'upload Err(error),
+                };
+                for warning in warnings {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stdout",
+                        &warning,
+                    )
+                    .await;
+                }
+                let release_notes = match app_store.config.release_notes_dir.as_deref() {
+                    Some(dir) => match app_store_upload::read_release_notes_dir(workspace, dir) {
+                        Ok(notes) => notes,
+                        Err(error) => {
+                            break 'upload Err(error.context("failed to read release_notes_dir"));
+                        }
+                    },
+                    None => None,
+                };
+                let listing = match app_store.config.listing_dir.as_deref() {
+                    Some(dir) => match app_store_upload::read_listing_dir(workspace, dir) {
+                        Ok(listing) => listing,
+                        Err(error) => {
+                            break 'upload Err(error.context("failed to read listing_dir"));
+                        }
+                    },
+                    None => None,
+                };
                 // Once altool starts, Apple may get the build; don't start
                 // it for a build that has already stopped.
                 match check_build_active(client, daemon_url, config, &job.build_id, authority)
@@ -7189,8 +7598,8 @@ async fn run_publish_steps(
                     Ok(()) => tokio::select! {
                         uploaded = app_store_upload::upload_ipa(ipa, &app_store.credentials, &key_dir) => {
                             uploaded.and_then(|message| {
-                                app_store_upload::publish_result(metadata, &app_store.config)
-                                    .map(|result| (message, result))
+                                app_store_upload::publish_result(metadata, &app_store.config, release_notes)
+                                    .map(|result| (message, RunnerPublishResult { listing, ..result }))
                             })
                         }
                         _ = poll_cancellation(client, daemon_url, config, &job.build_id, authority.clone()) => {
@@ -8858,8 +9267,7 @@ async fn reserve_artifact(
             let code = resp
                 .json::<oore_contract::ApiError>()
                 .await
-                .map(|error| error.code)
-                .unwrap_or_default();
+                .map_or_default(|error| error.code);
             if code == "invalid_artifact_type" {
                 println!(
                     "  Daemon does not accept the aab artifact type yet; uploading {name} as generic"
@@ -8892,6 +9300,63 @@ async fn abort_artifact(
         })
         .send()
         .await;
+}
+
+/// The checked-out commit's title and author, from `git log`. Empty when
+/// git cannot say, which leaves the build without them.
+async fn read_head_commit_identity(workspace: &Path) -> oore_contract::ReportBuildIdentityRequest {
+    let output = tokio::process::Command::new("git")
+        .args(["log", "-1", "--format=%s%x00%an"])
+        .current_dir(workspace)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+    match output {
+        Ok(output) if output.status.success() => {
+            parse_head_commit_identity(&String::from_utf8_lossy(&output.stdout))
+        }
+        _ => oore_contract::ReportBuildIdentityRequest::default(),
+    }
+}
+
+fn parse_head_commit_identity(raw: &str) -> oore_contract::ReportBuildIdentityRequest {
+    let mut parts = raw.trim_end_matches('\n').splitn(2, '\0');
+    let text = |value: Option<&str>| {
+        value
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    };
+    oore_contract::ReportBuildIdentityRequest {
+        commit_title: text(parts.next()),
+        commit_author: text(parts.next()),
+        ..Default::default()
+    }
+}
+
+/// Tells the backend what the build is. Best effort: an older backend
+/// without the endpoint, or a failed request, only leaves the build
+/// without a title and version.
+async fn report_build_identity(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    build_id: &str,
+    identity: &oore_contract::ReportBuildIdentityRequest,
+) {
+    let result = client
+        .post(format!(
+            "{}/v1/runners/{}/jobs/{}/identity",
+            daemon_url, config.runner_id, build_id
+        ))
+        .bearer_auth(&config.runner_token)
+        .json(identity)
+        .timeout(CONTROL_REQUEST_TIMEOUT)
+        .send()
+        .await;
+    if let Err(error) = result {
+        println!("Could not report build identity for {build_id}: {error}");
+    }
 }
 
 struct StatusReport<'a> {
@@ -9195,10 +9660,7 @@ mod ios_signing_lock_tests {
         ));
         let held = super::IosSigningLock::acquire_at(&path).unwrap();
         let other = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-        assert!(matches!(
-            other.try_lock(),
-            Err(std::fs::TryLockError::WouldBlock)
-        ));
+        std::assert_matches!(other.try_lock(), Err(std::fs::TryLockError::WouldBlock));
         drop(held);
         other.try_lock().unwrap();
         let _ = std::fs::remove_file(&path);
@@ -9654,6 +10116,18 @@ mod tests {
     }
 
     #[test]
+    fn head_commit_identity_reads_title_and_author() {
+        let identity = super::parse_head_commit_identity("Fix saved addresses\0Mina Patel\n");
+        assert_eq!(
+            identity.commit_title.as_deref(),
+            Some("Fix saved addresses")
+        );
+        assert_eq!(identity.commit_author.as_deref(), Some("Mina Patel"));
+        let empty = super::parse_head_commit_identity("");
+        assert!(empty.commit_title.is_none() && empty.commit_author.is_none());
+    }
+
+    #[test]
     fn pubspec_version_name_drops_build_number() {
         assert_eq!(
             pubspec_version_name("name: app\nversion: 1.4.0+12\n").as_deref(),
@@ -10028,6 +10502,9 @@ mod publish_report_tests {
             rollout_fraction: Some(0.1),
             status: "in_progress".into(),
             testflight_groups: None,
+            held_for_review: false,
+            release_notes: None,
+            listing: None,
         };
         report_publish_result(
             &reqwest::Client::new(),
@@ -10528,6 +11005,8 @@ mod file_publish_tests {
             google_play: Some(play_settings("production", None)),
             app_store: Some(app_store_settings(testflight(&["Internal", "QA"]))),
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         };
         let from_file = plan.publish.apply(settings);
         // What the runner gets when the settings themselves say it.
@@ -10536,6 +11015,8 @@ mod file_publish_tests {
             google_play: Some(play_settings("closed", Some(20.0))),
             app_store: Some(app_store_settings(testflight(&["Beta"]))),
             disabled: false,
+            frozen: None,
+            rehearsal: None,
         };
         assert_eq!(from_file.changelog, equivalent.changelog);
         assert_eq!(from_file.google_play.unwrap(), equivalent.google_play);
@@ -10565,6 +11046,8 @@ mod file_publish_tests {
                 google_play: Some(play_settings("internal", None)),
                 app_store: None,
                 disabled: false,
+                frozen: None,
+                rehearsal: None,
             });
             assert_eq!(
                 effective.google_play.unwrap(),

@@ -11,6 +11,10 @@ export const RELEASE_IDS = {
   shopInternalNext: 'rel-demo-006',
   shopTestflight: 'rel-demo-007',
   shopAppStore: 'rel-demo-008',
+  adminProduction: 'rel-demo-009',
+  paymentsAppStore: 'rel-demo-010',
+  paymentsTestflight: 'rel-demo-011',
+  adminClosed: 'rel-demo-012',
 } as const
 
 const DEFAULT_POLICY = {
@@ -36,7 +40,16 @@ export const demoReleases: Array<DemoRelease> = [
     package_name: 'build.oore.demo.shop',
     version_name: '2.5.1',
     version_code: 146,
-    state: 'processing',
+    // The case that started v0.1.51: Apple refused the submission before
+    // review, so the release says blocked instead of "in review".
+    state: 'blocked',
+    state_reason:
+      "App Store Connect refused the request: Adding version to review submission failed (409 Conflict): STATE_ERROR.ENTITY_STATE_INVALID: This resource cannot be reviewed, please check associated errors to see why.\n- An age rating declaration update is required before this version can be submitted.\n- You must provide a value for the attribute 'whatsNew' with this request.",
+    store_status: 'PREPARE_FOR_SUBMISSION',
+    console_url:
+      'https://appstoreconnect.apple.com/apps/6450000001/distribution/ios/version/inflight',
+    origin: 'oore',
+    auto_rollout: true,
     rollout_fraction: 0,
     next_fraction: null,
     next_step_at: null,
@@ -231,10 +244,140 @@ export const demoReleases: Array<DemoRelease> = [
     created_at: ago(86400 * 9),
     updated_at: ago(86400 * 5),
   },
+  {
+    // Staged in Play Console by hand; Oore found it and follows it.
+    id: RELEASE_IDS.adminProduction,
+    project_id: PROJECT_IDS.internalAdmin,
+    build_id: null,
+    build_number: null,
+    artifact_id: null,
+    platform: 'android',
+    store: 'google_play',
+    track: 'production',
+    package_name: 'build.oore.demo.admin',
+    version_name: '1.8.1',
+    version_code: 88,
+    state: 'rolling',
+    origin: 'adopted',
+    auto_rollout: false,
+    console_url:
+      'https://play.google.com/apps/publish/?package=build.oore.demo.admin',
+    rollout_fraction: 0.1,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'healthy',
+    crash_rate: 0.004,
+    crash_rate_threshold: 0.02,
+    policy: DEFAULT_POLICY,
+    awaiting_approval: false,
+    created_at: ago(3600 * 20),
+    updated_at: ago(3600 * 20),
+  },
+  {
+    // Rejected in App Review: the reviewer's words and what to do next.
+    id: RELEASE_IDS.paymentsAppStore,
+    project_id: PROJECT_IDS.nativePayments,
+    build_id: BUILD_IDS.succeeded6,
+    build_number: 44,
+    artifact_id: null,
+    platform: 'ios',
+    store: 'app_store',
+    track: 'app_store',
+    package_name: 'build.oore.demo.payments',
+    version_name: '3.2.0',
+    version_code: 44,
+    state: 'rejected',
+    state_reason:
+      'Guideline 2.1 - Performance - App Completeness. We were unable to sign in with the demo account you provided: the app showed "Something went wrong" after tapping Continue. Please check the account works, or include a video of sign-in, and resubmit.',
+    store_status: 'REJECTED',
+    console_url:
+      'https://appstoreconnect.apple.com/apps/6450000003/distribution/ios/version/inflight',
+    rollout_fraction: 0,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: DEFAULT_POLICY,
+    awaiting_approval: false,
+    created_at: ago(86400 * 2),
+    updated_at: ago(3600 * 6),
+  },
+  {
+    // A TestFlight build close to Apple's 90 day limit.
+    id: RELEASE_IDS.paymentsTestflight,
+    project_id: PROJECT_IDS.nativePayments,
+    build_id: null,
+    build_number: null,
+    artifact_id: null,
+    platform: 'ios',
+    store: 'app_store',
+    track: 'Beta',
+    package_name: 'build.oore.demo.payments',
+    version_name: '3.1.0',
+    version_code: 39,
+    state: 'complete',
+    rollout_fraction: 1,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: { ...DEFAULT_POLICY, steps: [1] },
+    awaiting_approval: false,
+    created_at: ago(86400 * 84),
+    updated_at: ago(86400 * 84 - 3600),
+  },
+  {
+    // In Google's review, which usually takes this app a few hours.
+    id: RELEASE_IDS.adminClosed,
+    project_id: PROJECT_IDS.internalAdmin,
+    build_id: BUILD_IDS.succeeded2,
+    build_number: 89,
+    artifact_id: null,
+    platform: 'android',
+    store: 'google_play',
+    track: 'closed',
+    package_name: 'build.oore.demo.admin',
+    version_name: '1.9.0',
+    version_code: 89,
+    state: 'in_review',
+    typical_review_seconds: 3600 * 5,
+    rollout_fraction: 0,
+    next_fraction: null,
+    next_step_at: null,
+    health: 'unknown',
+    crash_rate: null,
+    crash_rate_threshold: null,
+    policy: DEFAULT_POLICY,
+    awaiting_approval: false,
+    created_at: ago(3600 * 2),
+    updated_at: ago(3600 * 2),
+  },
 ]
 
+// Oore schedules the rollouts it started; the daemon sends auto_rollout on
+// every release.
+for (const release of demoReleases) release.auto_rollout ??= true
+
 export const demoReleaseHistory = {
+  [RELEASE_IDS.adminProduction]: [
+    {
+      id: 'relh-demo-011',
+      at: ago(3600 * 20),
+      to_state: 'rolling',
+      reason: 'Found rolling out in Play Console',
+    },
+  ],
   [RELEASE_IDS.shopAppStore]: [
+    {
+      id: 'relh-demo-010',
+      at: ago(200),
+      from_state: 'processing',
+      to_state: 'blocked',
+      reason:
+        "App Store Connect refused the request: Adding version to review submission failed (409 Conflict): STATE_ERROR.ENTITY_STATE_INVALID: This resource cannot be reviewed, please check associated errors to see why.\n- An age rating declaration update is required before this version can be submitted.\n- You must provide a value for the attribute 'whatsNew' with this request.",
+    },
     {
       id: 'relh-demo-009',
       at: ago(250),

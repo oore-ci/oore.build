@@ -7,9 +7,10 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
-    ApiError, DiscoverRepositoryWorkflowsResponse, PipelineExecutionConfig, PlanRequest,
-    RepositoryConfig, RepositoryWorkflowExecutionPreview, RepositoryWorkflowPreview, ScmProvider,
-    parse_repository_config, validate_repository_config_path,
+    ApiError, BuildPlatform, DiscoverRepositoryWorkflowsResponse, PipelineExecutionConfig,
+    PlanRequest, ProjectAppDetection, RepositoryConfig, RepositoryWorkflowExecutionPreview,
+    RepositoryWorkflowPreview, ScmProvider, parse_repository_config,
+    validate_repository_config_path,
 };
 use serde::Deserialize;
 use sqlx::Row;
@@ -185,8 +186,7 @@ fn preview(path: String, raw: &str) -> RepositoryWorkflowPreview {
             errors: if error.starts_with("YAML parse error:") {
                 let location = error
                     .rfind(" at line ")
-                    .map(|index| &error[index..])
-                    .unwrap_or_default();
+                    .map_or_default(|index| &error[index..]);
                 vec![format!(
                     "YAML is invalid{location}; check its syntax and value types"
                 )]
@@ -1186,6 +1186,136 @@ pub async fn discover_repository_workflows(
         workflows,
         truncated,
     }))
+}
+
+/// Files whose presence says a platform folder holds a buildable app.
+const PLATFORM_MARKERS: [(BuildPlatform, &[&str]); 3] = [
+    (
+        BuildPlatform::Android,
+        &["android/app/build.gradle", "android/app/build.gradle.kts"],
+    ),
+    (
+        BuildPlatform::Ios,
+        &["ios/Runner/Info.plist", "ios/Podfile"],
+    ),
+    (
+        BuildPlatform::Macos,
+        &["macos/Runner/Info.plist", "macos/Podfile"],
+    ),
+];
+
+/// Whether `path` exists at `reference`. A file too large to read exists.
+async fn repository_file_exists(
+    pool: &sqlx::SqlitePool,
+    encryption_key: &[u8],
+    source: &ProjectSource,
+    path: &str,
+    reference: &str,
+) -> Result<bool, (StatusCode, Json<ApiError>)> {
+    match read_repository_file(pool, encryption_key, source, path, reference).await {
+        Ok(found) => Ok(found.is_some()),
+        Err((StatusCode::PAYLOAD_TOO_LARGE, _)) => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// The app name and whether `pubspec.yaml` depends on Flutter.
+pub(crate) fn read_pubspec(raw: &str) -> (Option<String>, bool) {
+    let name = raw.lines().find_map(|line| {
+        let value = line.strip_prefix("name:")?.trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'');
+        (!value.is_empty()).then(|| value.to_string())
+    });
+    let flutter = raw.lines().any(|line| {
+        let line = line.trim_end();
+        line == "flutter:" || line.trim_start().starts_with("sdk: flutter")
+    });
+    (name, flutter)
+}
+
+/// `GET /v1/projects/{project_id}/app-detection` — what app the repository
+/// holds, to propose its first pipelines.
+pub async fn detect_project_app(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path(project_id): Path<String>,
+) -> ApiResult<ProjectAppDetection> {
+    let pool = state.db.clone();
+    let effective = resolve_effective_project_role(
+        &pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::ManagePipelines)?;
+
+    let source = load_project_source(&pool, &project_id).await?;
+    let reference = source.default_reference.clone().ok_or_else(|| {
+        api_err(
+            StatusCode::CONFLICT,
+            "missing_default_branch",
+            "Set a project default branch before Oore reads the repository",
+        )
+    })?;
+    let reference = validate_reference(&reference)?;
+    let key = &state.encryption_key;
+
+    let pubspec = read_repository_file(&pool, key, &source, "pubspec.yaml", &reference)
+        .await
+        .or_else(|(status, error)| match status {
+            StatusCode::PAYLOAD_TOO_LARGE => Ok(None),
+            _ => Err((status, error)),
+        })?;
+    let (app_name, flutter) = pubspec
+        .as_deref()
+        .map(read_pubspec)
+        .unwrap_or((None, false));
+
+    let mut platforms = Vec::new();
+    for (platform, markers) in PLATFORM_MARKERS {
+        for marker in markers {
+            if repository_file_exists(&pool, key, &source, marker, &reference).await? {
+                platforms.push(platform);
+                break;
+            }
+        }
+    }
+
+    let (workflows, _) = discover_at(&pool, key, &source, &reference, None)
+        .await
+        .unwrap_or_default();
+    let config_files = workflows
+        .into_iter()
+        .filter(|workflow| workflow.valid)
+        .map(|workflow| workflow.path)
+        .collect();
+
+    Ok(Json(ProjectAppDetection {
+        reference,
+        flutter,
+        app_name,
+        platforms,
+        config_files,
+    }))
+}
+
+#[cfg(test)]
+mod detection_tests {
+    use super::read_pubspec;
+
+    #[test]
+    fn a_flutter_pubspec_names_the_app() {
+        let raw = "name: coin\ndescription: Coins\n\ndependencies:\n  flutter:\n    sdk: flutter\n\nflutter:\n  uses-material-design: true\n";
+        assert_eq!(read_pubspec(raw), (Some("coin".to_string()), true));
+    }
+
+    #[test]
+    fn a_dart_package_is_not_a_flutter_app() {
+        let raw = "name: 'tool'\nenvironment:\n  sdk: ^3.5.0\n";
+        assert_eq!(read_pubspec(raw), (Some("tool".to_string()), false));
+    }
 }
 
 #[cfg(test)]

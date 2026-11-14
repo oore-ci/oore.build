@@ -132,6 +132,112 @@ export const demoBuilds: Array<Build> = [
     updated_at: ago(240),
   },
 
+  // ── Release rehearsals ────────────────────────────────────────
+  {
+    id: BUILD_IDS.rehearsalFailed,
+    project_id: PROJECT_IDS.nativePayments,
+    pipeline_id: PIPELINE_IDS.paymentsAll,
+    workflow: 'release',
+    build_number: 48,
+    status: 'failed',
+    trigger_type: 'manual',
+    trigger_actor: 'demo+developer@oore.build',
+    commit_sha: 'a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d4e3f2a1b0',
+    branch: 'release/3.3.0',
+    version_name: '3.3.0',
+    version_code: 48,
+    commit_title: 'Receipt sharing',
+    commit_author: 'Priya Shah',
+    changelog: 'Receipt sharing and clearer payment retries.',
+    store_notes: '• Share receipts from the order screen',
+    config_snapshot: { rehearsal: true, workflow: 'release' },
+    rehearsal: true,
+    runner_id: RUNNER_IDS.macMini,
+    exit_code: 1,
+    step_results: [
+      {
+        name: 'build-android',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(1500),
+        finished_at: ago(1080),
+        duration_ms: 420_000,
+      },
+      {
+        name: 'build-ios',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(1080),
+        finished_at: ago(420),
+        duration_ms: 660_000,
+      },
+      {
+        name: 'rehearse-play',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(420),
+        finished_at: ago(380),
+        duration_ms: 40_000,
+      },
+      {
+        name: 'rehearse-app-store',
+        status: 'failed',
+        exit_code: 1,
+        started_at: ago(380),
+        finished_at: ago(300),
+        duration_ms: 80_000,
+      },
+    ],
+    queued_at: ago(1560),
+    started_at: ago(1500),
+    finished_at: ago(300),
+    created_at: ago(1560),
+    updated_at: ago(300),
+  },
+  {
+    id: BUILD_IDS.rehearsalPassed,
+    project_id: PROJECT_IDS.flutterShop,
+    pipeline_id: PIPELINE_IDS.shopAndroid,
+    build_number: 147,
+    status: 'succeeded',
+    trigger_type: 'manual',
+    trigger_actor: 'demo+owner@oore.build',
+    commit_sha: 'b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0',
+    branch: 'main',
+    version_name: '2.5.2',
+    version_code: 147,
+    commit_title: 'Order tracking map',
+    commit_author: 'Mina Patel',
+    changelog: 'Order tracking map.',
+    config_snapshot: { rehearsal: true },
+    rehearsal: true,
+    runner_id: RUNNER_IDS.macStudio,
+    exit_code: 0,
+    step_results: [
+      {
+        name: 'build-android',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(3000),
+        finished_at: ago(2580),
+        duration_ms: 420_000,
+      },
+      {
+        name: 'rehearse-play',
+        status: 'succeeded',
+        exit_code: 0,
+        started_at: ago(2580),
+        finished_at: ago(2540),
+        duration_ms: 40_000,
+      },
+    ],
+    queued_at: ago(3060),
+    started_at: ago(3000),
+    finished_at: ago(2540),
+    created_at: ago(3060),
+    updated_at: ago(2540),
+  },
+
   // ── Succeeded builds ──────────────────────────────────────────
   {
     id: BUILD_IDS.succeeded8,
@@ -144,6 +250,8 @@ export const demoBuilds: Array<Build> = [
     trigger_ref: 'v2.5.1',
     commit_sha: 'f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5',
     changelog: 'Fixes the checkout total on iPad.',
+    store_notes:
+      '• The checkout total is right on iPad again\n• Faster loading of your order history',
     config_snapshot: {},
     runner_id: RUNNER_IDS.macStudio,
     exit_code: 0,
@@ -729,6 +837,58 @@ for (const [projectIndex, app] of demoBuildHistoryApps.entries()) {
       created_at: ago(age),
       updated_at: ago(age - 360 - ((index * 97 + projectIndex * 61) % 340)),
     })
+  }
+}
+
+// ── What each build is: commit title, author and app version ────
+const DEMO_COMMIT_TITLES = [
+  'Fix saved addresses on checkout',
+  'Add order tracking map',
+  'Bump flutter_stripe to 11.2',
+  'Cache product images offline',
+  'Show delivery slots in local time',
+  'Fix crash when the cart is empty',
+  'Add Hindi translations',
+  'Speed up the home feed',
+  'Retry payments after a timeout',
+  'Tidy up the settings screen',
+  'Support dark mode in receipts',
+  'Fix login on Android 15',
+]
+const DEMO_AUTHORS = new Map([
+  ['octocat', 'Mona Lisa'],
+  ['mina-patel', 'Mina Patel'],
+  ['jordan-kim', 'Jordan Kim'],
+  ['priya-shah', 'Priya Shah'],
+])
+const DEMO_VERSION_NAMES = new Map<string, string>([
+  [PROJECT_IDS.flutterShop, '2.5.1'],
+  [PROJECT_IDS.internalAdmin, '1.8.2'],
+  [PROJECT_IDS.nativePayments, '3.2.0'],
+])
+
+// A runner reports these after checkout, so queued builds have none.
+for (const build of demoBuilds) {
+  if (!build.started_at) continue
+  build.commit_title ??=
+    DEMO_COMMIT_TITLES[build.build_number % DEMO_COMMIT_TITLES.length]
+  build.commit_author ??=
+    DEMO_AUTHORS.get(build.trigger_actor ?? '') ?? 'Mina Patel'
+  build.version_name ??= DEMO_VERSION_NAMES.get(build.project_id) ?? '1.0.0'
+  build.version_code ??= build.build_number
+}
+
+// A push to the same branch replaced each canceled history build.
+for (const build of demoBuilds) {
+  if (build.status !== 'canceled' || !build.id.startsWith('build-demo-history'))
+    continue
+  const newer = demoBuilds.find(
+    (candidate) =>
+      candidate.pipeline_id === build.pipeline_id &&
+      candidate.build_number === build.build_number + 1,
+  )
+  if (newer) {
+    build.superseded_by = { id: newer.id, build_number: newer.build_number }
   }
 }
 

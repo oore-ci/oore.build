@@ -24,28 +24,42 @@
 
 ## Overview
 
-Oore CI lets you run your own mobile CI server. V1 targets Android, iOS, and macOS Flutter builds on a macOS host. It provides:
+Oore CI builds Flutter apps on Macs you control and ships them to testers, Google Play, and the App Store. Builds, signing keys, and artifacts stay on your own hardware. It runs Android, iOS, and macOS builds on a macOS host.
 
-- A daemon (`oored`) that runs builds and serves the API.
-- An operator CLI (`oore`) for setup, administration, and runner management.
-- A web UI for builds, projects, releases, and access control.
-- OIDC authentication for non-loopback access.
-- Local login for loopback-only access.
+Oore has three parts:
+
+- A daemon (`oored`) that serves the API and schedules builds.
+- A runner (`oore-runner`) that runs builds directly on the Mac or in a fresh macOS VM.
+- An operator CLI (`oore`) for install, setup, upgrades, and runner management, and a web UI for everything else.
+
+## What you can do
+
+- **Start the day from Home.** See what needs attention, what is running, and what finished, next to live releases and their rollout. Build, project, and store health sit below, with problems sorted first. [Tour the demo](https://demo.oore.build).
+- **Keep pipelines in the repository.** A `.oore.yaml` file names one or more workflows. Oore finds the files in the repository, shows what will run, and lets you pick the workflow when you start a build. Pushes and pull requests fan out to every workflow they trigger. [Files, pipelines, and workflows](https://docs.oore.build/concepts/files-pipelines-workflows).
+- **Sign once per project.** Store Android keystores and iOS certificates in the project's signing library, and let each workflow sign by name. The runner injects the keystore into Gradle, so apps need no committed keys. [Use the project signing library](https://docs.oore.build/build/sign/project-library).
+- **Follow a build in plain words.** The build page shows each step with a readable name and timing, the full log with search, analyzer warnings, artifacts, store releases, and a timeline. Pull request checks report app size against the base branch and can fail on a size budget. [See builds on pull requests](https://docs.oore.build/build/run/pull-request-checks).
+- **Ship through environments.** Promote a build from internal testing to beta and production, with approvers per environment. Set staged rollouts to an exact percentage, and see store refusals and Apple's review status on the release. [Promote builds between environments](https://docs.oore.build/build/distribute/environments).
+- **Hand builds to testers.** QA Viewers sign in on their phone, install the latest build from any iPhone browser or on Android, and send feedback that lands on the build. A share link sends one file without an account. [Share builds with testers](https://docs.oore.build/build/distribute/testers).
+- **Scale out on your own Macs.** Run several builds at once on one Mac, add runners on other Macs, and isolate builds in VMs that start from a warm image per project. [Run builds in VMs](https://docs.oore.build/operate/runners/vm-isolation).
+- **Let the team in.** Turn on External Access with OIDC, invite people, and give many of them project roles at once. [Let the team sign in](https://docs.oore.build/team/access).
 
 ## Screenshots
 
-| Dashboard                                                     | Builds                                                  |
-| ------------------------------------------------------------- | ------------------------------------------------------- |
-| ![Oore CI dashboard](shared/media/product/demo-dashboard.png) | ![Oore CI builds](shared/media/product/demo-builds.png) |
+| Home                                                                                                                                                                                                                                                      | Builds                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="shared/media/product/demo-dashboard-dark.png" /><img src="shared/media/product/demo-dashboard.png" alt="Oore Home with needs attention, builds in progress, and live releases" /></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="shared/media/product/demo-builds-dark.png" /><img src="shared/media/product/demo-builds.png" alt="Oore builds list with status, branch, and trigger" /></picture>                          |
+| **Build**                                                                                                                                                                                                                                                 | **Environments**                                                                                                                                                                                                                                         |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="shared/media/product/demo-build-detail-dark.png" /><img src="shared/media/product/demo-build-detail.png" alt="Oore build page with readable steps and the build log" /></picture>           | <picture><source media="(prefers-color-scheme: dark)" srcset="shared/media/product/demo-environments-dark.png" /><img src="shared/media/product/demo-environments.png" alt="Oore project environments with staged rollouts and an approval" /></picture> |
 
 ## Prerequisites
 
-- macOS on `arm64` or `x86_64` for the guided v0.1.42 installation
+- A Mac on `arm64` (Apple silicon) or `x86_64` (Intel) with administrator access
 - `curl`, `tar`, `ssh-keygen`, and the macOS system `/usr/bin/stat`, `/usr/bin/lockf`, and `/usr/bin/shasum`
+- Flutter and the platform tools your app builds with. See [Check that your Mac is ready](https://docs.oore.build/start/prerequisites).
 
 For source development, also install [Rust](https://rustup.rs/) and [Bun](https://bun.sh/).
 
-Published Linux web archives are standalone assets. They are not a guided Web node installation in v0.1.42.
+`oore install` manages macOS hosts only. A Web node can also run on Linux from the published web archive; see [Run a Web node on Linux](https://docs.oore.build/operate/deploy/linux-web-node).
 
 ## Quick Start
 
@@ -69,12 +83,14 @@ The download script verifies a signed release manifest and installs only the `oo
 
 Interactive installation continues to `oore setup`. SSH sessions use terminal setup. Local Complete installations use browser setup by default.
 
-Setup and support:
+Then follow the docs for your first app:
 
-- [Start with Oore](https://docs.oore.build/start)
+- [Install Oore on one Mac](https://docs.oore.build/start)
+- [Ship an Android app to testers](https://docs.oore.build/start/android/first-build)
+- [Ship an iOS app to TestFlight](https://docs.oore.build/start/ios/first-build)
+- [Decide which setup you need](https://docs.oore.build/concepts/which-setup)
+- [Known limitations](https://docs.oore.build/reference/known-limitations)
 - [Report an issue](https://docs.oore.build/operate/support/report-an-issue)
-- [Known limitations](https://docs.oore.build/operate/known-limitations)
-- [Live demo](https://demo.oore.build)
 
 Install prerelease channels:
 
@@ -94,11 +110,7 @@ Check for an update:
 oore update --check
 ```
 
-`oore update` now updates Ready Complete and Control plane installations in place. It drains active runner work, creates a backup, restarts managed services, and restores the prior release if verification fails.
-
-Use `oore-web update` on a separate Web node. Other profiles do not contain a managed backend.
-
-See [Upgrade Oore](https://docs.oore.build/operate/maintain/upgrade) for the complete update procedure.
+`oore update` updates Ready Complete and Control plane installations in place. It drains active runner work, creates a backup, restarts managed services, and restores the prior release if verification fails. Use `oore-web update` on a separate Web node. See [Upgrade Oore](https://docs.oore.build/operate/maintain/upgrade) for the full procedure.
 
 ## Development (from source)
 
@@ -110,6 +122,8 @@ make run-daemon
 make setup-token
 make dev-web
 ```
+
+To explore the UI with seeded data and no daemon, run `bun run dev:demo` in `apps/web` and sign in with any demo account (password `owner`). This is the same demo as [demo.oore.build](https://demo.oore.build).
 
 Notes:
 
@@ -123,13 +137,16 @@ Notes:
 ## Project Structure
 
 ```
-apps/web/           React 19 + TanStack Router (product UI)
-apps/docs/          Astro 7 + Fumadocs static documentation
-apps/site/          Neutral landing/install site (`oore.build`)
-crates/oored/       Daemon — Axum HTTP server
-crates/oore/        Operator CLI — Clap
-crates/oore-runner/ Build runner agent
-crates/oore-contract/ Shared data types (Serde structs)
+apps/web/                React 19 + TanStack Router (product UI)
+apps/docs/               Astro 7 + Fumadocs static documentation
+apps/site/               Landing and install site (oore.build)
+crates/oored/            Daemon — Axum HTTP server
+crates/oore/             Operator CLI — Clap
+crates/oore-runner/      Build runner agent
+crates/oore-contract/    Shared data types (Serde structs)
+crates/oore-google-play/ Google Play Developer API client
+crates/oore-cli-ui/      Shared terminal presentation for the CLIs
+shared/media/            Product screenshots used by the README, site, and docs
 ```
 
 ## Releases

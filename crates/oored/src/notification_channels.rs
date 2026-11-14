@@ -61,6 +61,7 @@ fn row_to_channel(row: &sqlx::sqlite::SqliteRow) -> NotificationChannel {
                 .flatten()
                 .as_deref(),
         ),
+        slack_channel_id: row.try_get("slack_channel_id").ok().flatten(),
         created_by: row.get("created_by"),
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),
@@ -126,12 +127,18 @@ const VALID_EVENTS: &[&str] = &[
     "build_approval_needed",
     "runner_offline",
     "release_uploaded",
+    "release_blocked",
+    "release_submitted",
+    "release_approved",
+    "release_rejected",
+    "release_live",
     "rollout_step_raised",
     "rollout_halted",
     "rollout_completed",
     "release_approval_needed",
     "release_failed",
     "qa_feedback",
+    "signing_expiring",
 ];
 
 fn validate_events(events: &[String]) -> Result<(), (StatusCode, Json<ApiError>)> {
@@ -281,6 +288,38 @@ fn validate_slack_mentions(
     })
 }
 
+/// A Slack channel ID as stored: trimmed, `None` when empty. Public
+/// channels start with C, private ones with G.
+fn validate_slack_channel_id(
+    channel_type: NotificationChannelType,
+    value: Option<&str>,
+) -> Result<Option<String>, (StatusCode, Json<ApiError>)> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if channel_type != NotificationChannelType::Slack {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "slack_channel_id is only allowed for slack channels",
+        ));
+    }
+    let valid = value.len() <= 24
+        && value.len() >= 9
+        && matches!(value.as_bytes()[0], b'C' | b'G')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit());
+    if !valid {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            format!("'{value}' is not a Slack channel ID (for example C0123ABCD)"),
+        ));
+    }
+    Ok(Some(value.to_string()))
+}
+
 /// Slack user IDs start with U (or W on Enterprise Grid) followed by
 /// uppercase letters and digits.
 fn is_slack_member_id(value: &str) -> bool {
@@ -352,6 +391,8 @@ pub async fn create_notification_channel(
 
     validate_events(&req.events)?;
     let slack_mentions_json = validate_slack_mentions(req.channel_type, &req.slack_mentions)?;
+    let slack_channel_id =
+        validate_slack_channel_id(req.channel_type, req.slack_channel_id.as_deref())?;
 
     let pool = &state.db;
     let project_id = validate_project_scope(pool, req.project_id.as_deref()).await?;
@@ -454,8 +495,8 @@ pub async fn create_notification_channel(
 
     sqlx::query(
         "INSERT INTO notification_channels \
-         (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, encrypted_secret, encrypted_config, created_by, created_at, updated_at, slack_mentions_json) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12)",
+         (id, name, channel_type, enabled, event_filter_json, project_id, encrypted_url, encrypted_secret, encrypted_config, created_by, created_at, updated_at, slack_mentions_json, slack_channel_id) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
     )
     .bind(&id)
     .bind(name)
@@ -469,6 +510,7 @@ pub async fn create_notification_channel(
     .bind(&auth.0.user_id)
     .bind(now)
     .bind(&slack_mentions_json)
+    .bind(&slack_channel_id)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -505,6 +547,7 @@ pub async fn create_notification_channel(
         url_host: None,
         smtp_summary: None,
         slack_mentions: parse_slack_mentions(slack_mentions_json.as_deref()),
+        slack_channel_id,
         created_by: Some(auth.0.user_id),
         created_at: now,
         updated_at: now,
@@ -717,6 +760,14 @@ pub async fn update_notification_channel(
             .flatten(),
     };
 
+    let slack_channel_id = match req.slack_channel_id.as_deref() {
+        Some(value) => validate_slack_channel_id(channel_type, Some(value))?,
+        None => existing
+            .try_get::<Option<String>, _>("slack_channel_id")
+            .ok()
+            .flatten(),
+    };
+
     let (encrypted_url, encrypted_secret, encrypted_config) = match channel_type {
         NotificationChannelType::Webhook
         | NotificationChannelType::Mattermost
@@ -894,7 +945,7 @@ pub async fn update_notification_channel(
         "UPDATE notification_channels \
          SET name = ?1, enabled = ?2, event_filter_json = ?3, \
              encrypted_url = ?4, encrypted_secret = ?5, encrypted_config = ?6, updated_at = ?7, \
-             project_id = ?9, slack_mentions_json = ?10 \
+             project_id = ?9, slack_mentions_json = ?10, slack_channel_id = ?11 \
          WHERE id = ?8",
     )
     .bind(name)
@@ -907,6 +958,7 @@ pub async fn update_notification_channel(
     .bind(&id)
     .bind(&project_id)
     .bind(&slack_mentions_json)
+    .bind(&slack_channel_id)
     .execute(pool)
     .await
     .map_err(|e| {
@@ -1263,6 +1315,21 @@ mod tests {
             identity: identity.to_string(),
             member_id: member_id.to_string(),
         }
+    }
+
+    #[test]
+    fn slack_channel_ids_are_checked() {
+        let slack = NotificationChannelType::Slack;
+        assert_eq!(
+            validate_slack_channel_id(slack, Some(" C0123ABCD ")).unwrap(),
+            Some("C0123ABCD".to_string())
+        );
+        assert_eq!(validate_slack_channel_id(slack, Some("")).unwrap(), None);
+        assert!(validate_slack_channel_id(slack, Some("#releases")).is_err());
+        assert!(validate_slack_channel_id(slack, Some("U0123ABCD")).is_err());
+        assert!(
+            validate_slack_channel_id(NotificationChannelType::Webhook, Some("C0123ABCD")).is_err()
+        );
     }
 
     #[test]

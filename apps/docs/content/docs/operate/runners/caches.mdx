@@ -38,18 +38,24 @@ environment:
 - `OORE_RUNNER_CACHE_MAX_GB` changes the limit, for example to `120`.
 - `OORE_RUNNER_CACHE_DIR` moves the caches, for example to a larger volume.
 
-A runner that the Complete or Runner profile manages runs as a launchd service
-with a fixed environment. `oore setup` and `oore update` verify that service
-definition and refuse to manage it when it has extra variables, so do not add
-these variables there. Set them only for a runner that you start yourself:
+Set them with [`oore runner config`](/reference/cli/oore-runner#oore-runner-config),
+which works for the runner service that the Complete or Runner profile
+manages, then restart the runner:
 
 ```bash
-OORE_RUNNER_CACHE_MAX_GB=120 \
-OORE_RUNNER_CACHE_DIR=/Volumes/Builds/oore-caches \
-oore runner start
+oore runner config set OORE_RUNNER_CACHE_MAX_GB 120
+oore runner config set OORE_RUNNER_CACHE_DIR /Volumes/Builds/oore-caches
+sudo launchctl kickstart -k system/build.oore.oore-runner
 ```
 
-To free space on a managed runner, purge the caches instead.
+A runner you start yourself can also take them as environment variables,
+which win over the settings file:
+
+```bash
+OORE_RUNNER_CACHE_MAX_GB=120 oore runner start
+```
+
+To free space without changing the limit, purge the caches.
 
 A pipeline variable with the same name as a cache variable, such as
 `PUB_CACHE`, overrides the runner's directory for that pipeline only.
@@ -78,7 +84,7 @@ build starts.
 
 - **Settings > Runners** shows the runner's cache size in the **Cache**
   column after each build.
-- After a purge, the next build of each project shows **miss** for every cache
+- After a purge, the next build of each app shows **miss** for every cache
   and downloads its dependencies again. The build after that shows **hit**.
 
 ## Troubleshooting
@@ -93,7 +99,7 @@ runner records a hash only after a successful build.
 
 The runner trims the caches only above the limit. Lower
 `OORE_RUNNER_CACHE_MAX_GB`, or purge the caches. VM builds also keep Xcode
-DerivedData and Android SDK packages in the cache directory. Each project that
+DerivedData and Android SDK packages in the cache directory. Each app that
 builds in a VM also keeps a warm image. It holds the same caches on the VM disk
 and starts again from the plain image every
 `OORE_TART_WARM_IMAGE_MAX_AGE_DAYS`.

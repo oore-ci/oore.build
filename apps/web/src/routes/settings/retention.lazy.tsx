@@ -124,7 +124,7 @@ function EnabledRetentionFields({
             name="max_builds_per_project"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Max builds per project</FormLabel>
+                <FormLabel>Max builds per app</FormLabel>
                 <FormControl>
                   <Input
                     type="number"
@@ -144,7 +144,7 @@ function EnabledRetentionFields({
             name="max_artifact_size_mb"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Max artifact storage per project (MB)</FormLabel>
+                <FormLabel>Max artifact storage per app (MB)</FormLabel>
                 <FormControl>
                   <Input
                     type="number"

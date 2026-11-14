@@ -49,8 +49,20 @@ repository list has not appeared yet.
 ## Verify the result
 
 The GitHub source appears under **Sources** with an active status. Its details
-show the installation and the selected repositories. Open **Projects**,
-select **New project**, and confirm one of those repositories is available.
+show the installation and the selected repositories. Open **Apps**,
+select **New app**, and confirm one of those repositories is available.
+
+## Build results on pull requests
+
+For a build started by a pull request, Oore adds a commit check and one
+comment on the pull request. The comment says whether the build passed, and
+links to the build and its install page, so reviewers can try the change on a
+phone. Later builds of the same pull request update that comment instead of
+adding new ones.
+
+The comment needs the **Pull requests: Read and write** permission. A GitHub
+App created before this feature asks the organization owner to accept the new
+permission on GitHub; until then, Oore reports checks only.
 
 ## Troubleshooting
 
@@ -76,5 +88,5 @@ check the pipeline event, branch filter, and immutable repository revision.
 
 ## Next step
 
-[Create a project](/build/projects/create) from a repository in the connected
+[Create an app](/build/projects/create) from a repository in the connected
 source.

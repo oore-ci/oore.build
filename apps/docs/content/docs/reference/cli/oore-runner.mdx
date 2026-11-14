@@ -65,3 +65,26 @@ Other installations refuse it. If the runner service or its config does not matc
 Stops and removes the macOS runner service that `install-service` created.
 
 A profile installation refuses this command. Run `oore uninstall` to remove the whole role.
+
+## `oore runner config`
+
+```text
+oore runner config show [--config <PATH>]
+oore runner config set <KEY> <VALUE> [--config <PATH>]
+oore runner config unset <KEY> [--config <PATH>]
+```
+
+Shows or changes the runner settings in `runner.env`, next to the runner's
+`runner.json`. `--config` defaults to the installed runner's config. The keys
+are the runner variables in [Runner settings](/reference/config/runner#environment-variables),
+such as `OORE_RUNNER_CACHE_MAX_GB` and `OORE_TART_IMAGE`. Any other key is
+refused.
+
+The file belongs to the account that owns `runner.json` and only that account
+can read it. The runner reads it when it starts, and a variable already in
+its environment wins. Restart the runner after a change:
+
+```bash
+oore runner config set OORE_TART_IMAGE_MAX_AGE_DAYS 14
+sudo launchctl kickstart -k system/build.oore.oore-runner
+```

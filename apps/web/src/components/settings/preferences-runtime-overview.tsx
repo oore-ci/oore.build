@@ -50,6 +50,12 @@ export function RuntimeOverview({
       ? runtimeUpdates.backendUpdate.data.error
       : null
   const frontendRelease = runtimeUpdates.frontendRelease.data
+  // A frontend left behind the backend (an update cut short) can always
+  // catch up to the backend's release, even when its own check is stale.
+  const frontendCatchUp = runtimeUpdates.frontendBehind
+  const frontendUpdateShown =
+    frontendCatchUp ||
+    (runtimeUpdates.frontendOffered && !!frontendRelease?.update_available)
 
   return (
     <SettingsSection title="Runtime">
@@ -67,17 +73,16 @@ export function RuntimeOverview({
                   ? `${webHealthQuery.data.channel} channel`
                   : 'Loaded oore-web bundle'}
               </ItemDescription>
-              {runtimeUpdates.frontendOffered &&
-              runtimeUpdates.frontendRelease.data?.update_available ? (
+              {frontendUpdateShown && frontendRelease ? (
                 <>
                   <ItemDescription className="line-clamp-none text-foreground">
-                    {runtimeUpdates.frontendRelease.data.latest_version} is
-                    available
+                    {frontendCatchUp
+                      ? `Behind the backend, which runs ${backendHealthQuery.data?.version ?? 'a newer release'}. Update the frontend to match it.`
+                      : `${frontendRelease.latest_version} is available`}
                   </ItemDescription>
-                  {!runtimeUpdates.frontendRelease.data.managed_service ? (
+                  {!frontendRelease.managed_service ? (
                     <ItemDescription className="line-clamp-none">
-                      {runtimeUpdates.frontendRelease.data
-                        .managed_service_reason ||
+                      {frontendRelease.managed_service_reason ||
                         'Install oore-web as a managed service to update it here.'}
                     </ItemDescription>
                   ) : null}
@@ -90,14 +95,13 @@ export function RuntimeOverview({
                 </ItemDescription>
               ) : null}
             </ItemContent>
-            {runtimeUpdates.frontendOffered &&
-            runtimeUpdates.frontendRelease.data?.update_available ? (
+            {frontendUpdateShown && frontendRelease ? (
               <ItemActions>
                 <Button
                   size="sm"
                   disabled={
                     !isOwner ||
-                    !runtimeUpdates.frontendRelease.data.managed_service ||
+                    !frontendRelease.managed_service ||
                     runtimeUpdateActive(frontendUpdatePhase) ||
                     runtimeUpdates.startFrontendUpdate.isPending
                   }

@@ -13,7 +13,7 @@ daemon.
 
 ## What you need
 
-- Project developer, maintainer, instance admin, or instance owner access.
+- App developer, maintainer, instance admin, or instance owner access.
   Storing a shared instance secret needs instance admin or owner access.
 - An app that already exists in Play Console, with one release uploaded by
   hand. Google Play does not let the API create an app or upload its first
@@ -22,7 +22,7 @@ daemon.
 - A pipeline that builds a release App Bundle and signs it with your upload
   key, from the pipeline's signing settings
   ([Add Android signing](/build/sign/android)) or an Android keystore in the
-  [project's signing library](/build/sign/project-library).
+  [app's signing library](/build/sign/project-library).
 - A Google Cloud service account with a JSON key, invited in Play Console
   under **Users and permissions** with release permissions for the app.
 - Outbound HTTPS from the runner host to `oauth2.googleapis.com` and
@@ -36,10 +36,10 @@ all your apps are in one Play Console developer account, store it once as an
 instance secret: open **Settings > Store credentials** and, under
 **Google Play service account**, select **Add service account**. New
 pipelines then choose it on the **Publishing** tab without another upload. A
-project or pipeline secret with the same name overrides it.
+app or pipeline secret with the same name overrides it.
 
-From the API, any scope works. A project secret is shared by all of the
-project's pipelines:
+From the API, any scope works. An app secret is shared by all of the
+app's pipelines:
 
 ```bash
 jq -n --rawfile value play-service-account.json \
@@ -62,7 +62,9 @@ rotation.
 4. Under **Release**, choose the **Track** and the **Rollout**:
    **Full rollout**, **Staged rollout** with an **Initial rollout (%)**, or
    **Draft**. Choose the **Release notes** source.
-5. Under **Advanced**, enter the app's application ID in **Expected package**.
+5. Under **Advanced**, enter the app's application ID in **Expected package**,
+   and choose **Pre-flight checks**: whether Google Play's validation of the
+   release stops the upload, only warns, or is skipped.
 6. Select **Turn on Google Play publishing**, or **Save changes** when
    publishing was already on.
 
@@ -92,21 +94,25 @@ curl -X PUT "$OORE_URL/v1/pipelines/$PIPELINE_ID/publish/google-play" \
 The response includes `service_account_secret_present`, which is `false` until
 the named secret exists in a scope this pipeline can see.
 
-| Field                    | Default | Meaning                                                                                                                                        |
-| ------------------------ | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled`                | `false` | Upload after each successful build of this pipeline.                                                                                           |
-| `service_account_secret` |         | Name of the secret holding the service account JSON key.                                                                                       |
-| `track`                  |         | `internal`, `closed`, `open`, `production`, or the name of a custom closed track. `closed` is Play's `alpha` and `open` is `beta`.             |
-| `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                          |
-| `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts. |
-| `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                 |
-| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                     |
-| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                          |
-| `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                         |
-| `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                           |
-| `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                |
+| Field                    | Default | Meaning                                                                                                                                                                     |
+| ------------------------ | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled`                | `false` | Upload after each successful build of this pipeline.                                                                                                                        |
+| `service_account_secret` |         | Name of the secret holding the service account JSON key.                                                                                                                    |
+| `track`                  |         | `internal`, `closed`, `open`, `production`, or the name of a custom closed track. `closed` is Play's `alpha` and `open` is `beta`.                                          |
+| `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                                                       |
+| `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts.                              |
+| `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                                              |
+| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                                                  |
+| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                                                       |
+| `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                                                      |
+| `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                                                        |
+| `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                                             |
+| `preflight`              | `auto`  | What a failed `edits.validate` check does before the commit: `auto`, `block`, `warn` or `off`. `auto` blocks once the app has had a release on Play, and warns before that. |
 
-Release notes longer than Play's 500-character limit are shortened.
+Release notes longer than Play's 500-character limit are shortened. Notes
+typed in **What's new in this release** when a build starts replace these
+notes for that build, under `release_notes_locale`; see
+[Notes for one release](/build/distribute/app-store#notes-for-one-release).
 
 ## 3. Test the credentials
 
@@ -159,6 +165,13 @@ If any earlier step fails, nothing is uploaded. If a Play call fails, the
 **Upload to Google Play** step fails with the Play API's error text, and the edit is
 discarded so nothing is left half-staged in Play Console.
 
+A release Google Play holds or refuses says what is wrong in one sentence
+when Oore knows the refusal, such as changes waiting to be sent for review or
+a service account without release access, with a button to the Play Console
+page that fixes it. A rollout Oore runs draws its schedule as steps, with
+where it is now, when the next raise happens and the crash rate that halts
+it.
+
 After fixing the cause, such as a missing Play Console permission,
 [retry the upload](/build/run/retry-step) to upload the stored bundle without
 building again.
@@ -196,38 +209,61 @@ workflows:
   needs no Google Play settings in the pipeline. Without it, turn the
   pipeline's Google Play upload on as in [step 2](#2-configure-publishing).
 - `signing.android` names the keystore that signs the bundle, from the
-  [project's signing library](/build/sign/project-library). Without it, the
+  [app's signing library](/build/sign/project-library). Without it, the
   pipeline's Android signing applies.
 - To stop one workflow's uploads without a commit, open the pipeline's
   **Workflows** tab, select **Settings** on the workflow, and turn
   **Publishing** off.
 
 `oore pipeline validate --project "$PROJECT_ID"` checks that the keystore and
-the secret exist in the project before you push, and `oore pipeline plan`
+the secret exist in the app before you push, and `oore pipeline plan`
 prints the track, identity and secret each workflow uses. Every field is in
 [Publish](/reference/config/oore-yaml-v2#publish), and the per-workflow
 switches in [Workflow settings](/reference/config/pipeline-settings#workflow-settings).
 
-## Store health on Home
+## Store listing from the repository
 
-Home lists every app a pipeline publishes to Google Play: each package named
+To keep the title and descriptions in Git, set **Store listing from the
+repository** under the pipeline's Google Play advanced settings to a
+directory in fastlane's layout, such as `fastlane/metadata/android`:
+
+```text
+fastlane/metadata/android/
+  en-US/
+    title.txt              # at most 30 characters
+    short_description.txt  # at most 80 characters
+    full_description.txt   # at most 4000 characters
+    video.txt              # a YouTube URL
+  de-DE/
+    short_description.txt
+```
+
+Each upload sends the listing in the same Play edit as the bundle, so the
+listing changes when the release does. A file you leave out keeps what Play
+Console has. A file over Play's limit fails the upload before anything is
+sent, so a title is never cut short. Screenshots and graphics are not
+uploaded; change them in Play Console.
+
+## Store health on Insights
+
+**Insights** lists every app a pipeline publishes to Google Play: each package named
 in a pipeline's **Expected package**, or reached by a passing **Test credentials**
 check, and each package Oore has released. A pipeline that sets neither and
-has not released yet does not name an app, so Home cannot list it; fill in
+has not released yet does not name an app, so Insights cannot list it; fill in
 **Expected package** to add it.
 
 For each app, the daemon reads the user-perceived crash rate and ANR rate over
 the last 28 days from the Play Developer Reporting API, with the top crash and
-ANR clusters. Home shows them against Google Play's bad-behavior thresholds of
+ANR clusters. Insights shows them against Google Play's bad-behavior thresholds of
 1.09% and 0.47%. The numbers refresh every six hours with the service account
 of the pipeline that made the newest release, or, before the first release,
 the pipeline whose Google Play settings were saved last.
 
 The service account needs **View app information** for the app in Play
 Console, and the daemon host needs outbound HTTPS to
-`playdeveloperreporting.googleapis.com`. Without them, Home shows why the
+`playdeveloperreporting.googleapis.com`. Without them, Insights shows why the
 numbers could not be read. A failed read is retried after 15 minutes; after
-fixing access, choose **Refresh** in Store health to read the store at once.
+fixing access, choose **Check stores** in Store health on Insights to read the store at once.
 
 ## Troubleshooting
 
@@ -242,6 +278,20 @@ highest version code on Google Play, and pass
 Fix the cause, such as a missing Play Console permission, then
 [retry the upload](/build/run/retry-step). The stored bundle is uploaded
 again without rebuilding.
+
+**The release is Blocked with "send it for review in Play Console"**
+
+Google holds some changes until you send them for review yourself, and the
+commit only succeeds with that hold. Open **Publishing overview** in Play
+Console and select **Send changes for review**, then choose **Mark sent for
+review** on the release. When Google rejects it, choose **Mark rejected**.
+
+**A rollout shows "No schedule"**
+
+The release was made in Play Console, not by Oore, so Oore does not raise it.
+Raise it in Play Console, or choose **Manage rollout with Oore** on the
+release to attach the pipeline's rollout schedule. The confirmation lists each
+step Oore will take and when. **Stop scheduled steps** detaches it again.
 
 **Test credentials fails**
 
