@@ -6,7 +6,7 @@ import type {
   ReleasePolicy,
   UpdateProjectEnvironmentRequest,
 } from '@oore/client/models'
-import { approversSummary } from '@/lib/environments'
+import { approversSummary, playTrackStagesRollouts } from '@/lib/environments'
 import { ago } from '../seed'
 import type { DemoEnvironment, DemoPromotion } from '../data/environments'
 import type { DemoRelease } from '../data/releases'
@@ -173,7 +173,9 @@ function promote(
   // An App Store version waits for App Review; TestFlight testers have it at once.
   const inReview = appStore && environment.track === 'app_store'
   const first =
-    appStore || environment.track === 'internal' ? 1 : (steps.at(0) ?? 1)
+    appStore || !playTrackStagesRollouts(environment.track)
+      ? 1
+      : (steps.at(0) ?? 1)
   const release: DemoRelease = {
     ...source,
     id: `rel-demo-promoted-${Date.now()}`,
