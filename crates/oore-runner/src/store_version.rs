@@ -258,7 +258,7 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(error.contains("pubspec.yaml"), "{error}");
-        assert!(error.contains("at least 132"), "{error}");
+        assert!(error.contains("to 132 or higher"), "{error}");
         assert!(!error.contains("build_number_offset"), "{error}");
     }
 
