@@ -8,7 +8,7 @@ import type {
   ReleasePolicy,
 } from '@oore/client/models'
 import type { BadgeVariant } from '@/components/ui/badge'
-import { RELEASE_STORE_LABEL } from '@/lib/releases'
+import { releaseDestinationLabel } from '@/lib/releases'
 
 export const ENVIRONMENT_KEY_PATTERN = /^[a-z][a-z0-9-]*$/
 export const ENVIRONMENT_KEY_MAX_LENGTH = 32
@@ -34,14 +34,6 @@ export function getPromotionStateVariant(state: PromotionState): BadgeVariant {
   return PROMOTION_STATE_VARIANT[state]
 }
 
-/** Play track names as Play Console shows them. */
-const PLAY_TRACK_LABEL = new Map([
-  ['internal', 'Internal testing'],
-  ['closed', 'Closed testing'],
-  ['open', 'Open testing'],
-  ['production', 'Production'],
-])
-
 /**
  * Whether Google Play runs staged rollouts on a track. Play stages only
  * production and open testing; internal, closed and custom tracks release to
@@ -54,11 +46,7 @@ export function playTrackStagesRollouts(track: string): boolean {
 export function environmentTargetLabel(
   environment: Pick<ProjectEnvironment, 'store' | 'track'>,
 ): string {
-  const track =
-    environment.store === 'google_play'
-      ? (PLAY_TRACK_LABEL.get(environment.track) ?? environment.track)
-      : environment.track
-  return `${RELEASE_STORE_LABEL[environment.store]} · ${track}`
+  return releaseDestinationLabel(environment)
 }
 
 function trimPercent(fraction: number): string {

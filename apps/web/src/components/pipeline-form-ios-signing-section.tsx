@@ -440,7 +440,8 @@ function IosApiKeyFields({
   const sharedKey = keys.find((key) => key.id === source)
   const manageLink = canManageKeys ? (
     <Link
-      to="/settings/store-credentials"
+      to="/settings/secrets"
+      hash="store-credentials"
       className="underline underline-offset-4"
     >
       Store credentials

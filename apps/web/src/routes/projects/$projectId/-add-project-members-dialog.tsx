@@ -402,7 +402,7 @@ export function AddProjectMembersDialog({ projectId }: { projectId: string }) {
             ) : null}
             {alreadyMembers.length > 0 ? (
               <p className={textVariants({ variant: 'caption' })}>
-                Already on this project: {alreadyMembers.join(', ')}
+                Already on this app: {alreadyMembers.join(', ')}
               </p>
             ) : null}
           </div>

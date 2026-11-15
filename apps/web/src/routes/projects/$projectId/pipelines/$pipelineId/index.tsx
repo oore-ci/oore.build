@@ -889,7 +889,7 @@ function PipelineDetailPage() {
           {canDelete ? (
             <DangerZone
               title="Delete this pipeline"
-              description={`Permanently removes "${pipeline.name}" and its configuration from this project. This cannot be undone.`}
+              description={`Permanently removes "${pipeline.name}" and its configuration from this app. This cannot be undone.`}
               action={
                 <Button
                   variant="destructive"

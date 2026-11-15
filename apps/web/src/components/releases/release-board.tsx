@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 
 import type { ListReleasesResponse, Release } from '@oore/client/models'
@@ -96,11 +97,14 @@ function ReleaseRow({
   layout,
   nowSeconds,
   release,
+  showApp,
   storeAnchor,
 }: {
   layout: ReleaseBoardLayout
   nowSeconds: number
   release: Release
+  /** Off inside one app's page, where every row is the same app. */
+  showApp: boolean
   storeAnchor?: string
 }) {
   const identity = (
@@ -110,13 +114,30 @@ function ReleaseRow({
         params={{ releaseId: release.id }}
         className="truncate text-sm font-medium underline-offset-4 hover:underline"
       >
-        {releaseAppName(release)}
+        {showApp ? (
+          releaseAppName(release)
+        ) : (
+          <>
+            {releaseDestinationLabel(release)} ·{' '}
+            <span className="tabular-nums">{releaseVersionLabel(release)}</span>
+          </>
+        )}
       </Link>
-      <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
-        {releaseDestinationLabel(release)} ·{' '}
-        <span className="tabular-nums">{releaseVersionLabel(release)}</span>
-        {isAdoptedRelease(release) ? ' · found in store' : ''}
-      </span>
+      {showApp || isAdoptedRelease(release) ? (
+        <span className={cn(textVariants({ variant: 'caption' }), 'truncate')}>
+          {showApp ? (
+            <>
+              {releaseDestinationLabel(release)} ·{' '}
+              <span className="tabular-nums">
+                {releaseVersionLabel(release)}
+              </span>
+              {isAdoptedRelease(release) ? ' · found in store' : ''}
+            </>
+          ) : (
+            'Found in store'
+          )}
+        </span>
+      ) : null}
     </div>
   )
   const nextStep = (
@@ -176,10 +197,13 @@ export type ReleaseBoardLayout = 'row' | 'stacked'
  * Home, or one project's on its overview.
  */
 export function ReleaseBoard({
+  empty = null,
   layout = 'row',
   projectId,
   title = 'Releases',
 }: {
+  /** Shown instead of nothing when no release is live. */
+  empty?: ReactNode
   layout?: ReleaseBoardLayout
   projectId?: string
   title?: string
@@ -198,7 +222,7 @@ export function ReleaseBoard({
   const sync = useSyncStoreReleases()
 
   // Nothing live and nothing broken: stay out of the way.
-  if (releasesQuery.isSuccess && releases.length === 0) return null
+  if (releasesQuery.isSuccess && releases.length === 0) return empty
 
   function syncStores() {
     sync.mutate(projectId, {
@@ -262,6 +286,7 @@ export function ReleaseBoard({
                   layout={layout}
                   nowSeconds={nowSeconds}
                   release={release}
+                  showApp={!projectId}
                   storeAnchor={storeAnchors.has(anchor) ? anchor : undefined}
                 />
               ),

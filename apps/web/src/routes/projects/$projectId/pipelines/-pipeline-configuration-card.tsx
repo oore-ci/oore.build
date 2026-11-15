@@ -140,7 +140,7 @@ export function PipelineConfigurationCard({
           </Section>
         ) : null}
         <Section title="Configuration" defaultOpen>
-          <KV label="Config path">
+          <KV label="Pipeline file">
             <span className="font-mono">
               {pipeline.health?.path ?? pipeline.config_path}
             </span>
@@ -221,7 +221,7 @@ export function PipelineConfigurationCard({
           </KV>
         </Section>
 
-        <Section title="Execution config">
+        <Section title="Build commands">
           <KV label="Pre-build">
             <span className="font-mono">
               {pipeline.execution_config.commands.pre_build.length > 0

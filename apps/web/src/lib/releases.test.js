@@ -48,7 +48,7 @@ describe('store wait', () => {
     )
     expect(
       releaseDestinationLabel({ store: 'google_play', track: 'production' }),
-    ).toBe('Google Play · production')
+    ).toBe('Google Play · Production')
     expect(releaseStatusPhrase(appStore)).toBe('App Store processing')
     expect(releaseStatusPhrase({ ...appStore, track: 'QA' })).toBe(
       'TestFlight processing',
