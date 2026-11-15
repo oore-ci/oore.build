@@ -442,12 +442,21 @@ async fn upload_ipa_with(
             tokio::time::sleep(retry_delay).await;
             continue;
         }
+        let hint = if is_duplicate_upload(&combined) {
+            DUPLICATE_BUILD_HINT
+        } else {
+            ""
+        };
         anyhow::bail!(
-            "App Store Connect upload failed: {}",
+            "App Store Connect upload failed: {}{hint}",
             summarize_altool_failure(&stdout, &stderr)
         );
     }
 }
+
+/// How to fix a build number Apple already has, for either way of
+/// numbering builds.
+const DUPLICATE_BUILD_HINT: &str = ". Bump the +N in pubspec.yaml and commit it. If the build sets this number with --build-number=$OORE_VERSION_CODE, raise build_number_offset instead";
 
 /// Has App Store Connect validate the signed IPA without uploading it, for
 /// a release rehearsal. `Err` carries Apple's reasons.
@@ -1135,6 +1144,7 @@ exit 1"#,
         .unwrap_err()
         .to_string();
         assert!(error.contains("Redundant Binary Upload"), "{error}");
+        assert!(error.contains("pubspec.yaml"), "{error}");
         let _ = fs::remove_dir_all(dir);
     }
 
