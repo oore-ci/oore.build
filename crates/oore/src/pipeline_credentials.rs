@@ -1,6 +1,7 @@
-//! The credentials a `.oore.yaml` version 2 file names. `oore pipeline plan`
-//! prints them per workflow, and `oore pipeline validate --project` checks
-//! them against the project's signing library and secrets.
+//! The credentials a `.oore.yaml` file names. `oore pipeline plan` prints
+//! them per workflow, and `oore pipeline validate --project` checks them, and
+//! every `${{ secrets.NAME }}` reference, against the project's signing
+//! library and secrets.
 //!
 //! The file only names credentials. Which identity a build really signs with
 //! can still change in Oore: a pipeline's workflow settings can pick another
@@ -12,7 +13,7 @@ use std::collections::BTreeSet;
 use oore_contract::{
     BuildPlatform, IosExportMethod, ListSecretsResponse, ListSigningIdentitiesResponse,
     PipelineDetailResponse, PipelinePlan, PlanRequest, RepositoryConfig, SigningIdentity,
-    SigningIdentityKind,
+    SigningIdentityKind, parse_secret_references,
 };
 
 use crate::build_commands::{Api, ApiConnectionArgs};
@@ -86,6 +87,32 @@ pub(crate) fn named_secrets(plan: &PipelinePlan) -> Vec<NamedSecret> {
             })
         })
         .into_iter()
+        .collect()
+}
+
+/// The `${{ secrets.NAME }}` references in a plan's commands and env values,
+/// which the runner resolves when the build starts.
+pub(crate) fn referenced_secrets(plan: &PipelinePlan) -> Vec<NamedSecret> {
+    let commands = plan
+        .steps
+        .iter()
+        .map(|step| (step.source.clone(), step.run.as_str()));
+    let env = plan
+        .env
+        .iter()
+        .map(|pair| (format!("env.{}", pair.key), pair.value.as_str()));
+    commands
+        .chain(env)
+        .flat_map(|(field, text)| {
+            // Malformed expressions already failed the file's validation.
+            parse_secret_references(text)
+                .unwrap_or_default()
+                .into_iter()
+                .map(move |reference| NamedSecret {
+                    name: reference.name,
+                    field: field.clone(),
+                })
+        })
         .collect()
 }
 
@@ -267,7 +294,10 @@ pub(crate) fn check_credentials(
                 );
             }
         }
-        for named in named_secrets(plan) {
+        for named in named_secrets(plan)
+            .into_iter()
+            .chain(referenced_secrets(plan))
+        {
             secrets.insert(named.name.clone());
             if project.secrets.contains(&named.name) {
                 continue;
@@ -649,6 +679,79 @@ workflows:
         assert_eq!(
             outcome.notes,
             vec!["workflows.release.targets.android.publish.play.service_account names secret 'PLAY_RELEASE', which is not a project secret; this session cannot list instance secrets, so it was not checked there".to_string()]
+        );
+    }
+
+    #[test]
+    fn validate_checks_secret_references_in_commands_and_env() {
+        let config = parse_repository_config(
+            "version: 2
+targets:
+  android:
+    build: flutter build apk --dart-define=DSN=${{ secrets.SENTRY_DSN }}
+steps:
+  - name: Get packages
+    run: flutter pub get
+  - name: Codegen
+    run: echo ${{ secrets.PUB_TOKEN }} && echo ${{secrets.SENTRY_DSN}}
+  - build
+env:
+  TOKEN: ${{ secrets.API_TOKEN }}
+workflows:
+  adhoc: {}
+  release:
+    env:
+      TOKEN: ${{ secrets.RELEASE_TOKEN }}
+",
+        )
+        .unwrap();
+        let plans = plan_every_workflow(&config).unwrap();
+        let project = ProjectCredentials {
+            secrets: BTreeSet::from(["SENTRY_DSN".to_string(), "API_TOKEN".to_string()]),
+            pipeline_listed: true,
+            instance_listed: true,
+            ..ProjectCredentials::default()
+        };
+        let outcome = check_credentials(&config, &plans, &project, "proj-1");
+        assert_eq!(
+            outcome.errors,
+            vec![
+                // Named by both workflows, reported once.
+                "steps[1].run names secret 'PUB_TOKEN', which is not a project, pipeline or instance secret".to_string(),
+                "env.TOKEN names secret 'RELEASE_TOKEN', which is not a project, pipeline or instance secret".to_string(),
+            ]
+        );
+        assert_eq!(outcome.secrets_checked, 4);
+
+        let held = ProjectCredentials {
+            secrets: ["SENTRY_DSN", "API_TOKEN", "PUB_TOKEN", "RELEASE_TOKEN"]
+                .map(String::from)
+                .into(),
+            instance_listed: true,
+            ..ProjectCredentials::default()
+        };
+        let outcome = check_credentials(&config, &plans, &held, "proj-1");
+        assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+        assert_eq!(
+            checked_summary(&outcome),
+            "0 signing identities and 4 secrets"
+        );
+    }
+
+    #[test]
+    fn version_1_files_have_their_secret_references_checked() {
+        let config = parse_repository_config(
+            "version: 1\nplatforms: [android]\ncommands:\n  build: ['flutter build apk --dart-define=DSN=${{ secrets.SENTRY_DSN }}']\n",
+        )
+        .unwrap();
+        let plans = plan_every_workflow(&config).unwrap();
+        let outcome = check_credentials(&config, &plans, &ProjectCredentials::default(), "p");
+        assert_eq!(outcome.secrets_checked, 1);
+        assert_eq!(outcome.notes.len(), 1, "{:?}", outcome.notes);
+        assert!(
+            outcome.notes[0].contains("'SENTRY_DSN'"),
+            "{:?}",
+            outcome.notes
         );
     }
 
