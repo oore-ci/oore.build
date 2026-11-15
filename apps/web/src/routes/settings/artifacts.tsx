@@ -28,6 +28,8 @@ import { resolveInstanceApiBaseUrl } from '@/lib/instance-url'
 import { PageMeta } from '@/lib/seo'
 import { toast } from '@/lib/toast'
 import { useActiveInstance } from '@/stores/instance-store'
+import { RetentionSettings } from '@/components/settings/retention-settings'
+import { Stack } from '@/components/layout/stack'
 
 const loadArtifactFolderPicker = () =>
   import('@/components/LocalFolderPickerDialog')
@@ -36,7 +38,7 @@ const ArtifactFolderPicker = lazy(loadArtifactFolderPicker)
 export const Route = createFileRoute('/settings/artifacts')({
   staticData: {
     breadcrumb: {
-      title: 'Artifact storage',
+      title: 'Storage',
     },
   },
   beforeLoad: (context) => {
@@ -191,21 +193,24 @@ function ArtifactStoragePage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Artifact storage" noindex />
-      <PageHeader title="Artifact storage" />
-      <ArtifactStorageSettings
-        backendKind={backendKind}
-        canBrowseLocalFs={canBrowseLocalFs}
-        canWrite={canWrite}
-        error={settingsQuery.error}
-        form={storageForm}
-        isLoading={settingsQuery.isLoading}
-        isSaving={updateStorageMutation.isPending}
-        onOpenFolderPicker={() => setArtifactDirPickerOpen(true)}
-        onRetry={() => void settingsQuery.refetch()}
-        onSubmit={onSubmitStorage}
-        settings={settings}
-      />
+      <PageMeta title="Storage" noindex />
+      <PageHeader title="Storage" />
+      <Stack gap={10}>
+        <ArtifactStorageSettings
+          backendKind={backendKind}
+          canBrowseLocalFs={canBrowseLocalFs}
+          canWrite={canWrite}
+          error={settingsQuery.error}
+          form={storageForm}
+          isLoading={settingsQuery.isLoading}
+          isSaving={updateStorageMutation.isPending}
+          onOpenFolderPicker={() => setArtifactDirPickerOpen(true)}
+          onRetry={() => void settingsQuery.refetch()}
+          onSubmit={onSubmitStorage}
+          settings={settings}
+        />
+        <RetentionSettings />
+      </Stack>
       {artifactDirPickerOpen ? (
         <Suspense fallback={null}>
           <ArtifactFolderPicker

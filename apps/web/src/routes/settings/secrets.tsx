@@ -8,7 +8,7 @@ import {
 export const Route = createFileRoute('/settings/secrets')({
   staticData: {
     breadcrumb: {
-      title: 'Secrets',
+      title: 'Secrets and credentials',
     },
   },
   beforeLoad: (context) => {

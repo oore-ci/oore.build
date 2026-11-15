@@ -94,7 +94,7 @@ export function GooglePlayServiceAccountPanel({
         <Link to="/settings/secrets" className="underline underline-offset-4">
           instance secrets
         </Link>
-        . A project or pipeline secret with the same name overrides it.{' '}
+        . An app or pipeline secret with the same name overrides it.{' '}
         <a
           href="https://docs.oore.build/build/distribute/google-play#1-store-the-service-account-key-as-a-secret"
           target="_blank"

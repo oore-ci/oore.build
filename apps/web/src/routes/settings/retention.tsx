@@ -1,18 +1,12 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import {
-  getActiveInstanceOrRedirect,
-  requireInstanceRoleOrRedirect,
-} from '@/lib/instance-context'
-
+/** Retention is a section of the Storage page now. */
 export const Route = createFileRoute('/settings/retention')({
-  staticData: {
-    breadcrumb: {
-      title: 'Retention',
-    },
-  },
-  beforeLoad: (context) => {
-    const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
+  beforeLoad: () => {
+    throw redirect({
+      to: '/settings/artifacts',
+      hash: 'retention',
+      replace: true,
+    })
   },
 })

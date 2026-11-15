@@ -1,18 +1,12 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import {
-  getActiveInstanceOrRedirect,
-  requireInstanceRoleOrRedirect,
-} from '@/lib/instance-context'
-
+/** Store credentials are a section of the Secrets and credentials page now. */
 export const Route = createFileRoute('/settings/store-credentials')({
-  staticData: {
-    breadcrumb: {
-      title: 'Store credentials',
-    },
-  },
-  beforeLoad: (context) => {
-    const instance = getActiveInstanceOrRedirect()
-    requireInstanceRoleOrRedirect(instance.id, ['owner', 'admin'], context)
+  beforeLoad: () => {
+    throw redirect({
+      to: '/settings/secrets',
+      hash: 'store-credentials',
+      replace: true,
+    })
   },
 })

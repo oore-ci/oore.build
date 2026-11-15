@@ -59,12 +59,13 @@ function IdentityValue({
   if (!id)
     return (
       <Text variant="muted" render={<span />}>
-        From the file
         {fileName ? (
           <>
-            : <Mono>{fileName}</Mono>
+            <Mono>{fileName}</Mono> (from the file)
           </>
-        ) : null}
+        ) : (
+          'From the file'
+        )}
       </Text>
     )
   const identity = identities.get(id)
@@ -82,7 +83,7 @@ function publishingValue(row: WorkflowRow): ReactNode {
   if (count === 0)
     return (
       <Text variant="muted" render={<span />}>
-        None in the file
+        No uploads
       </Text>
     )
   return count === 1 ? '1 upload' : `${count} uploads`
@@ -94,7 +95,7 @@ function approvalValue(row: WorkflowRow): ReactNode {
   if (required === false) return 'Not required'
   return (
     <Text variant="muted" render={<span />}>
-      Pipeline policy
+      Follows the pipeline
     </Text>
   )
 }

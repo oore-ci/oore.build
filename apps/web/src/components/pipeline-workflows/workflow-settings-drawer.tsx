@@ -140,7 +140,7 @@ function IdentityField({
           [
             FOLLOW_FILE,
             fileName
-              ? `From the file: ${fileName}`
+              ? `${fileName} (from the file)`
               : 'From the file, or the pipeline’s signing',
           ],
           ...choices.map((identity): [string, string] => [
@@ -191,7 +191,7 @@ function IdentityField({
                     hash="signing"
                     className="underline underline-offset-4"
                   >
-                    Project settings &gt; Signing
+                    App settings &gt; Signing
                   </Link>
                   .
                 </>

@@ -9,6 +9,7 @@ import type {
 } from '@oore/client/models'
 import type { BadgeVariant } from '@/components/ui/badge'
 import { RELEASE_STORE_LABEL } from '@/lib/releases'
+import { playTrackLabel } from '@/lib/store-destination'
 
 export const ENVIRONMENT_KEY_PATTERN = /^[a-z][a-z0-9-]*$/
 export const ENVIRONMENT_KEY_MAX_LENGTH = 32
@@ -34,22 +35,17 @@ export function getPromotionStateVariant(state: PromotionState): BadgeVariant {
   return PROMOTION_STATE_VARIANT[state]
 }
 
-/** Play track names as Play Console shows them. */
-const PLAY_TRACK_LABEL = new Map([
-  ['internal', 'Internal testing'],
-  ['closed', 'Closed testing'],
-  ['open', 'Open testing'],
-  ['production', 'Production'],
-])
-
 export function environmentTargetLabel(
   environment: Pick<ProjectEnvironment, 'store' | 'track'>,
 ): string {
-  const track =
-    environment.store === 'google_play'
-      ? (PLAY_TRACK_LABEL.get(environment.track) ?? environment.track)
-      : environment.track
-  return `${RELEASE_STORE_LABEL[environment.store]} · ${track}`
+  if (environment.store === 'app_store') {
+    // The App Store version is "app_store"; anything else is a TestFlight
+    // group.
+    return environment.track === 'app_store'
+      ? RELEASE_STORE_LABEL.app_store
+      : `TestFlight · ${environment.track}`
+  }
+  return `${RELEASE_STORE_LABEL.google_play} · ${playTrackLabel(environment.track)}`
 }
 
 function trimPercent(fraction: number): string {
