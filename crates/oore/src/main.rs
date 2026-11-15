@@ -892,8 +892,9 @@ struct PipelineValidateArgs {
     /// Repository pipeline file to validate.
     #[arg(default_value = ".oore.yaml")]
     path: PathBuf,
-    /// Also check the signing identities and secrets the file names against
-    /// this project, with the stored session.
+    /// Also check the signing identities and secrets the file names,
+    /// including `${{ secrets.NAME }}` references, against this project, with
+    /// the stored session.
     #[arg(long, value_name = "PROJECT_ID")]
     project: Option<String>,
     /// With --project, also look for secrets in this pipeline's scope.
