@@ -42,6 +42,7 @@ mod app_store_upload;
 mod caches;
 mod metrics;
 mod publish;
+mod repository_notes;
 mod tart;
 mod test_reports;
 mod toolchain;
@@ -4343,6 +4344,8 @@ struct ResolvedExecutionPlan {
     /// The platforms this run builds, after any per-run selection. A store
     /// upload for a platform not in this list is skipped.
     platforms: Vec<BuildPlatform>,
+    /// Where a v2 file keeps the release notes.
+    release_notes: Option<oore_contract::pipeline_config::ReleaseNotesSpec>,
 }
 
 fn secret_env_var(name: &str) -> String {
@@ -4809,6 +4812,7 @@ fn resolve_execution_plan(
             source: format!("file:{}", full_path.display()),
             publish: plan.publish,
             size_budgets: plan.size_budgets,
+            release_notes: plan.release_notes,
         });
     }
 
@@ -4834,6 +4838,7 @@ fn resolve_execution_plan(
         source: "ui_fallback".to_string(),
         publish: PlanPublish::default(),
         size_budgets: Vec::new(),
+        release_notes: None,
     })
 }
 
@@ -5813,6 +5818,24 @@ async fn execute_build_steps(
     } else {
         store_version::read_pubspec_build_number(&workspace)
     };
+    let release_notes = match (&execution_plan.release_notes, &version_name) {
+        (Some(spec), Some(version)) => match repository_notes::read(&workspace, spec, version) {
+            Ok(Some(notes)) => {
+                println!("Release notes for {version} read from {}", notes.path);
+                Some(notes)
+            }
+            Ok(None) => {
+                println!("No release notes for {version} in the repository");
+                None
+            }
+            Err(error) => {
+                // Notes never stop a build; the version keeps the notes it has.
+                println!("Could not read the release notes from the repository: {error}");
+                None
+            }
+        },
+        _ => None,
+    };
     report_build_identity(
         client,
         daemon_url,
@@ -5821,6 +5844,7 @@ async fn execute_build_steps(
         &oore_contract::ReportBuildIdentityRequest {
             version_name: version_name.clone(),
             version_code: expected_version_code,
+            release_notes,
             ..read_head_commit_identity(&workspace).await
         },
     )
@@ -10431,6 +10455,7 @@ mod secret_tests {
             publish: PlanPublish::default(),
             size_budgets: Vec::new(),
             platforms: Vec::new(),
+            release_notes: None,
         }
     }
 

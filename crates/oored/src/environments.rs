@@ -1548,6 +1548,15 @@ async fn execute_promotion(
         None => None,
     };
     let (state, fraction, store_fraction) = initial_rollout(environment);
+    let release_notes = match source.build_id.as_deref() {
+        Some(build_id) => crate::version_notes::sendable_for_build(deps.pool, build_id)
+            .await
+            .unwrap_or_else(|error| {
+                warn!(%error, "failed to load the release notes for a promotion");
+                None
+            }),
+        None => None,
+    };
     let target = PromotionTarget {
         track: &environment.track,
         fraction: store_fraction,
@@ -1559,6 +1568,7 @@ async fn execute_promotion(
             .first()
             .is_some_and(|first| *first < 1.0),
         submit_for_review: environment.submit_for_review,
+        release_notes: release_notes.as_ref(),
     };
     let promoted = match deps.store.promote(source, target).await {
         Ok(promoted) => promoted,

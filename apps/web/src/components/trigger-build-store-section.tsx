@@ -3,26 +3,15 @@ import {
   AlertCircleIcon,
   CheckmarkCircle02Icon,
 } from '@hugeicons/core-free-icons'
-import type { UseFormReturn } from 'react-hook-form'
 import type {
   StoreReadinessItem,
   StoreReadinessResponse,
 } from '@oore/client/models'
 import { Button } from '@/components/ui/button'
-import {
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Textarea } from '@/components/ui/textarea'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
-import { useBuilds } from '@/hooks/use-builds'
 import {
   usePipelineAppStorePublish,
   usePipelineGooglePlayPublish,
@@ -31,33 +20,6 @@ import {
 import { describeStoreUploads } from '@/lib/store-destination'
 import type { BuildPlatform } from '@oore/client/models'
 import { cn } from '@/lib/utils'
-import type { TriggerBuildForm } from '@/components/trigger-build-form'
-
-/** Longest release notes Google Play takes per language. */
-const PLAY_NOTES_LIMIT = 500
-
-/**
- * Drafted changelog markdown ("- Fix login — Mina") as notes people read
- * in a store: one line per change, without authors or markdown.
- */
-export function storeNotesFromChangelog(markdown: string | undefined) {
-  if (!markdown) return ''
-  return markdown
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('- ') && !line.startsWith('- …'))
-    .map((line) =>
-      line
-        .slice(2)
-        .replace(/ — [^—]*$/, '')
-        .replace(/\\(.)/g, '$1')
-        // "feat(login): faster sign in" reads as "Faster sign in".
-        .replace(/^[a-z]+(\([^)]*\))?!?:\s*/, ''),
-    )
-    .filter(Boolean)
-    .map((title) => `• ${title.charAt(0).toUpperCase()}${title.slice(1)}`)
-    .join('\n')
-}
 
 const STORE_NAME = {
   app_store: 'App Store',
@@ -117,15 +79,11 @@ export function TriggerBuildDestination({
  * for this release.
  */
 export function TriggerBuildStoreSection({
-  form,
   pipelineId,
-  changelogMarkdown,
   enabled,
   filePublishes,
 }: {
-  form: UseFormReturn<TriggerBuildForm>
   pipelineId: string
-  changelogMarkdown: string | undefined
   enabled: boolean
   /** Store uploads the chosen workflow's file names. */
   filePublishes: Array<string>
@@ -133,80 +91,22 @@ export function TriggerBuildStoreSection({
   const readiness = usePipelinePublishReadiness(pipelineId, {
     enabled: enabled && !!pipelineId,
   })
-  // The last notes someone wrote for this pipeline, to start from.
-  const lastNotesQuery = useBuilds(
-    { pipeline_id: pipelineId, limit: 20 },
-    {
-      enabled: enabled && !!pipelineId,
-      select: (data) =>
-        data.builds.find((build) => build.store_notes?.trim()) ?? null,
-    },
-  )
   const items = readiness.data?.items ?? []
   const uploads = items.length > 0 || filePublishes.length > 0
   if (!pipelineId || (!uploads && !readiness.isPending)) return null
   if (readiness.isPending && filePublishes.length === 0) return null
 
-  const lastNotes = lastNotesQuery.data
-  const drafted = storeNotesFromChangelog(changelogMarkdown)
-
   return (
     <Stack gap={4} className="rounded-lg border p-4">
       <StoreReadinessChecklist readiness={readiness} />
-
-      <FormField
-        control={form.control}
-        name="store_notes"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>What's new in this release</FormLabel>
-            <FormControl>
-              <Textarea
-                {...field}
-                value={field.value ?? ''}
-                rows={4}
-                placeholder="Leave empty to use the release notes in the pipeline's publish settings."
-              />
-            </FormControl>
-            <Row gap={1} className="flex-wrap">
-              {drafted ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() =>
-                    form.setValue('store_notes', drafted, {
-                      shouldDirty: true,
-                    })
-                  }
-                >
-                  Draft from commits
-                </Button>
-              ) : null}
-              {lastNotes?.store_notes ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() =>
-                    form.setValue('store_notes', lastNotes.store_notes ?? '', {
-                      shouldDirty: true,
-                    })
-                  }
-                >
-                  Same as #{lastNotes.build_number}
-                </Button>
-              ) : null}
-            </Row>
-            <FormDescription>
-              Testers and store users read this. It replaces the pipeline's
-              notes for this build: Google Play shows the first{' '}
-              {PLAY_NOTES_LIMIT} characters.
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+      <Stack gap={1}>
+        <Text className="font-medium">Release notes</Text>
+        <Text variant="muted">
+          The stores get the release notes of the app version this build makes.
+          Oore drafts them from commits, and you can edit them on the build page
+          once the build starts.
+        </Text>
+      </Stack>
     </Stack>
   )
 }

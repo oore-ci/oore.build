@@ -61,7 +61,8 @@ rotation.
 3. Under **Credentials**, choose the secret for **Service account key**.
 4. Under **Release**, choose the **Track** and the **Rollout**:
    **Full rollout**, **Staged rollout** with an **Initial rollout (%)**, or
-   **Draft**. Choose the **Release notes** source.
+   **Draft**. **Release notes** sends the version's release notes in the
+   **Language of the notes**, or **Files in the repository** from a folder.
 5. Under **Advanced**, enter the app's application ID in **Expected package**,
    and choose **Pre-flight checks**: whether Google Play's validation of the
    release stops the upload, only warns, or is skipped.
@@ -102,17 +103,16 @@ the named secret exists in a scope this pipeline can see.
 | `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                                                       |
 | `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts.                              |
 | `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                                              |
-| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                                                  |
-| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                                                       |
+| `release_notes`          | `none`  | `changelog` (the app version's release notes) or `repo_files`. `none` behaves like `changelog`: a version without notes sends none.                                         |
+| `release_notes_locale`   | `en-US` | Language the version's release notes are sent under.                                                                                                                        |
 | `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                                                      |
 | `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                                                        |
 | `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                                             |
 | `preflight`              | `auto`  | What a failed `edits.validate` check does before the commit: `auto`, `block`, `warn` or `off`. `auto` blocks once the app has had a release on Play, and warns before that. |
 
-Release notes longer than Play's 500-character limit are shortened. Notes
-typed in **What's new in this release** when a build starts replace these
-notes for that build, under `release_notes_locale`; see
-[Notes for one release](/build/distribute/app-store#notes-for-one-release).
+Release notes longer than Play's 500-character limit are shortened. The
+build's list of commits and their authors never goes to Play; see
+[Release notes and changes](/concepts/release-notes).
 
 ## 3. Test the credentials
 

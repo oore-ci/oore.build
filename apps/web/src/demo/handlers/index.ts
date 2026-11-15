@@ -24,6 +24,7 @@ import { signingHandlers } from './signing'
 import { personalHandlers } from './personal'
 import { releaseFreezeHandlers } from './release-freezes'
 import { testerHandlers } from './testers'
+import { releaseNotesHandlers } from './release-notes'
 
 export const allHandlers = [
   ...demoReadOnlyGuardHandlers,
@@ -51,4 +52,5 @@ export const allHandlers = [
   ...signingHandlers,
   ...personalHandlers,
   ...testerHandlers,
+  ...releaseNotesHandlers,
 ]

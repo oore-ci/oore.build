@@ -110,7 +110,6 @@ export function BuildRehearsalCard({
       branch: build.branch ?? '',
       commit_sha: build.commit_sha ?? '',
       workflow: build.workflow ?? '',
-      store_notes: build.store_notes ?? '',
     }),
     [build],
   )

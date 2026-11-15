@@ -13,10 +13,6 @@ export const triggerBuildSchema = z
       .string()
       .max(4000, 'Keep the changelog under 4,000 characters')
       .optional(),
-    store_notes: z
-      .string()
-      .max(4000, 'Keep the release notes under 4,000 characters')
-      .optional(),
   })
   .superRefine((data, ctx) => {
     const branch = data.branch?.trim()

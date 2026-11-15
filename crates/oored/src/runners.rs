@@ -1231,6 +1231,7 @@ pub async fn update_job_status(
         retryable_steps: Vec::new(),
         queue: None,
         retention: None,
+        release_notes: None,
     }))
 }
 
@@ -1308,6 +1309,15 @@ pub async fn report_build_identity(
             "This build is not assigned to your runner",
         ));
     }
+    // Notes and the build's changes may need the source provider, so they
+    // never hold up the runner.
+    tokio::spawn(crate::version_notes::after_identity(
+        state.clone(),
+        crate::version_notes::ReportedIdentity {
+            build_id: job_id,
+            release_notes: req.release_notes,
+        },
+    ));
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -1980,6 +1990,7 @@ mod tests {
             commit_author: Some(" Mina Patel ".to_string()),
             version_name: Some("2.5.1".to_string()),
             version_code: Some(146),
+            release_notes: None,
         };
         assert!(
             !store_build_identity(&pool, "b1", "other", &identity)

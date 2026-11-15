@@ -71,6 +71,7 @@ pub mod testers;
 pub mod token;
 pub mod users;
 pub mod util;
+pub mod version_notes;
 pub mod web_push;
 
 use std::net::{IpAddr, SocketAddr};
@@ -3038,6 +3039,14 @@ pub async fn build_router_with_recovery(
             post(releases::release_action),
         )
         .route("/v1/release-events", get(releases::list_release_activity))
+        .route(
+            "/v1/projects/{project_id}/release-notes/{version_name}",
+            get(version_notes::get_release_notes).put(version_notes::update_release_notes),
+        )
+        .route(
+            "/v1/projects/{project_id}/release-notes/{version_name}/draft",
+            get(version_notes::draft_release_notes),
+        )
         .route(
             "/v1/release-freezes",
             get(release_freezes::list_release_freezes).put(release_freezes::set_release_freeze),

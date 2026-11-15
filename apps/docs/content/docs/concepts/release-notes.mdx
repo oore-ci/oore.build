@@ -1,0 +1,106 @@
+---
+title: 'Release notes and changes'
+status: implemented
+description: 'How Oore keeps one set of release notes per app version and a list of changes per build, and where each one goes.'
+---
+
+Oore keeps two different things apart:
+
+- **Changes** belong to a build. They are the commits since the previous
+  successful build of the same pipeline and branch, listed with their
+  authors. Oore makes them for every build, whether you started it, a push
+  or tag started it, a schedule did, or `oore build run`. They show on the
+  build page and, folded away, on the install page. They never go to a store.
+- **Release notes** belong to an app version, such as 2.5.1 from
+  `pubspec.yaml`. Every build of that version shares them, so a rebuild or a
+  hotfix of 2.5.1 does not need them written again. They are what testers
+  and users read: the install page, tester emails, TestFlight "What to
+  Test", the App Store "What's New" and the Google Play release notes.
+
+## Where release notes come from
+
+A version's notes come from one of three places. The build page shows which,
+under the notes.
+
+| Source                   | How it starts                                                                                                                                             | Who changes it                                               |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| **Drafted from commits** | The first build of a new version drafts notes from the commit titles since the last version that reached a store. Authors and merge commits are left out. | Oore redrafts them with each build until someone edits them. |
+| **Written in Oore**      | **Edit** on the build page's **Release notes** card, `oore notes set`, or `oore build run --notes`.                                                       | Anyone who can upload builds to the project.                 |
+| **From the repository**  | A `release_notes` entry in `.oore.yaml` that names a changelog file or a directory of `<locale>.txt` files.                                               | Change the file and build again.                             |
+
+Notes from the repository win: when a build finds notes for its version in the
+file, they replace written or drafted notes. When the file has nothing for the
+version, the notes stay as they were.
+
+## Keep a changelog in the repository
+
+Name a Markdown changelog and Oore reads the section headed with the app
+version:
+
+```yaml
+version: 2
+release_notes:
+  changelog: CHANGELOG.md
+```
+
+```md
+## [2.5.1] - 2026-11-14
+
+- Faster sync on slow networks
+- Fixes signing in with a saved password
+
+## [2.5.0] - 2026-11-01
+```
+
+Headings such as `## 2.5.1`, `## [2.5.1] - 2026-11-14`, `# v2.5.1` and
+`### 2.5.1` all match 2.5.1. `2.5.10` and `2.5.1-beta` do not. The section
+runs until the next heading of the same level or higher. The runner reads the
+file at the commit it builds, so the notes always match the build.
+
+To keep notes per language, use a directory instead, with one `<locale>.txt`
+file per language or fastlane's `<locale>/release_notes.txt`:
+
+```yaml
+release_notes:
+  dir: fastlane/metadata
+```
+
+`en-US` becomes the default language when it is there; otherwise the first
+file is.
+
+## Where they go
+
+| Destination                     | What it gets                                                                                             |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Install page and tester emails  | "What's new in 2.5.1", in the default language.                                                          |
+| TestFlight "What to Test"       | Every language.                                                                                          |
+| App Store "What's New"          | Every language, on the version Oore submits. Apple does not take "What's New" on an app's first version. |
+| Google Play release notes       | The default language, under the pipeline's notes language, cut to Play's 500 characters.                 |
+| Promotions between environments | The version's notes as they are when you promote. Edit them first from the promote dialog if needed.     |
+
+A pipeline whose Google Play settings read notes from **Files in the
+repository** keeps sending those files to Play.
+
+## Edit notes
+
+Open any build of the version, then **Edit** on the **Release notes** card.
+**Draft from commits** fills the text from the commits since the last
+released version, and **Add a language** adds another locale. The notes are
+saved for the version, so the next upload or promotion sends them. Builds
+already uploaded keep the notes they were sent with.
+
+From the command line:
+
+```bash
+oore notes show --project proj_123 --version 2.5.1
+oore notes set --project proj_123 --version 2.5.1 --file notes.txt --locale de-DE=notes.de.txt
+```
+
+See [`oore notes`](/reference/cli/oore-notes).
+
+## Before this change
+
+Older versions of Oore kept static per-locale "What's New" text in the
+pipeline's App Store settings and a **What's new in this release** field in
+**Run build**. Both are gone. Text saved in the App Store settings seeds the
+notes of a project's first version once and is not used after that.
