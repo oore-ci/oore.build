@@ -1,6 +1,7 @@
 import type { BadgeVariant } from '@/components/ui/badge'
 import type {
   BuildApprovalState,
+  BuildReleaseOutcome,
   BuildStatus,
   IntegrationStatus,
   NotificationDeliveryStatus,
@@ -103,6 +104,7 @@ export type StatusKind =
   | 'enabled'
   | 'integration'
   | 'pipeline_health'
+  | 'release_outcome'
   | 'runner'
   | 'token'
   | 'user'
@@ -123,6 +125,28 @@ const APPROVAL_STATE_VARIANT = {
   approved: 'success',
   rejected: 'destructive',
 } satisfies Record<BuildApprovalState, BadgeVariant>
+
+/** A build's store release, beside its status, which only covers the upload. */
+const RELEASE_OUTCOME_LABEL = {
+  waiting: 'Store processing',
+  blocked: 'Store blocked',
+  in_review: 'In store review',
+  approved: 'Store approved',
+  rejected: 'Store rejected',
+  live: 'Released',
+  failed: 'Store failed',
+} satisfies Record<BuildReleaseOutcome, string>
+
+// Neutral while the store works; colour only when someone has to act.
+const RELEASE_OUTCOME_VARIANT = {
+  waiting: 'outline',
+  blocked: 'warning',
+  in_review: 'outline',
+  approved: 'outline',
+  rejected: 'destructive',
+  live: 'secondary',
+  failed: 'destructive',
+} satisfies Record<BuildReleaseOutcome, BadgeVariant>
 
 const PIPELINE_HEALTH_LABEL = {
   ok: 'File OK',
@@ -245,6 +269,11 @@ export function getStatusPresentation(
       return {
         label: lookupLabel(PIPELINE_HEALTH_LABEL, value),
         variant: lookupVariant(PIPELINE_HEALTH_VARIANT, value),
+      }
+    case 'release_outcome':
+      return {
+        label: lookupLabel(RELEASE_OUTCOME_LABEL, value),
+        variant: lookupVariant(RELEASE_OUTCOME_VARIANT, value),
       }
     case 'runner':
       return {
