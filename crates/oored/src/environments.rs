@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use oore_contract::{
     ApiError, ApproverRole, CreateProjectEnvironmentRequest, CreatePromotionRequest,
@@ -1828,6 +1828,76 @@ pub async fn promote_build(
     .await
     .map(Json)
     .map_err(EnvironmentError::into_api)
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct PromotionReadinessQuery {
+    build_id: String,
+}
+
+/// `GET /v1/projects/{project_id}/environments/{environment_id}/readiness?build_id=`
+/// — what would stop promoting the build into the environment. Only a
+/// promotion to the App Store has checks: the store readiness check a
+/// pipeline's App Store upload runs, plus whether the App Store version can
+/// take the build. Other targets answer with no items.
+pub async fn get_promotion_readiness(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Path((project_id, environment_id)): Path<(String, String)>,
+    Query(query): Query<PromotionReadinessQuery>,
+) -> ApiResult<oore_contract::StoreReadinessResponse> {
+    role_with(&state, &auth, &project_id, ProjectPermission::Read).await?;
+    let environment = load_environment(&state.db, &project_id, &environment_id)
+        .await
+        .map_err(EnvironmentError::into_api)?;
+    let pipeline_id: String =
+        sqlx::query_scalar("SELECT pipeline_id FROM builds WHERE id = ?1 AND project_id = ?2")
+            .bind(&query.build_id)
+            .bind(&project_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|error| EnvironmentError::from(error).into_api())?
+            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "not_found", "Build not found"))?;
+    let mut items = Vec::new();
+    if environment.store == ReleaseStore::AppStore && environment.track == "app_store" {
+        let source = find_source_release(&state.db, &query.build_id, &environment)
+            .await
+            .map_err(EnvironmentError::into_api)?;
+        let version: Option<String> = match &source {
+            Some(source) => sqlx::query_scalar(
+                "SELECT version FROM app_store_release_links WHERE release_id = ?1",
+            )
+            .bind(&source.id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|error| EnvironmentError::from(error).into_api())?,
+            None => None,
+        };
+        if let Some(version) = version {
+            items = crate::store_readiness::promotion_readiness_items(
+                &state,
+                &pipeline_id,
+                &version,
+                environment.submit_for_review,
+            )
+            .await
+            .map_err(|error| EnvironmentError::from(error).into_api())?;
+        }
+    }
+    let configured = crate::app_store_publish::load_config(&state.db, &pipeline_id)
+        .await
+        .ok()
+        .flatten()
+        .map_or(oore_contract::PublishPreflight::Auto, |(config, _)| {
+            config.preflight
+        });
+    Ok(Json(oore_contract::StoreReadinessResponse {
+        preflight: crate::store_readiness::resolve_preflight(&state.db, &pipeline_id, configured)
+            .await,
+        pipeline_id,
+        items,
+        checked_at: now_unix(),
+    }))
 }
 
 /// `POST /v1/projects/{project_id}/promotions/{promotion_id}/approve`
