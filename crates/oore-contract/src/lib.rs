@@ -1818,6 +1818,34 @@ impl BuildReleaseOutcome {
         }
     }
 
+    /// Plain words for messages and the CLI, such as "in store review".
+    pub fn phrase(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting on the store",
+            Self::Blocked => "blocked by the store",
+            Self::InReview => "in store review",
+            Self::Approved => "approved, not released yet",
+            Self::Rejected => "rejected by the store",
+            Self::Live => "live in the store",
+            Self::Failed => "store release failed",
+        }
+    }
+
+    /// Whether the store is done with the build or someone has to act, so
+    /// there is nothing more to wait for.
+    pub fn is_settled(self) -> bool {
+        matches!(
+            self,
+            Self::Blocked | Self::Rejected | Self::Live | Self::Failed
+        )
+    }
+
+    /// The outcome of a build from its release states joined with commas,
+    /// as SQLite's `GROUP_CONCAT` gives them.
+    pub fn from_state_list(states: &str) -> Option<Self> {
+        Self::summarize(states.split(',').filter_map(|state| state.parse().ok()))
+    }
+
     /// The outcome of a build with these release states.
     pub fn summarize(states: impl IntoIterator<Item = ReleaseState>) -> Option<Self> {
         states

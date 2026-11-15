@@ -226,6 +226,44 @@ fn validate_submit_for_review(
     Ok(())
 }
 
+/// Whether Google Play runs staged rollouts on `track`. Play stages only
+/// production and open testing (`beta` in its API); internal, closed and
+/// custom tracks release to everyone at once, and Play refuses an
+/// `inProgress` release there.
+fn play_track_stages(track: &str) -> bool {
+    matches!(track, "production" | "open" | "beta")
+}
+
+/// The rollout policy to store for an environment. On a Google Play track
+/// without staged rollouts, a policy left out becomes a full release, and a
+/// staged policy that was asked for is refused now instead of by Play in the
+/// middle of a promotion.
+fn policy_for_track(
+    store: ReleaseStore,
+    track: &str,
+    policy: ReleasePolicy,
+    requested: bool,
+) -> Result<ReleasePolicy, EnvironmentError> {
+    if store != ReleaseStore::GooglePlay || play_track_stages(track) || is_full_release(&policy) {
+        return Ok(policy);
+    }
+    if requested {
+        return Err(EnvironmentError::Invalid(format!(
+            "Google Play only runs staged rollouts on the production and open testing tracks, \
+             so releases on the {track} track go to everyone at once. \
+             Set rollout_policy.steps to [1] for this environment."
+        )));
+    }
+    Ok(ReleasePolicy {
+        steps: vec![1.0],
+        ..policy
+    })
+}
+
+fn is_full_release(policy: &ReleasePolicy) -> bool {
+    policy.steps.first().is_none_or(|first| *first >= 1.0)
+}
+
 fn validate_policy(policy: &ReleasePolicy) -> Result<(), EnvironmentError> {
     policy.validate().map_err(|message| {
         EnvironmentError::Invalid(message.replace("policy.", "rollout_policy."))
@@ -654,8 +692,10 @@ pub(crate) async fn create_environment(
     let key = validate_key(&request.key)?;
     let name = validate_name(&request.name)?;
     let track = validate_track(request.store, &request.track)?;
+    let requested = request.rollout_policy.is_some();
     let policy = request.rollout_policy.unwrap_or_default();
     validate_policy(&policy)?;
+    let policy = policy_for_track(request.store, &track, policy, requested)?;
     validate_submit_for_review(request.store, &track, request.submit_for_review)?;
     let (approver_role, approver_ids) = match &request.approvers {
         Some(approvers) => normalize_approvers(approvers)?,
@@ -772,6 +812,12 @@ pub(crate) async fn update_environment(
         .clone()
         .unwrap_or_else(|| current.rollout_policy.clone());
     validate_policy(&policy)?;
+    let policy = policy_for_track(
+        current.store,
+        &track,
+        policy,
+        request.rollout_policy.is_some(),
+    )?;
     let approval_required = request
         .approval_required
         .unwrap_or(current.approval_required);
@@ -1071,7 +1117,9 @@ fn keyed_lock(key: String) -> Arc<tokio::sync::Mutex<()>> {
 }
 
 /// The state, Oore fraction and store fraction a promoted release starts at.
-/// Play's internal track has no staged rollouts.
+/// Only Play's production and open testing tracks have staged rollouts; an
+/// environment saved before that was checked still releases in full on
+/// other tracks.
 fn initial_rollout(environment: &ProjectEnvironment) -> (ReleaseState, f64, Option<f64>) {
     let first = environment
         .rollout_policy
@@ -1079,7 +1127,9 @@ fn initial_rollout(environment: &ProjectEnvironment) -> (ReleaseState, f64, Opti
         .first()
         .copied()
         .unwrap_or(1.0);
-    if environment.track == "internal" || first >= 1.0 {
+    let unstaged_play_track =
+        environment.store == ReleaseStore::GooglePlay && !play_track_stages(&environment.track);
+    if unstaged_play_track || first >= 1.0 {
         (ReleaseState::Complete, 1.0, None)
     } else {
         (ReleaseState::Rolling, first, Some(first))
@@ -1962,7 +2012,12 @@ mod tests {
             track: track.into(),
             approval_required,
             rollout_policy: Some(ReleasePolicy {
-                steps: vec![0.1, 0.5, 1.0],
+                // Play stages only production and open testing.
+                steps: if play_track_stages(track) {
+                    vec![0.1, 0.5, 1.0]
+                } else {
+                    vec![1.0]
+                },
                 interval_hours: 12.0,
                 ..ReleasePolicy::default()
             }),
@@ -2456,6 +2511,113 @@ mod tests {
         assert_eq!(release.promoted_from_release_id, None);
         let json = serde_json::to_value(&release).unwrap();
         assert!(json.get("environment_id").is_none());
+    }
+
+    #[tokio::test]
+    async fn staged_rollouts_are_refused_on_play_tracks_that_cannot_stage() {
+        let pool = setup().await;
+        let (_, actor) = maintainer();
+        let staged = || {
+            Some(ReleasePolicy {
+                steps: vec![0.1, 1.0],
+                ..ReleasePolicy::default()
+            })
+        };
+        for track in ["closed", "qa-team", "internal"] {
+            let request = CreateProjectEnvironmentRequest {
+                rollout_policy: staged(),
+                ..environment("qa", track, false)
+            };
+            let Err(EnvironmentError::Invalid(message)) =
+                create_environment(&pool, "p1", &actor, request).await
+            else {
+                panic!("a staged rollout on {track} was accepted");
+            };
+            assert!(message.contains("production and open testing"), "{message}");
+        }
+
+        // Left out, the policy on such a track is a full release.
+        let qa = create_environment(
+            &pool,
+            "p1",
+            &actor,
+            CreateProjectEnvironmentRequest {
+                rollout_policy: None,
+                ..environment("qa", "qa-team", false)
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(qa.rollout_policy.steps, vec![1.0]);
+
+        // Production and open testing keep their steps.
+        let beta = create_environment(&pool, "p1", &actor, environment("beta", "open", false))
+            .await
+            .unwrap();
+        assert_eq!(beta.rollout_policy.steps, vec![0.1, 0.5, 1.0]);
+
+        // Moving a staged environment to a closed track: an explicit staged
+        // policy is refused, a policy left out becomes a full release.
+        let refused = update_environment(
+            &pool,
+            "p1",
+            &beta.id,
+            &actor,
+            UpdateProjectEnvironmentRequest {
+                track: Some("closed".into()),
+                rollout_policy: staged(),
+                ..UpdateProjectEnvironmentRequest::default()
+            },
+        )
+        .await;
+        assert_matches!(refused, Err(EnvironmentError::Invalid(_)));
+        let moved = update_environment(
+            &pool,
+            "p1",
+            &beta.id,
+            &actor,
+            UpdateProjectEnvironmentRequest {
+                track: Some("closed".into()),
+                ..UpdateProjectEnvironmentRequest::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(moved.track, "closed");
+        assert_eq!(moved.rollout_policy.steps, vec![1.0]);
+    }
+
+    #[tokio::test]
+    async fn promotions_release_in_full_on_play_tracks_that_cannot_stage() {
+        let pool = setup().await;
+        let (_, actor) = maintainer();
+        let mut environment = create_environment(
+            &pool,
+            "p1",
+            &actor,
+            environment("prod", "production", false),
+        )
+        .await
+        .unwrap();
+        environment.rollout_policy.steps = vec![0.1, 1.0];
+        environment.track = "qa-team".into();
+        // Saved before the check: still a full release, not a Play refusal.
+        assert_eq!(
+            initial_rollout(&environment),
+            (ReleaseState::Complete, 1.0, None)
+        );
+        environment.track = "production".into();
+        assert_eq!(
+            initial_rollout(&environment),
+            (ReleaseState::Rolling, 0.1, Some(0.1))
+        );
+        // App Store phased releases are not Play tracks.
+        environment.store = ReleaseStore::AppStore;
+        environment.track = APP_STORE_TRACK.into();
+        assert_eq!(
+            initial_rollout(&environment),
+            (ReleaseState::Rolling, 0.1, Some(0.1))
+        );
     }
 
     #[tokio::test]
