@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test'
+import { describe, expect, test } from 'bun:test'
 import { pipelineFormSchema } from '@/lib/pipeline-schema'
 import {
   choosableWorkflows,
@@ -10,6 +10,7 @@ import {
   pipelineRequestFromForm,
   pipelineUpdateFromForm,
   sizeBudgetFormFields,
+  pipelineSectionSummaries,
 } from '@/lib/pipeline-form-utils'
 
 const values = pipelineFormSchema.parse({
@@ -387,4 +388,43 @@ test('Run build starts on the default workflow, or the only one', () => {
       workflows: [summary('release')],
     }),
   ).toEqual([])
+})
+
+describe('pipelineSectionSummaries', () => {
+  const base = {
+    platform_android: true,
+    platform_ios: false,
+    android_signing_release_enabled: true,
+    ios_signing_enabled: false,
+    ios_signing_export_method: 'app_store',
+    trigger_events: ['push', 'pull_request'],
+    branches: 'main, release/*',
+    schedules: [],
+    approval_required: false,
+    size_budget_rules: [],
+    pre_build_commands: '',
+    build_commands: 'dart run build_runner build\nflutter gen-l10n',
+    post_build_commands: '',
+    env_vars: 'API=1',
+  }
+
+  test('says what each section holds', () => {
+    expect(pipelineSectionSummaries(base)).toEqual({
+      build: 'Default commands plus 2 custom, 1 environment variable',
+      signing: 'Android release signed',
+      triggers: 'Push and pull request on main, release/*',
+      sizeBudget: 'No size rules',
+    })
+  })
+
+  test('manual pipelines and iOS', () => {
+    const summary = pipelineSectionSummaries(
+      { ...base, platform_ios: true, ios_signing_enabled: true },
+      true,
+    )
+    expect(summary.triggers).toBe('Only when you start it')
+    expect(summary.signing).toBe(
+      'Android release signed, iOS App Store signing',
+    )
+  })
 })

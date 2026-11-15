@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 
 import { cn } from '@/lib/utils'
+import { openPipelineSection } from '@/components/pipeline-form-section'
 import { textVariants } from '@/lib/recipes'
 
 /**
@@ -52,6 +53,7 @@ export function PipelineSectionIndex({
           aria-current={activeId === section.id ? 'location' : undefined}
           onClick={(event) => {
             event.preventDefault()
+            openPipelineSection(section.id)
             document
               .getElementById(section.id)
               ?.scrollIntoView({ block: 'start' })

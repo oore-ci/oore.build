@@ -13,9 +13,11 @@ import { demoSizeBaselines } from '../data/build-sizes'
 import type {
   ArtifactSizeComparison,
   BuildFeedback,
+  BuildReleaseOutcome,
   BuildSizeReport,
   CreateBuildFeedbackRequest,
   CreateBuildRequest,
+  ReleaseState,
 } from '@oore/client/models'
 
 const approvalDecisionSchema = z.object({ reason: z.string().nullish() })
@@ -82,6 +84,47 @@ async function drawDemoScreenshot() {
   return canvas.convertToBlob({ type: 'image/png' })
 }
 
+/** What the daemon reports: the build's release that most needs a person. */
+const RELEASE_OUTCOME_BY_STATE = {
+  uploading: 'waiting',
+  processing: 'waiting',
+  blocked: 'blocked',
+  in_review: 'in_review',
+  approved: 'approved',
+  rejected: 'rejected',
+  rolling: 'live',
+  paused: 'live',
+  halted: 'live',
+  complete: 'live',
+  failed: 'failed',
+} satisfies Record<ReleaseState, BuildReleaseOutcome>
+
+const RELEASE_OUTCOME_URGENCY: Array<BuildReleaseOutcome> = [
+  'live',
+  'waiting',
+  'in_review',
+  'approved',
+  'failed',
+  'rejected',
+  'blocked',
+]
+
+function demoReleaseOutcome(buildId: string): BuildReleaseOutcome | undefined {
+  let outcome: BuildReleaseOutcome | undefined
+  for (const release of demoState.releases) {
+    if (release.build_id !== buildId) continue
+    const next = RELEASE_OUTCOME_BY_STATE[release.state]
+    if (
+      !outcome ||
+      RELEASE_OUTCOME_URGENCY.indexOf(next) >
+        RELEASE_OUTCOME_URGENCY.indexOf(outcome)
+    ) {
+      outcome = next
+    }
+  }
+  return outcome
+}
+
 function withBuildContext(build: (typeof demoState.builds)[number]) {
   const project = demoState.projects.find(
     (candidate) => candidate.id === build.project_id,
@@ -101,6 +144,7 @@ function withBuildContext(build: (typeof demoState.builds)[number]) {
 
   return {
     ...build,
+    release_outcome: demoReleaseOutcome(build.id),
     config_snapshot:
       build.config_snapshot.ui_execution_config || !pipeline
         ? build.config_snapshot

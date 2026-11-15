@@ -79,9 +79,7 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
         .try_get::<Option<String>, _>("release_states")
         .ok()
         .flatten()
-        .and_then(|states| {
-            BuildReleaseOutcome::summarize(states.split(',').filter_map(|state| state.parse().ok()))
-        });
+        .and_then(|states| BuildReleaseOutcome::from_state_list(&states));
 
     Build {
         release_outcome,

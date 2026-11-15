@@ -84,8 +84,8 @@ oore pipeline plan .oore.yaml
 
 `validate --project` checks that `upload-key`, `coin-adhoc` and
 `coin-app-store` exist in the app's library with the right kind, that
-`coin-app-store` is not ad hoc, and that `PLAY_SERVICE_ACCOUNT` is a secret
-the app can see. Fix any `error:` it prints before you commit.
+`coin-app-store` is not ad hoc, and that `PLAY_SERVICE_ACCOUNT` and every
+`${{ secrets.NAME }}` the file uses are secrets the app can see. Fix any `error:` it prints before you commit.
 
 `plan` prints, for each workflow, the steps, the identities it signs with,
 where it publishes and which credentials the upload uses.

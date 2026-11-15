@@ -32,8 +32,10 @@ export function PipelineSigningSection({
   onProfileFileChange,
   onReleaseKeystoreFileChange,
   releaseKeystoreFile,
+  summary,
   values,
 }: {
+  summary?: string
   androidSigningData?: PipelineAndroidSigningResponse
   bundleIds: Array<string>
   debugKeystoreFile: File | null
@@ -55,6 +57,7 @@ export function PipelineSigningSection({
   return (
     <PipelineFormSection
       id="signing"
+      summary={summary}
       title="Signing"
       hint="Credentials stay on the server. Builds are signed on the runner."
     >
