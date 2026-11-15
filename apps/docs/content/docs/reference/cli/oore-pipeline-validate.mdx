@@ -43,8 +43,9 @@ command-line tool used by the pipeline is installed.
 
 ## Check against a project
 
-With `--project`, the command also checks the credentials a version 2 file
-names against that project, through the API, after the file itself is valid:
+With `--project`, the command also checks the credentials and secrets the
+file names against that project, through the API, after the file itself is
+valid:
 
 | Option                   | Effect                                                                                                            |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
@@ -62,10 +63,12 @@ target it builds, the command checks:
   distribution identity;
 - that a workflow which uploads to App Store Connect does not name an iOS
   identity with ad hoc profiles;
-- each `publish.play.service_account` against the secrets the build could
-  see: the project's (`GET /v1/projects/{project_id}/secrets`), the
-  pipeline's with `--pipeline`, and the instance's when the session may list
-  them.
+- each `publish.play.service_account`, and each `${{ secrets.NAME }}`
+  reference in a step command, target build command or env value, against
+  the secrets the build could see: the project's
+  (`GET /v1/projects/{project_id}/secrets`), the pipeline's with
+  `--pipeline`, and the instance's when the session may list them. A
+  reference the build cannot resolve would fail it when it starts.
 
 Each name that fails is an `error:` line on standard error, and the command
 exits non-zero:
@@ -77,7 +80,8 @@ oore pipeline validate .oore.yaml --project proj_123
 ```text
 error: workflows.adhoc.signing.ios names signing identity 'coin-adhoc', which project proj_123 does not have; add it under Project settings > Signing
 error: workflow release uploads to App Store Connect, but workflows.release.signing.ios names 'coin-app-store', which holds ad hoc profiles; use an identity with App Store profiles
-Error: .oore.yaml has 2 credential errors against project proj_123
+error: env.SENTRY_DSN names secret 'SENTRY_DSN', which is not a project, pipeline or instance secret
+Error: .oore.yaml has 3 credential errors against project proj_123
 ```
 
 When every name exists it prints:
@@ -88,14 +92,13 @@ When every name exists it prints:
 
 A session that may not list instance secrets, such as a project developer's,
 cannot tell whether a secret missing from the project is an instance secret.
-That case is a `note:` line, not an error. Version 1 files name no
-credentials, so there is nothing to check.
+That case is a `note:` line, not an error. Version 1 files name no signing
+identities, so only their `${{ secrets.NAME }}` references are checked.
 
 The check covers what the file names. A pipeline's
 [workflow settings](/reference/config/pipeline-settings#workflow-settings)
 can pick other identities when a build is created; the build checks those
-itself. `${{ secrets.NAME }}` references in commands and env values are not
-checked.
+itself.
 
 See [`.oore.yaml`](/reference/config/oore-yaml) and
 [`.oore.yaml` version 2](/reference/config/oore-yaml-v2) for the schemas, and
