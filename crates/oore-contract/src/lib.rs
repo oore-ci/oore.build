@@ -5275,6 +5275,39 @@ pub struct RunnerRehearsalReport {
     pub checks: Vec<RehearsalCheck>,
 }
 
+/// `POST /v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight` — the
+/// signed IPA's identity, so Oore can read what App Store Connect already
+/// has for it before the upload.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStorePreflightRequest {
+    pub bundle_id: String,
+    /// CFBundleShortVersionString.
+    pub version: String,
+}
+
+/// What App Store Connect already has for an IPA's app and version. The
+/// runner turns it into pre-flight findings with the fix for its project.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct RunnerAppStorePreflightResponse {
+    /// Whether App Store Connect has an app record for the bundle ID.
+    pub app_found: bool,
+    /// The highest CFBundleVersion App Store Connect has for this version,
+    /// expired builds included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highest_build_number: Option<String>,
+    /// Apple's state for the App Store version with this version string, such
+    /// as `PREPARE_FOR_SUBMISSION` or `READY_FOR_DISTRIBUTION`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_state: Option<String>,
+    /// The version that is live on the App Store now.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_version: Option<String>,
+    /// Why App Store Connect could not be read. The other fields are then
+    /// empty and the checks did not run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
+}
+
 /// The rehearsal findings for a store: the runner's checks plus what Oore
 /// reads from the store itself.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

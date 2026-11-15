@@ -252,6 +252,7 @@ use utoipa::{
         operations::create_project_environment,
         operations::update_project_environment,
         operations::delete_project_environment,
+        operations::get_promotion_readiness,
         operations::promote_build,
         operations::approve_promotion,
         operations::reject_promotion,
@@ -282,6 +283,7 @@ use utoipa::{
         operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
         operations::report_job_rehearsal,
+        operations::check_job_app_store_preflight,
         operations::report_job_test_results,
         operations::report_job_analysis,
         // ── Build Logs ──
@@ -518,6 +520,8 @@ use utoipa::{
         oore_contract::RehearsalCheck,
         oore_contract::RunnerRehearsalReport,
         oore_contract::RunnerRehearsalReportResponse,
+        oore_contract::RunnerAppStorePreflightRequest,
+        oore_contract::RunnerAppStorePreflightResponse,
         oore_contract::RunnerRetryArtifact,
         oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
@@ -3706,6 +3710,24 @@ mod operations {
     )]
     pub(super) fn delete_project_environment() {}
 
+    /// Check a promotion's store readiness
+    ///
+    /// What would stop promoting the build into the environment, blocking findings first. Only a promotion of a TestFlight build to the App Store has checks: the store readiness check an App Store upload runs (age rating questions, App Review contact details when the environment submits for review, another open submission, refusals remembered from the last submission) and whether App Store Connect has an editable App Store version for the build's version. Other environments answer with no items. Requires project read access.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/environments/{environment_id}/readiness", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("environment_id" = String, Path, description = "Environment ID"),
+            ("build_id" = String, Query, description = "The build to promote"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store readiness for the promotion", body = StoreReadinessResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Project, environment or build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_promotion_readiness() {}
+
     /// Promote build
     ///
     /// Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.
@@ -4176,6 +4198,26 @@ mod operations {
         )
     )]
     pub(super) fn report_job_rehearsal() {}
+
+    /// Read App Store Connect before an upload
+    ///
+    /// What App Store Connect already has for the signed IPA's app and version: whether the app exists, the highest build number uploaded for the version, the version's state and the live version. The runner turns them into pre-flight findings before it uploads. Uses the pipeline's App Store Connect API key.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        request_body = RunnerAppStorePreflightRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "What App Store Connect has", body = RunnerAppStorePreflightResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+        )
+    )]
+    pub(super) fn check_job_app_store_preflight() {}
 
     /// Get job-scoped iOS signing material
     ///

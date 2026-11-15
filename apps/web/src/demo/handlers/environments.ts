@@ -240,6 +240,41 @@ export const environmentHandlers = [
     return HttpResponse.json({ environments, promotions })
   }),
 
+  demoApi.getPromotionReadiness(async ({ params, request }) => {
+    await delay(400)
+    const persona = getDemoPersonaFromRequest(request)
+    const projectId = String(params.project_id)
+    if (!getDemoProjectRole(persona, projectId)) {
+      return error(404, 'not_found', 'Project not found')
+    }
+    const environment = demoState.environments.find(
+      (item) => item.id === params.environment_id,
+    )
+    if (!environment) return error(404, 'not_found', 'Environment not found')
+    // The demo App Store version still needs App Review contact details.
+    const items =
+      environment.store === 'app_store' && environment.track === 'app_store'
+        ? [
+            {
+              store: 'app_store' as const,
+              code: 'review_details',
+              level: 'block' as const,
+              title: 'App Review contact details are missing',
+              detail: 'Missing: contact phone, demo account password.',
+              console_url:
+                'https://appstoreconnect.apple.com/apps/6450000001/distribution/ios/version/inflight',
+              remembered: false,
+            },
+          ]
+        : []
+    return HttpResponse.json({
+      pipeline_id: '',
+      items,
+      preflight: 'block' as const,
+      checked_at: ago(0),
+    })
+  }),
+
   demoApi.createProjectEnvironment(async ({ params, request }) => {
     await delay(250)
     const persona = getDemoPersonaFromRequest(request)
