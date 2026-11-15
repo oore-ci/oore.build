@@ -17,6 +17,7 @@ import {
 } from '@/components/dashboard-section'
 import RepositoryAvatar from '@/components/repository-avatar'
 import { StatusBadge } from '@/components/status-badge'
+import { ReleaseOutcomeBadge } from '@/components/release-outcome-badge'
 import {
   Empty,
   EmptyDescription,
@@ -133,7 +134,10 @@ function DashboardBuildRow({
           </ItemDescription>
         </ItemContent>
         <ItemActions className="shrink-0 flex-col items-end gap-1">
-          <StatusBadge kind="build" value={build.status} />
+          <div className="flex items-center gap-1">
+            <StatusBadge kind="build" value={build.status} />
+            <ReleaseOutcomeBadge build={build} />
+          </div>
           <span
             className={cn(
               textVariants({ variant: 'caption' }),

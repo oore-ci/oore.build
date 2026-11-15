@@ -141,6 +141,13 @@ export function PipelinePlanPanel({
   return (
     <PipelineFormSection
       id="plan"
+      summary={
+        result && result.errors.length > 0
+          ? `${result.errors.length} ${result.errors.length === 1 ? 'problem' : 'problems'} in the plan`
+          : result?.plan
+            ? `${result.plan.steps.length} steps`
+            : 'The steps a build runs'
+      }
       title="What will run"
       hint="Steps come from the same planner the runner uses; secrets stay as references."
       actions={

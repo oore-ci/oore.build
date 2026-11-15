@@ -433,6 +433,32 @@ impl<'a> AppStoreConnect<'a> {
         }))
     }
 
+    /// The CFBundleVersions App Store Connect has for `version`
+    /// (CFBundleShortVersionString), newest upload first, expired builds
+    /// included: Apple refuses an upload whose number is not above all of
+    /// them.
+    pub async fn build_numbers(&self, app_id: &str, version: &str) -> AscResult<Vec<String>> {
+        let builds: ListEnvelope = self
+            .get(
+                "Build numbers lookup",
+                "/v1/builds",
+                &[
+                    ("filter[app]", app_id),
+                    ("filter[preReleaseVersion.version]", version),
+                    ("filter[preReleaseVersion.platform]", "IOS"),
+                    ("fields[builds]", "version"),
+                    ("sort", "-uploadedDate"),
+                    ("limit", "200"),
+                ],
+            )
+            .await?;
+        Ok(builds
+            .data
+            .iter()
+            .filter_map(|build| attr_str(build, "version"))
+            .collect())
+    }
+
     pub async fn set_export_compliance(
         &self,
         build_id: &str,

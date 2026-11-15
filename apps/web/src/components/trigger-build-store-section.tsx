@@ -4,7 +4,10 @@ import {
   CheckmarkCircle02Icon,
 } from '@hugeicons/core-free-icons'
 import type { UseFormReturn } from 'react-hook-form'
-import type { StoreReadinessItem } from '@oore/client/models'
+import type {
+  StoreReadinessItem,
+  StoreReadinessResponse,
+} from '@oore/client/models'
 import { Button } from '@/components/ui/button'
 import {
   FormControl,
@@ -20,7 +23,13 @@ import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 import { useBuilds } from '@/hooks/use-builds'
-import { usePipelinePublishReadiness } from '@/hooks/use-pipeline-publish'
+import {
+  usePipelineAppStorePublish,
+  usePipelineGooglePlayPublish,
+  usePipelinePublishReadiness,
+} from '@/hooks/use-pipeline-publish'
+import { describeStoreUploads } from '@/lib/store-destination'
+import type { BuildPlatform } from '@oore/client/models'
 import { cn } from '@/lib/utils'
 import type { TriggerBuildForm } from '@/components/trigger-build-form'
 
@@ -54,6 +63,53 @@ const STORE_NAME = {
   app_store: 'App Store',
   google_play: 'Google Play',
 } satisfies Record<StoreReadinessItem['store'], string>
+
+/**
+ * Where this build goes, in one sentence at the top of Run build: the
+ * picked workflow's uploads when its file names some, otherwise the
+ * pipeline's publishing settings.
+ */
+export function TriggerBuildDestination({
+  enabled,
+  filePublishes,
+  pipelineId,
+  platforms,
+}: {
+  enabled: boolean
+  filePublishes: Array<string>
+  pipelineId: string
+  platforms: ReadonlyArray<BuildPlatform>
+}) {
+  const android = platforms.includes('android')
+  const ios = platforms.includes('ios')
+  const playQuery = usePipelineGooglePlayPublish(pipelineId, {
+    enabled: enabled && android && filePublishes.length === 0,
+  })
+  const appStoreQuery = usePipelineAppStorePublish(pipelineId, {
+    enabled: enabled && ios && filePublishes.length === 0,
+  })
+  let sentence: string | null
+  if (filePublishes.length > 0) {
+    // "android publishes to … (workflows.release…)" as a sentence.
+    sentence = filePublishes
+      .map((line) => line.replace(/\s*\([^)]*\)$/, ''))
+      .map((line) => `${line.charAt(0).toUpperCase()}${line.slice(1)}.`)
+      .join(' ')
+  } else if ((android && !playQuery.data) || (ios && !appStoreQuery.data)) {
+    sentence = null
+  } else {
+    sentence = describeStoreUploads({
+      googlePlay: android ? playQuery.data?.config : null,
+      appStore: ios ? appStoreQuery.data?.config : null,
+    })
+  }
+  if (!sentence) return <Skeleton className="h-5 w-64" />
+  return (
+    <p className="text-sm" aria-live="polite">
+      {sentence}
+    </p>
+  )
+}
 
 /**
  * For a build that uploads to a store: what would stop the submission, so
@@ -162,14 +218,21 @@ export function TriggerBuildStoreSection({
 export function StoreReadinessChecklist({
   readiness,
   title = 'Ready to submit?',
+  blockingNote,
 }: {
-  readiness: ReturnType<typeof usePipelinePublishReadiness>
+  readiness: {
+    data?: StoreReadinessResponse
+    isPending: boolean
+    error: unknown
+  }
   title?: string
+  /** Replaces the note under blocking findings. */
+  blockingNote?: string
 }) {
   const items = readiness.data?.items ?? []
   const problems = items.filter((item) => item.level !== 'ok')
   return (
-    <Stack gap={2} role="group" aria-label="Ready to submit?">
+    <Stack gap={2} role="group" aria-label={title}>
       <p className="text-sm font-medium">{title}</p>
       {readiness.isPending ? (
         <Skeleton className="h-10 w-full" />
@@ -236,9 +299,10 @@ export function StoreReadinessChecklist({
       )}
       {problems.some((item) => item.level === 'block') ? (
         <Text variant="caption">
-          {readiness.data?.preflight === 'warn'
-            ? 'The upload goes ahead, but the store will refuse it until these are fixed.'
-            : 'Fix these first, or the publish step stops before the upload.'}
+          {blockingNote ??
+            (readiness.data?.preflight === 'warn'
+              ? 'The upload goes ahead, but the store will refuse it until these are fixed.'
+              : 'Fix these first, or the publish step stops before the upload.')}
         </Text>
       ) : null}
     </Stack>

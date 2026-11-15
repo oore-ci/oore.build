@@ -47,9 +47,11 @@ const LOCAL_APPROVAL_EVENTS = ['manual', 'schedule'] as const
 export function PipelineTriggersSection({
   canChangeApproval,
   manualOnlyTriggers,
+  summary,
 }: {
   canChangeApproval: boolean
   manualOnlyTriggers: boolean
+  summary?: string
 }) {
   const form = useFormContext<PipelineFormValues>()
   const selectedEvents = form.watch('trigger_events')
@@ -84,6 +86,7 @@ export function PipelineTriggersSection({
   return (
     <PipelineFormSection
       id="triggers"
+      summary={summary}
       title="Triggers"
       hint="You can always run the pipeline by hand, whatever is set here."
     >

@@ -15,6 +15,7 @@ import {
   updateProjectEnvironment,
 } from '@oore/client/operations'
 import {
+  getPromotionReadinessOptions,
   listProjectEnvironmentsOptions,
   listProjectEnvironmentsQueryKey,
   listReleaseEventsQueryKey,
@@ -92,6 +93,39 @@ function useEnvironmentMutation<TVariables, TResult>(
         })
       }
     },
+  })
+}
+
+/**
+ * What would stop promoting a build into an environment. Only an App Store
+ * target has checks; App Store Connect is slow to read, so this is fetched
+ * once per dialog and not polled.
+ */
+export function usePromotionReadiness(
+  projectId: string,
+  environmentId: string | undefined,
+  buildId: string | null | undefined,
+  options?: { enabled?: boolean },
+) {
+  const { baseUrl, client, instanceId, token } = useApiContext()
+
+  return useQuery({
+    ...scopeOoreQueryOptions(
+      instanceId,
+      getPromotionReadinessOptions({
+        client,
+        path: { project_id: projectId, environment_id: environmentId ?? '' },
+        query: { build_id: buildId ?? '' },
+      }),
+    ),
+    enabled:
+      (options?.enabled ?? true) &&
+      !!environmentId &&
+      !!buildId &&
+      !!baseUrl &&
+      !!token,
+    staleTime: 5 * 60_000,
+    retry: false,
   })
 }
 

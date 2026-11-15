@@ -2041,6 +2041,23 @@ async fn promotion_version(
     }
 }
 
+/// Why promotion could not attach a build of `version` to an App Store
+/// version, in words, or `None` when it can. For the readiness check shown
+/// before a promotion.
+pub(crate) async fn promotion_version_problem(
+    asc: &impl AscApi,
+    app_id: &str,
+    version: &str,
+) -> Result<Option<String>, AscError> {
+    match promotion_version(asc, app_id, version).await {
+        Ok(_) => Ok(None),
+        Err(error) => match error.downcast::<PromotionRefused>() {
+            Ok(refusal) => Ok(Some(refusal.message)),
+            Err(error) => Err(AscError::new(format!("{error:#}"))),
+        },
+    }
+}
+
 /// Refuse to attach a build to a version another build is already attached
 /// to while Oore follows its review or phased release, so one promotion never
 /// replaces another build or submits the wrong one.

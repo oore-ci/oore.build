@@ -7743,6 +7743,82 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/environments/{environment_id}/readiness": {
+      "get": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Check a promotion's store readiness",
+        "description": "What would stop promoting the build into the environment, blocking findings first. Only a promotion of a TestFlight build to the App Store has checks: the store readiness check an App Store upload runs (age rating questions, App Review contact details when the environment submits for review, another open submission, refusals remembered from the last submission) and whether App Store Connect has an editable App Store version for the build's version. Other environments answer with no items. Requires project read access.",
+        "operationId": "get_promotion_readiness",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment_id",
+            "in": "path",
+            "description": "Environment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "build_id",
+            "in": "query",
+            "description": "The build to promote",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store readiness for the promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreReadinessResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project, environment or build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/favorite": {
       "put": {
         "tags": [
@@ -11984,6 +12060,102 @@
           },
           "500": {
             "description": "Signing material could not be loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight": {
+      "post": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Read App Store Connect before an upload",
+        "description": "What App Store Connect already has for the signed IPA's app and version: whether the app exists, the highest build number uploaded for the version, the version's state and the live version. The runner turns them into pre-flight findings before it uploads. Uses the pipeline's App Store Connect API key.",
+        "operationId": "check_job_app_store_preflight",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerAppStorePreflightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What App Store Connect has",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerAppStorePreflightResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active",
             "content": {
               "application/json": {
                 "schema": {
@@ -25848,6 +26020,64 @@
                 "$ref": "#/components/schemas/RunnerAndroidSigningProfile"
               }
             ]
+          }
+        }
+      },
+      "RunnerAppStorePreflightRequest": {
+        "type": "object",
+        "description": "`POST /v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight` — the\nsigned IPA's identity, so Oore can read what App Store Connect already\nhas for it before the upload.",
+        "required": [
+          "bundle_id",
+          "version"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "CFBundleShortVersionString."
+          }
+        }
+      },
+      "RunnerAppStorePreflightResponse": {
+        "type": "object",
+        "description": "What App Store Connect already has for an IPA's app and version. The\nrunner turns it into pre-flight findings with the fix for its project.",
+        "required": [
+          "app_found"
+        ],
+        "properties": {
+          "app_found": {
+            "type": "boolean",
+            "description": "Whether App Store Connect has an app record for the bundle ID."
+          },
+          "highest_build_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The highest CFBundleVersion App Store Connect has for this version,\nexpired builds included."
+          },
+          "live_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version that is live on the App Store now."
+          },
+          "unavailable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why App Store Connect could not be read. The other fields are then\nempty and the checks did not run."
+          },
+          "version_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Apple's state for the App Store version with this version string, such\nas `PREPARE_FOR_SUBMISSION` or `READY_FOR_DISTRIBUTION`."
           }
         }
       },

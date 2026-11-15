@@ -192,6 +192,7 @@ export function WorkflowFileLookup({
   let unavailable: ReactNode
   let found: RepositoryWorkflowPreview | undefined
   let hidden = false
+  let noWorkflows = false
   let path = lookup.path
   if (needsPath) {
     unavailable = 'Enter a config path to pick a workflow.'
@@ -238,6 +239,10 @@ export function WorkflowFileLookup({
     } else {
       found = status.file
       if (status.file.workflows.length === 0) {
+        // Most files define no workflows; there is nothing to choose, so
+        // the field stays out of the way unless a saved default needs
+        // clearing or someone is reading another branch.
+        noWorkflows = !current && !lookup.ref
         unavailable = (
           <>
             <Mono>{status.path}</Mono> on <Mono>{branch}</Mono> defines no
@@ -313,6 +318,7 @@ export function WorkflowFileLookup({
     explicit && found && onUseFile && query.data
       ? { file: found, reference: query.data.reference, use: onUseFile }
       : undefined
+  if (noWorkflows && !preview) return null
 
   return (
     <Stack gap={4}>
@@ -334,11 +340,13 @@ export function WorkflowFileLookup({
           </div>
         </Stack>
       ) : null}
-      <WorkflowField
-        source={{ path, workflows: found?.workflows ?? [] }}
-        unavailable={unavailable}
-        footer={branchControl}
-      />
+      {noWorkflows ? null : (
+        <WorkflowField
+          source={{ path, workflows: found?.workflows ?? [] }}
+          unavailable={unavailable}
+          footer={branchControl}
+        />
+      )}
     </Stack>
   )
 }

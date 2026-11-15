@@ -885,6 +885,10 @@ struct BuildArgs {
 enum BuildSubcommand {
     /// Queue a build of a pipeline, optionally naming its workflow.
     Run(build_commands::BuildRunArgs),
+    /// Follow a build to its result, and with --store to the store's answer.
+    /// Exits 1 when the build does not succeed, and 3 with --store when the
+    /// store blocks, rejects or fails its release.
+    Watch(build_commands::BuildWatchArgs),
 }
 
 #[derive(Debug, Args)]
@@ -13433,6 +13437,11 @@ fn main() -> anyhow::Result<()> {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(build_commands::handle_build_run(args))?;
+            }
+            BuildSubcommand::Watch(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_build_watch(args))?;
             }
         },
         Commands::Version => {
