@@ -169,9 +169,9 @@ impl VersionNumbering {
 
     fn fix(self, version_code: i64, at_least: i64, what: &str) -> String {
         match self {
-            Self::Pubspec => format!(
-                "Bump the build number after + in pubspec.yaml's version to at least {at_least} in a commit, then build again."
-            ),
+            Self::Pubspec => {
+                format!("Bump the +N in pubspec.yaml to {at_least} or higher and commit it.")
+            }
             Self::OoreCounter => format!(
                 "Raise build_number_offset by at least {} so this build gets {what} OORE_VERSION_CODE.",
                 at_least - version_code

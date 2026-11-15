@@ -456,7 +456,7 @@ async fn upload_ipa_with(
 
 /// How to fix a build number Apple already has, for either way of
 /// numbering builds.
-const DUPLICATE_BUILD_HINT: &str = ". Bump the build number after + in pubspec.yaml's version in a commit and build again. If the build passes --build-number=$OORE_VERSION_CODE, raise build_number_offset instead";
+const DUPLICATE_BUILD_HINT: &str = ". Bump the +N in pubspec.yaml and commit it. If the build sets this number with --build-number=$OORE_VERSION_CODE, raise build_number_offset instead";
 
 /// Has App Store Connect validate the signed IPA without uploading it, for
 /// a release rehearsal. `Err` carries Apple's reasons.
