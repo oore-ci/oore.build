@@ -438,7 +438,7 @@ function ProjectScopeField({
           </Select>
           <FormDescription>
             {field.value === ALL_PROJECTS
-              ? 'Receives events from every project, plus runner alerts.'
+              ? 'Receives events from every app, plus runner alerts.'
               : 'Receives build and release events for this app only.'}
           </FormDescription>
           {projectsQuery.isError ? (

@@ -300,8 +300,8 @@ export function PipelineRepositoryFile({
           <HugeiconsIcon icon={Alert02Icon} size={16} />
           <AlertDescription>
             {sharedWith.length === 1 ? 'Another pipeline' : 'Other pipelines'}{' '}
-            in this project also read <Mono>{path}</Mono> and will switch to
-            this file too: {sharedWith.join(', ')}.
+            in this app also read <Mono>{path}</Mono> and will switch to this
+            file too: {sharedWith.join(', ')}.
           </AlertDescription>
         </Alert>
       ) : null}

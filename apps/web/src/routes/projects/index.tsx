@@ -223,13 +223,13 @@ function ProjectsListPage() {
                 <EmptyMedia variant="icon">
                   <HugeiconsIcon icon={Folder02Icon} />
                 </EmptyMedia>
-                <EmptyTitle>Create your first app</EmptyTitle>
+                <EmptyTitle>Add your app</EmptyTitle>
                 <EmptyDescription>
                   {runtimeMode === 'local'
-                    ? 'Choose a local Git repository to create your first app.'
+                    ? 'Point Oore at a Flutter repository on this Mac. It reads it, proposes what to build and starts the first build.'
                     : noConnectedSources
-                      ? 'Connect GitHub or GitLab so Oore can see your repositories, then create a project from one.'
-                      : 'Pick a repository from a connected source, then add a pipeline to start building.'}
+                      ? 'Connect where your code lives, then pick the repository. Oore reads it, proposes what to build and starts the first build.'
+                      : 'Pick a repository. Oore reads it, proposes what to build and starts the first build.'}
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
@@ -253,11 +253,11 @@ function ProjectsListPage() {
                 ) : canWriteProjects ? (
                   <Button onClick={() => setCreateOpen(true)}>
                     <HugeiconsIcon icon={Add01Icon} />
-                    Create project
+                    Add your app
                   </Button>
                 ) : (
                   <Text variant="caption">
-                    Ask an owner or admin to create the first app.
+                    Ask an owner or admin to add the first app.
                   </Text>
                 )}
               </EmptyContent>

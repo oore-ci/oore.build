@@ -207,7 +207,7 @@ export const pipelineFormSchema = z
     if (data.config_mode === 'explicit' && !data.config_path?.trim()) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Config path is required when explicit mode is selected',
+        message: 'Enter the path of the pipeline file',
         path: ['config_path'],
       })
     }

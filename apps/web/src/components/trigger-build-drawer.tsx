@@ -246,7 +246,7 @@ function TriggerBuildBlockingAlerts({
       {issues.noPipelines ? (
         <Alert variant="destructive">
           <AlertDescription>
-            This project has no pipelines.{' '}
+            This app has no pipelines.{' '}
             {canConfigure && projectId ? (
               <Link
                 to="/projects/$projectId/pipelines/new"
