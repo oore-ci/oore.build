@@ -33,6 +33,7 @@ import {
   parseBundleIdsInput,
   parseMultiline,
   moreSettingsSummary,
+  pipelineSectionSummaries,
   previewPlatformCommands,
 } from '@/lib/pipeline-form-utils'
 import { Text } from '@/components/layout/text'
@@ -42,6 +43,10 @@ import type {
   PipelineWorkflowSource,
 } from '@/components/pipeline-workflow-field'
 import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
+import {
+  PipelineSectionsCollapsible,
+  revealInvalidPipelineSections,
+} from '@/components/pipeline-form-section'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
 import { PipelineSizeBudgetSection } from '@/components/pipeline-form-size-budget-section'
@@ -115,14 +120,17 @@ function countFieldErrors(errors: FieldErrors) {
  * keeps it clear of the sticky action bar at the bottom of the form.
  */
 function revealFirstInvalidField(formRef: RefObject<HTMLFormElement | null>) {
-  requestAnimationFrame(() => {
-    const field = formRef.current?.querySelector<HTMLElement>(
-      '[aria-invalid="true"]',
-    )
-    if (!field) return
-    field.scrollIntoView({ block: 'center' })
-    field.focus({ preventScroll: true })
-  })
+  // Two frames: the first lets closed sections with the field open.
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      const field = formRef.current?.querySelector<HTMLElement>(
+        '[aria-invalid="true"]',
+      )
+      if (!field) return
+      field.scrollIntoView({ block: 'center' })
+      field.focus({ preventScroll: true })
+    }),
+  )
 }
 
 /** Open the per-platform disclosure when the saved pipeline already uses it. */
@@ -254,179 +262,191 @@ export default function PipelineForm({
   const postBuildCount = parseMultiline(values.post_build_commands).length
   const totalCmdCount = preBuildCount + buildCmdCount + postBuildCount
   const iosBundleIds = parseBundleIdsInput(values.ios_signing_bundle_ids)
+  const summaries = pipelineSectionSummaries(values, manualOnlyTriggers)
 
   return (
-    <Form {...form}>
-      <form
-        ref={formRef}
-        noValidate
-        onSubmit={(event) =>
-          void form.handleSubmit(handleFormSubmit, () => {
-            // An invalid field may sit in the closed "More settings".
-            setMoreOpen(true)
-            revealFirstInvalidField(formRef)
-          })(event)
-        }
-        className="flex flex-col gap-8"
-      >
-        <PipelineSectionIndex sections={sections} />
-        <PipelineBasicsSection
-          configMode={configMode}
-          repositoryWorkflow={repositoryWorkflow}
-          workflowLookup={workflowLookup}
-          workflowSource={workflowSource}
-        />
-        {repositoryWorkflow || !moreOpen ? null : (
-          <PipelineBuildSection
-            advancedOpen={hasPlatformOverrides(initialValues)}
-            commandCount={totalCmdCount}
-            envVarCount={envVarCount}
-            playBundle={googlePlayUpload}
-            previewDefaults={previewDefaults}
+    <PipelineSectionsCollapsible.Provider value={!compact}>
+      <Form {...form}>
+        <form
+          ref={formRef}
+          noValidate
+          onSubmit={(event) =>
+            void form.handleSubmit(handleFormSubmit, () => {
+              // An invalid field may sit in the closed "More settings".
+              setMoreOpen(true)
+              // Closed sections with an invalid field open before the focus
+              // moves to it.
+              requestAnimationFrame(revealInvalidPipelineSections)
+              revealFirstInvalidField(formRef)
+            })(event)
+          }
+          className="flex flex-col gap-8"
+        >
+          <PipelineSectionIndex sections={sections} />
+          <PipelineBasicsSection
+            configMode={configMode}
+            repositoryWorkflow={repositoryWorkflow}
+            workflowLookup={workflowLookup}
+            workflowSource={workflowSource}
           />
-        )}
-        <PipelinePlanPanel
-          manualOnlyTriggers={manualOnlyTriggers}
-          otherPipelines={otherPipelines}
-          playBundle={googlePlayUpload}
-          publish={publishSettings}
-          repositoryConfig={!!repositoryWorkflow}
-          values={values}
-        />
-        {compact ? (
-          <div className="flex flex-col gap-1 rounded-lg border p-4">
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="-ml-2 self-start"
-              aria-expanded={moreOpen}
-              onClick={() => setMoreOpen((open) => !open)}
-            >
-              {moreOpen ? 'Fewer settings' : 'More settings'}
-            </Button>
-            <Text variant="muted">
-              {moreOpen
-                ? 'Build commands, signing, triggers and the size budget. Every setting can change later.'
-                : `${moreSettingsSummary(values, manualOnlyTriggers)} Build commands, signing, triggers and the size budget are here.`}
-            </Text>
-          </div>
-        ) : null}
-        {moreOpen ? (
-          <>
-            <PipelineSigningSection
-              androidSigningData={signingData}
-              bundleIds={iosBundleIds}
-              debugKeystoreFile={debugKeystoreFile}
-              iosActions={iosSigningActions}
-              iosApiKeyFile={iosApiKeyFile}
-              iosAppStorePublishing={iosAppStorePublishing}
-              iosP12File={iosP12File}
-              iosProfileFiles={iosProfileFiles}
-              iosSigningData={iosSigningData}
-              onApiKeyFileChange={setIosApiKeyFile}
-              onDebugKeystoreFileChange={setDebugKeystoreFile}
-              onP12FileChange={setIosP12File}
-              onProfileFileChange={handleProfileFileChange}
-              onReleaseKeystoreFileChange={setReleaseKeystoreFile}
-              releaseKeystoreFile={releaseKeystoreFile}
-              values={values}
+          {repositoryWorkflow || !moreOpen ? null : (
+            <PipelineBuildSection
+              advancedOpen={hasPlatformOverrides(initialValues)}
+              commandCount={totalCmdCount}
+              envVarCount={envVarCount}
+              playBundle={googlePlayUpload}
+              previewDefaults={previewDefaults}
+              summary={summaries.build}
             />
-            <PipelineTriggersSection
-              canChangeApproval={canChangeApproval}
-              manualOnlyTriggers={manualOnlyTriggers}
-            />
-            <PipelineSizeBudgetSection />
-          </>
-        ) : null}
+          )}
+          <PipelinePlanPanel
+            manualOnlyTriggers={manualOnlyTriggers}
+            otherPipelines={otherPipelines}
+            playBundle={googlePlayUpload}
+            publish={publishSettings}
+            repositoryConfig={!!repositoryWorkflow}
+            values={values}
+          />
+          {compact ? (
+            <div className="flex flex-col gap-1 rounded-lg border p-4">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2 self-start"
+                aria-expanded={moreOpen}
+                onClick={() => setMoreOpen((open) => !open)}
+              >
+                {moreOpen ? 'Fewer settings' : 'More settings'}
+              </Button>
+              <Text variant="muted">
+                {moreOpen
+                  ? 'Build commands, signing, triggers and the size budget. Every setting can change later.'
+                  : `${moreSettingsSummary(values, manualOnlyTriggers)} Build commands, signing, triggers and the size budget are here.`}
+              </Text>
+            </div>
+          ) : null}
+          {moreOpen ? (
+            <>
+              <PipelineSigningSection
+                androidSigningData={signingData}
+                bundleIds={iosBundleIds}
+                debugKeystoreFile={debugKeystoreFile}
+                iosActions={iosSigningActions}
+                iosApiKeyFile={iosApiKeyFile}
+                iosAppStorePublishing={iosAppStorePublishing}
+                iosP12File={iosP12File}
+                iosProfileFiles={iosProfileFiles}
+                iosSigningData={iosSigningData}
+                onApiKeyFileChange={setIosApiKeyFile}
+                onDebugKeystoreFileChange={setDebugKeystoreFile}
+                onP12FileChange={setIosP12File}
+                onProfileFileChange={handleProfileFileChange}
+                onReleaseKeystoreFileChange={setReleaseKeystoreFile}
+                releaseKeystoreFile={releaseKeystoreFile}
+                summary={summaries.signing}
+                values={values}
+              />
+              <PipelineTriggersSection
+                canChangeApproval={canChangeApproval}
+                manualOnlyTriggers={manualOnlyTriggers}
+                summary={summaries.triggers}
+              />
+              <PipelineSizeBudgetSection summary={summaries.sizeBudget} />
+            </>
+          ) : null}
 
-        {validationErrors.length > 0 ? (
-          <div>
-            <Alert variant="destructive" role="alert">
+          {validationErrors.length > 0 ? (
+            <div>
+              <Alert variant="destructive" role="alert">
+                <HugeiconsIcon icon={AlertCircleIcon} size={16} />
+                <AlertDescription>
+                  <ul className="list-disc space-y-1 pl-4">
+                    {validationErrors.map((err) => (
+                      <li key={err}>{err}</li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
+
+          {signingError ? (
+            <Alert variant="destructive">
               <HugeiconsIcon icon={AlertCircleIcon} size={16} />
               <AlertDescription>
-                <ul className="list-disc space-y-1 pl-4">
-                  {validationErrors.map((err) => (
-                    <li key={err}>{err}</li>
-                  ))}
-                </ul>
+                The pipeline was created, but {retrySigning} signing failed:{' '}
+                {signingError}. Fix the signing fields above and retry only
+                signing.
               </AlertDescription>
             </Alert>
-          </div>
-        ) : null}
-
-        {signingError ? (
-          <Alert variant="destructive">
-            <HugeiconsIcon icon={AlertCircleIcon} size={16} />
-            <AlertDescription>
-              The pipeline was created, but {retrySigning} signing failed:{' '}
-              {signingError}. Fix the signing fields above and retry only
-              signing.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-
-        {values.ios_signing_enabled &&
-          (values.ios_signing_mode === 'api' ||
-            values.ios_signing_mode === 'hybrid') &&
-          children}
-
-        <FormActions
-          disabled={readOnly}
-          disabledReason={readOnlyReason}
-          isPending={isPending}
-          onCancel={onCancel}
-          sticky={isDirty}
-          submitLabel={readOnly ? 'Demo is read-only' : submitLabel}
-        >
-          {errorCount > 0 ? (
-            <Button
-              type="button"
-              variant="link"
-              className="mr-auto px-1 text-destructive"
-              onClick={() => revealFirstInvalidField(formRef)}
-            >
-              <HugeiconsIcon icon={AlertCircleIcon} data-icon="inline-start" />
-              Fix {errorCount} {errorCount === 1 ? 'field' : 'fields'} to save
-            </Button>
           ) : null}
-        </FormActions>
-      </form>
-      <AlertDialog
-        open={blocker.status === 'blocked'}
-        onOpenChange={(open) => {
-          if (!open && blocker.status === 'blocked') blocker.reset()
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Discard unsaved pipeline changes?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Form values and selected signing files will be lost if you leave
-              this page.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              onClick={() => {
-                if (blocker.status === 'blocked') blocker.reset()
-              }}
-            >
-              Stay
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (blocker.status === 'blocked') blocker.proceed()
-              }}
-            >
-              Discard changes
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Form>
+
+          {values.ios_signing_enabled &&
+            (values.ios_signing_mode === 'api' ||
+              values.ios_signing_mode === 'hybrid') &&
+            children}
+
+          <FormActions
+            disabled={readOnly}
+            disabledReason={readOnlyReason}
+            isPending={isPending}
+            onCancel={onCancel}
+            sticky={isDirty}
+            submitLabel={readOnly ? 'Demo is read-only' : submitLabel}
+          >
+            {errorCount > 0 ? (
+              <Button
+                type="button"
+                variant="link"
+                className="mr-auto px-1 text-destructive"
+                onClick={() => revealFirstInvalidField(formRef)}
+              >
+                <HugeiconsIcon
+                  icon={AlertCircleIcon}
+                  data-icon="inline-start"
+                />
+                Fix {errorCount} {errorCount === 1 ? 'field' : 'fields'} to save
+              </Button>
+            ) : null}
+          </FormActions>
+        </form>
+        <AlertDialog
+          open={blocker.status === 'blocked'}
+          onOpenChange={(open) => {
+            if (!open && blocker.status === 'blocked') blocker.reset()
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                Discard unsaved pipeline changes?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Form values and selected signing files will be lost if you leave
+                this page.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                onClick={() => {
+                  if (blocker.status === 'blocked') blocker.reset()
+                }}
+              >
+                Stay
+              </AlertDialogCancel>
+              <AlertDialogAction
+                variant="destructive"
+                onClick={() => {
+                  if (blocker.status === 'blocked') blocker.proceed()
+                }}
+              >
+                Discard changes
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </Form>
+    </PipelineSectionsCollapsible.Provider>
   )
 }

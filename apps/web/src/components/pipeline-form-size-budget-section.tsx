@@ -46,7 +46,7 @@ const LIMIT_FIELDS = [
  * Size budget: limits per artifact kind that a pull request check enforces
  * once a build succeeds. The budget never fails the build itself.
  */
-export function PipelineSizeBudgetSection() {
+export function PipelineSizeBudgetSection({ summary }: { summary?: string }) {
   const form = useFormContext<PipelineFormValues>()
   const rules = useFieldArray({
     control: form.control,
@@ -56,6 +56,7 @@ export function PipelineSizeBudgetSection() {
   return (
     <PipelineFormSection
       id="size-budget"
+      summary={summary}
       title="Size budget"
       hint="An artifact over budget can fail its pull request check, never the build."
       actions={

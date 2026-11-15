@@ -78,6 +78,11 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import {
+  appStoreDestination,
+  describeStoreUploads,
+  playDestination,
+} from '@/lib/store-destination'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import {
@@ -415,6 +420,19 @@ function PipelineDetailPage() {
     pipelineWorkflowsQuery.data?.state === 'valid'
       ? pipelineWorkflowsQuery.data.workflows.map((workflow) => workflow.name)
       : []
+  // A file without workflows (or no file) has nothing for the tab to show;
+  // a link straight to the tab still opens it.
+  const workflowsData = pipelineWorkflowsQuery.data
+  const showWorkflowsTab =
+    tab === 'workflows' ||
+    pipelineWorkflowsQuery.isError ||
+    (!!workflowsData &&
+      (!!workflowsData.default_workflow ||
+        !(
+          workflowsData.state === 'missing' ||
+          (workflowsData.state === 'valid' &&
+            workflowsData.workflows.length === 0)
+        )))
   function setWorkflowFilter(workflow?: string) {
     void navigate({
       to: '/projects/$projectId/pipelines/$pipelineId',
@@ -517,7 +535,7 @@ function PipelineDetailPage() {
       label: 'Google Play',
       value: googlePlayQuery.data ? (
         config?.enabled ? (
-          `Uploads to the ${config.track} track after each build`
+          `Uploads to ${playDestination(config)} after each build`
         ) : (
           'Off'
         )
@@ -537,11 +555,7 @@ function PipelineDetailPage() {
       label: 'App Store Connect',
       value: config ? (
         config.enabled ? (
-          config.destination === 'app_store' ? (
-            'Uploads to the App Store after each build'
-          ) : (
-            'Uploads to TestFlight after each build'
-          )
+          `Uploads to ${appStoreDestination(config)} after each build`
         ) : (
           'Off'
         )
@@ -555,6 +569,16 @@ function PipelineDetailPage() {
       ),
     })
   }
+
+  // Where builds go, once the settings of every store it builds for load.
+  const storeUploads =
+    (!buildsAndroid || googlePlayQuery.data) &&
+    (!buildsIos || appStoreQuery.data)
+      ? describeStoreUploads({
+          googlePlay: buildsAndroid ? googlePlayQuery.data?.config : null,
+          appStore: buildsIos ? appStoreQuery.data?.config : null,
+        })
+      : null
 
   function handleToggleEnabled() {
     updateMutation.mutate(
@@ -590,7 +614,11 @@ function PipelineDetailPage() {
       <PageMeta title={label} noindex />
       <PageHeader
         title={pipeline.name}
-        description={describePipeline(pipeline, manualOnlyTriggers)}
+        description={
+          storeUploads
+            ? `${describePipeline(pipeline, manualOnlyTriggers)} ${storeUploads}`
+            : describePipeline(pipeline, manualOnlyTriggers)
+        }
         meta={
           <>
             <StatusBadge
@@ -736,7 +764,9 @@ function PipelineDetailPage() {
       >
         <TabsList variant="line">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="workflows">Workflows</TabsTrigger>
+          {showWorkflowsTab ? (
+            <TabsTrigger value="workflows">Workflows</TabsTrigger>
+          ) : null}
           <TabsTrigger value="publishing">Publishing</TabsTrigger>
           <TabsTrigger value="secrets">Secrets</TabsTrigger>
         </TabsList>
