@@ -12,6 +12,7 @@ import {
   ENVIRONMENT_NAME_MAX_LENGTH,
   formatRolloutSteps,
   parseRolloutSteps,
+  playTrackStagesRollouts,
 } from '@/lib/environments'
 import { stackVariants } from '@/lib/recipes'
 import { RELEASE_STORE_LABEL } from '@/lib/releases'
@@ -194,7 +195,8 @@ export function EnvironmentDialog({
   const approverCandidates = (membersQuery.data?.members ?? []).filter(
     (member) => member.role !== 'viewer',
   )
-  const staged = store === 'google_play' && track.trim() !== 'internal'
+  const playTrack = store === 'google_play' && track.trim() !== ''
+  const staged = playTrack && playTrackStagesRollouts(track)
   const appStoreVersion =
     store === 'app_store' && track.trim() === APP_STORE_TRACK
 
@@ -222,10 +224,13 @@ export function EnvironmentDialog({
     const versionTrack =
       values.store === 'app_store' && values.track.trim() === APP_STORE_TRACK
     // App Store releases follow Apple's schedule: phased, or all at once.
-    // TestFlight has no staged rollout.
+    // TestFlight, and Play tracks other than production and open testing,
+    // have no staged rollout.
     const steps =
       values.store === 'google_play'
-        ? parsed.steps
+        ? playTrackStagesRollouts(values.track)
+          ? parsed.steps
+          : [1]
         : versionTrack && values.phased_release
           ? APPLE_PHASED_STEPS
           : [1]
@@ -606,6 +611,13 @@ export function EnvironmentDialog({
                   )}
                 />
               </>
+            ) : null}
+
+            {playTrack && !staged ? (
+              <Text>
+                Google Play releases to everyone at once on this track. Staged
+                rollouts run only on production and open testing.
+              </Text>
             ) : null}
 
             {staged ? (

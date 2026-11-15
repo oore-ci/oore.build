@@ -9,7 +9,11 @@ import {
 } from '@/lib/environments'
 import { releaseVersionLabel } from '@/lib/releases'
 import { toast } from '@/lib/toast'
-import { usePromoteBuild } from '@/hooks/use-environments'
+import {
+  usePromoteBuild,
+  usePromotionReadiness,
+} from '@/hooks/use-environments'
+import { StoreReadinessChecklist } from '@/components/trigger-build-store-section'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 import { Button } from '@/components/ui/button'
@@ -76,6 +80,16 @@ export function PromoteDialog({
   const promote = usePromoteBuild(projectId)
   const target =
     targets.find((environment) => environment.id === targetId) ?? defaultTarget
+  // A TestFlight build going to the App Store gets the same checks an App
+  // Store upload runs, before anything is handed to Apple.
+  const toAppStore =
+    !!target && target.store === 'app_store' && target.track === 'app_store'
+  const readiness = usePromotionReadiness(
+    projectId,
+    target?.id,
+    release.build_id,
+    { enabled: open && toAppStore },
+  )
   const build = release.build_number
     ? `build #${release.build_number}`
     : 'this build'
@@ -156,6 +170,14 @@ export function PromoteDialog({
               </Text>
             ) : null}
           </Stack>
+
+          {toAppStore ? (
+            <StoreReadinessChecklist
+              readiness={readiness}
+              title="Ready for the App Store?"
+              blockingNote="You can still promote, but App Store Connect will refuse the submission until these are fixed."
+            />
+          ) : null}
 
           <Stack gap={2}>
             <Label htmlFor="promote-reason">Reason</Label>

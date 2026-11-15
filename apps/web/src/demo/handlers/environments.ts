@@ -6,7 +6,7 @@ import type {
   ReleasePolicy,
   UpdateProjectEnvironmentRequest,
 } from '@oore/client/models'
-import { approversSummary } from '@/lib/environments'
+import { approversSummary, playTrackStagesRollouts } from '@/lib/environments'
 import { ago } from '../seed'
 import type { DemoEnvironment, DemoPromotion } from '../data/environments'
 import type { DemoRelease } from '../data/releases'
@@ -52,6 +52,31 @@ const updateSchema = z.toZod<UpdateProjectEnvironmentRequest>()(
     approvers: approversSchema.nullish(),
   }),
 )
+
+type PolicyInput = z.infer<typeof policySchema>
+
+/**
+ * The policy the daemon stores: on a Play track without staged rollouts, a
+ * staged policy is refused and a missing one becomes a full release.
+ */
+function policyForTrack(
+  store: string,
+  track: string,
+  policy: PolicyInput | null | undefined,
+  fallback: PolicyInput = DEFAULT_POLICY,
+): { policy: PolicyInput } | { error: string } {
+  const resolved = policy ?? fallback
+  const staged = (resolved.steps ?? [1])[0] < 1
+  if (store !== 'google_play' || playTrackStagesRollouts(track) || !staged) {
+    return { policy: resolved }
+  }
+  if (policy) {
+    return {
+      error: `Google Play only runs staged rollouts on the production and open testing tracks, so releases on the ${track} track go to everyone at once. Set rollout_policy.steps to [1] for this environment.`,
+    }
+  }
+  return { policy: { ...resolved, steps: [1] } }
+}
 
 const promoteSchema = z.toZod<CreatePromotionRequest>()(
   z.object({
@@ -173,7 +198,9 @@ function promote(
   // An App Store version waits for App Review; TestFlight testers have it at once.
   const inReview = appStore && environment.track === 'app_store'
   const first =
-    appStore || environment.track === 'internal' ? 1 : (steps.at(0) ?? 1)
+    appStore || !playTrackStagesRollouts(environment.track)
+      ? 1
+      : (steps.at(0) ?? 1)
   const release: DemoRelease = {
     ...source,
     id: `rel-demo-promoted-${Date.now()}`,
@@ -240,6 +267,41 @@ export const environmentHandlers = [
     return HttpResponse.json({ environments, promotions })
   }),
 
+  demoApi.getPromotionReadiness(async ({ params, request }) => {
+    await delay(400)
+    const persona = getDemoPersonaFromRequest(request)
+    const projectId = String(params.project_id)
+    if (!getDemoProjectRole(persona, projectId)) {
+      return error(404, 'not_found', 'Project not found')
+    }
+    const environment = demoState.environments.find(
+      (item) => item.id === params.environment_id,
+    )
+    if (!environment) return error(404, 'not_found', 'Environment not found')
+    // The demo App Store version still needs App Review contact details.
+    const items =
+      environment.store === 'app_store' && environment.track === 'app_store'
+        ? [
+            {
+              store: 'app_store' as const,
+              code: 'review_details',
+              level: 'block' as const,
+              title: 'App Review contact details are missing',
+              detail: 'Missing: contact phone, demo account password.',
+              console_url:
+                'https://appstoreconnect.apple.com/apps/6450000001/distribution/ios/version/inflight',
+              remembered: false,
+            },
+          ]
+        : []
+    return HttpResponse.json({
+      pipeline_id: '',
+      items,
+      preflight: 'block' as const,
+      checked_at: ago(0),
+    })
+  }),
+
   demoApi.createProjectEnvironment(async ({ params, request }) => {
     await delay(250)
     const persona = getDemoPersonaFromRequest(request)
@@ -267,6 +329,8 @@ export const environmentHandlers = [
         'Another environment already uses this key, or this store and track',
       )
     }
+    const policy = policyForTrack(body.store, body.track, body.rollout_policy)
+    if ('error' in policy) return error(400, 'invalid_input', policy.error)
     const resolved = resolveApprovers(projectId, body.approvers ?? {})
     if (!resolved.approvers) {
       return error(400, 'invalid_input', resolved.error)
@@ -281,7 +345,7 @@ export const environmentHandlers = [
       track: body.track,
       approval_required: body.approval_required ?? false,
       approvers: resolved.approvers,
-      rollout_policy: body.rollout_policy ?? DEFAULT_POLICY,
+      rollout_policy: policy.policy,
       submit_for_review: body.submit_for_review ?? false,
       promotable: true,
       created_at: ago(0),
@@ -319,6 +383,13 @@ export const environmentHandlers = [
         `${environment.name} already has releases on the ${environment.track} track, so its track cannot change. Add a new environment for the ${body.track} track instead.`,
       )
     }
+    const policy = policyForTrack(
+      environment.store,
+      body.track ?? environment.track,
+      body.rollout_policy,
+      environment.rollout_policy,
+    )
+    if ('error' in policy) return error(400, 'invalid_input', policy.error)
     if (body.approvers) {
       const resolved = resolveApprovers(environment.project_id, body.approvers)
       if (!resolved.approvers) {
@@ -332,8 +403,7 @@ export const environmentHandlers = [
       body.submit_for_review ?? environment.submit_for_review
     environment.approval_required =
       body.approval_required ?? environment.approval_required
-    environment.rollout_policy =
-      body.rollout_policy ?? environment.rollout_policy
+    environment.rollout_policy = policy.policy
     environment.position = body.position ?? environment.position
     environment.updated_at = ago(0)
     return HttpResponse.json(withEnvironmentContext(environment, persona))

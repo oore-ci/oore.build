@@ -17,6 +17,7 @@ import {
 import type { SortDirection } from '@/components/data-table-features'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/status-badge'
+import { ReleaseOutcomeBadge } from '@/components/release-outcome-badge'
 import {
   BuildNumberValue,
   BuildSourceValue,
@@ -66,7 +67,12 @@ const projectBuildColumns: Array<DataTableColumnDef<Build>> = [
     header: ({ column }) => (
       <DataTableColumnHeader column={column} title="Status" />
     ),
-    cell: ({ row }) => <StatusBadge kind="build" value={row.original.status} />,
+    cell: ({ row }) => (
+      <div className="flex flex-wrap items-center gap-1">
+        <StatusBadge kind="build" value={row.original.status} />
+        <ReleaseOutcomeBadge build={row.original} />
+      </div>
+    ),
   },
   {
     accessorKey: 'trigger_type',

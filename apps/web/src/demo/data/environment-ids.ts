@@ -4,4 +4,5 @@ export const ENVIRONMENT_IDS = {
   shopProduction: 'env-demo-003',
   shopTestflight: 'env-demo-004',
   shopAppStore: 'env-demo-005',
+  shopQa: 'env-demo-006',
 } as const

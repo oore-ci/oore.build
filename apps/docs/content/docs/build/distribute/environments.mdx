@@ -45,8 +45,10 @@ order, for example:
 
 The key is fixed once created; configuration files will refer to
 environments by key. Each store and track belongs to at most one environment.
-Play's internal track has no staged rollouts, so a promotion there is always a
-full release.
+Google Play runs staged rollouts only on the production and open testing
+tracks. On internal, closed and custom tracks a promotion is always a full
+release, so Oore refuses a staged rollout policy for those environments when
+you save them, instead of Play refusing it in the middle of a promotion.
 
 App Store environments use the store **App Store** and one of two kinds of
 track:

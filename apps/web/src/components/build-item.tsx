@@ -10,6 +10,7 @@ import {
 
 import RepositoryAvatar from '@/components/repository-avatar'
 import { StatusBadge } from '@/components/status-badge'
+import { ReleaseOutcomeBadge } from '@/components/release-outcome-badge'
 import { Badge } from '@/components/ui/badge'
 import {
   Item,
@@ -185,11 +186,10 @@ export function BuildItem({
         </div>
 
         <ItemActions className="ml-auto xl:contents">
-          <StatusBadge
-            kind="build"
-            value={build.status}
-            className="justify-self-end"
-          />
+          <div className="flex flex-col items-end gap-1 justify-self-end">
+            <StatusBadge kind="build" value={build.status} />
+            <ReleaseOutcomeBadge build={build} />
+          </div>
           <HugeiconsIcon
             icon={ChevronRightIcon}
             className="justify-self-end"
