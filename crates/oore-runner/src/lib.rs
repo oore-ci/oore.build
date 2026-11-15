@@ -5795,6 +5795,19 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
+    // The number the app will carry: OORE_VERSION_CODE only when a build
+    // command passes it, else pubspec's `+N`. The built app's own numbers
+    // replace this once the artifacts exist.
+    let uses_oore_version_code = execution_plan
+        .steps
+        .iter()
+        .filter(|step| step.phase == StepPhase::Build)
+        .any(|step| step.run.contains("OORE_VERSION_CODE"));
+    let expected_version_code = if uses_oore_version_code {
+        Some(version_code)
+    } else {
+        store_version::read_pubspec_build_number(&workspace)
+    };
     report_build_identity(
         client,
         daemon_url,
@@ -5802,7 +5815,7 @@ async fn execute_build_steps(
         &job.build_id,
         &oore_contract::ReportBuildIdentityRequest {
             version_name: version_name.clone(),
-            version_code: Some(version_code),
+            version_code: expected_version_code,
             ..read_head_commit_identity(&workspace).await
         },
     )
@@ -6820,6 +6833,20 @@ Install the required tooling on the runner, set isolation: vm, or override build
     ));
     if let Err(error) = artifact_result {
         return (steps, Err(error));
+    }
+    if let Some((name, code)) = built_app_version(&workspace, ios_artifact_metadata.as_ref()) {
+        report_build_identity(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &oore_contract::ReportBuildIdentityRequest {
+                version_name: name,
+                version_code: Some(code),
+                ..Default::default()
+            },
+        )
+        .await;
     }
 
     // Publishing runs only after every build, signing and artifact step
@@ -9334,6 +9361,33 @@ fn parse_head_commit_identity(raw: &str) -> oore_contract::ReportBuildIdentityRe
     }
 }
 
+/// The version name and number the built app carries: the release App
+/// Bundle's manifest, else the signed IPA's Info.plist.
+fn built_app_version(
+    workspace: &Path,
+    ios_artifact_metadata: Option<&serde_json::Value>,
+) -> Option<(Option<String>, i64)> {
+    if let Ok(manifest) = publish::find_bundle(workspace)
+        .and_then(|bundle| oore_google_play::read_aab_manifest(&bundle))
+        && manifest.version_code > 0
+    {
+        return Some((manifest.version_name, manifest.version_code));
+    }
+    let app = ios_artifact_metadata?.get("ios_app")?;
+    let code = app
+        .get("build_number")?
+        .as_str()?
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|code| *code > 0)?;
+    let name = app
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    Some((name, code))
+}
+
 /// Tells the backend what the build is. Best effort: an older backend
 /// without the endpoint, or a failed request, only leaves the build
 /// without a title and version.
@@ -11573,5 +11627,25 @@ mod gradle_signing_tests {
                 .log_line()
                 .contains("re-signed and verified 1 it did not")
         );
+    }
+}
+
+#[cfg(test)]
+mod built_app_version_tests {
+    use super::built_app_version;
+
+    #[test]
+    fn reads_the_signed_ipa_numbers_when_there_is_no_bundle() {
+        let workspace = std::env::temp_dir().join("oore-built-app-version-none");
+        let metadata = serde_json::json!({
+            "ios_app": {"version": "2.5.1", "build_number": "12"}
+        });
+        assert_eq!(
+            built_app_version(&workspace, Some(&metadata)),
+            Some((Some("2.5.1".to_string()), 12))
+        );
+        assert_eq!(built_app_version(&workspace, None), None);
+        let unnumbered = serde_json::json!({"ios_app": {"version": "2.5.1", "build_number": "x"}});
+        assert_eq!(built_app_version(&workspace, Some(&unnumbered)), None);
     }
 }

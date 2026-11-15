@@ -216,14 +216,17 @@ export function PipelineBasicsSection({
                     />
                   </FormControl>
                   <FormDescription>
-                    Added to the build number to form{' '}
-                    <span className="font-mono">OORE_VERSION_CODE</span>. Set it
-                    above the version code your app already has in the store,
-                    then pass{' '}
+                    Only for a new store number on every build. By default the
+                    store number is the <span className="font-mono">+N</span> in{' '}
+                    <span className="font-mono">pubspec.yaml</span>, bumped for
+                    each release. To number every build instead, pass{' '}
                     <span className="font-mono">
                       --build-number=$OORE_VERSION_CODE
                     </span>{' '}
-                    to <span className="font-mono">flutter build</span>.
+                    to <span className="font-mono">flutter build</span> and set
+                    this above the store&apos;s highest number;{' '}
+                    <span className="font-mono">OORE_VERSION_CODE</span> is the
+                    build number plus this offset.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

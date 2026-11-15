@@ -299,7 +299,9 @@ Create the app in App Store Connect with the same bundle ID, then rebuild.
 **The upload fails with a bundle version error**
 
 Each upload needs a higher build number than the last one for that version.
-Pass `--build-number` to `flutter build ipa`.
+Bump the number after `+` in `pubspec.yaml`'s `version` in a commit, then
+run a new build. If the pipeline passes `--build-number=$OORE_VERSION_CODE`,
+raise **Build number offset** instead.
 
 **"What's New" is not set**
 

@@ -67,17 +67,13 @@ Every pipeline on this instance can now use the key without another upload.
 6. For **App Store Connect API key**, choose the key you added.
 7. Under **Build > Artifacts**, replace the pattern with
    `build/ios/ipa/*.ipa`.
-8. Under **Build > Commands**, open **Per-platform arguments and overrides**.
-   In **iOS build args**, enter:
+8. Select **Save changes**.
 
-   ```text
-   --build-number=$OORE_VERSION_CODE
-   ```
-
-   Every upload to App Store Connect needs a higher build number than the
-   last one. `$OORE_VERSION_CODE` grows with every build.
-
-9. Select **Save changes**.
+Every upload to App Store Connect needs a higher build number than the last
+one for that version. The build number comes from the number after `+` in
+`pubspec.yaml`'s `version`, so bump it in a commit for each store release.
+To give every build a new number instead, see
+[Version codes](/reference/config/oore-yaml#version-codes).
 
 ## 5. Sync the profiles
 

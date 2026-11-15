@@ -16,7 +16,7 @@ use oore_google_play::{
     access_token, is_play_rejection, play_track_name, read_aab_manifest,
 };
 
-use crate::store_version::{ensure_play_version_code, fetch_play_version_codes};
+use crate::store_version::{VersionNumbering, ensure_play_version_code, fetch_play_version_codes};
 
 const BUNDLE_OUTPUT_DIR: &str = "build/app/outputs/bundle";
 const MAPPING_OUTPUT_DIR: &str = "build/app/outputs/mapping";
@@ -39,7 +39,7 @@ fn collect_files_with_extension(dir: &Path, extension: &str, out: &mut Vec<PathB
 }
 
 /// Pick the bundle to upload: the only AAB, or the only release AAB.
-fn find_bundle(workspace: &Path) -> anyhow::Result<PathBuf> {
+pub(crate) fn find_bundle(workspace: &Path) -> anyhow::Result<PathBuf> {
     let mut bundles = Vec::new();
     collect_files_with_extension(&workspace.join(BUNDLE_OUTPUT_DIR), "aab", &mut bundles);
     bundles.sort();
@@ -352,7 +352,12 @@ pub(crate) async fn publish_to_google_play(
             "[oore-publish] Highest versionCode on track {track}: {highest}"
         ));
     }
-    ensure_play_version_code(manifest.version_code, &store_codes, &track)?;
+    ensure_play_version_code(
+        manifest.version_code,
+        &store_codes,
+        &track,
+        VersionNumbering::in_workspace(workspace, manifest.version_code),
+    )?;
     let edits = PlayEdits::insert(http, &token, &manifest.package_name).await?;
     let mut staged_log = Vec::new();
     let stage = async {
@@ -613,7 +618,12 @@ pub(crate) async fn rehearse_google_play(
                 return checks;
             }
         };
-    match ensure_play_version_code(manifest.version_code, &store_codes, &track) {
+    match ensure_play_version_code(
+        manifest.version_code,
+        &store_codes,
+        &track,
+        VersionNumbering::in_workspace(workspace, manifest.version_code),
+    ) {
         Ok(()) => checks.push(rehearsal_check(
             "play_version_code",
             ReadinessLevel::Ok,

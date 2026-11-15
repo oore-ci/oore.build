@@ -2,6 +2,7 @@
 //! code the store would reject fails early with both numbers in the message.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use anyhow::Context;
 use oore_google_play::play_json;
@@ -138,26 +139,86 @@ async fn fetch_play_version_codes_from(
     read
 }
 
+/// Where a build's store version code came from, which decides how to fix
+/// a code the store refuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionNumbering {
+    /// The number after `+` in `pubspec.yaml`, bumped in a commit for each
+    /// store release. QA builds of one release can share it.
+    Pubspec,
+    /// `OORE_VERSION_CODE`: Oore's build counter plus `build_number_offset`,
+    /// passed to Flutter with `--build-number`.
+    OoreCounter,
+}
+
+impl VersionNumbering {
+    /// The pubspec when the built code is pubspec's `+N`, else Oore's
+    /// counter.
+    pub fn of(version_code: i64, pubspec_build_number: Option<i64>) -> Self {
+        if pubspec_build_number == Some(version_code) {
+            Self::Pubspec
+        } else {
+            Self::OoreCounter
+        }
+    }
+
+    /// `of` with the workspace's `pubspec.yaml`.
+    pub fn in_workspace(workspace: &Path, version_code: i64) -> Self {
+        Self::of(version_code, read_pubspec_build_number(workspace))
+    }
+
+    fn fix(self, version_code: i64, at_least: i64, what: &str) -> String {
+        match self {
+            Self::Pubspec => format!(
+                "Bump the build number after + in pubspec.yaml's version to at least {at_least} in a commit, then build again."
+            ),
+            Self::OoreCounter => format!(
+                "Raise build_number_offset by at least {} so this build gets {what} OORE_VERSION_CODE.",
+                at_least - version_code
+            ),
+        }
+    }
+}
+
+/// The build number from `pubspec.yaml` (`version: 1.4.0+12` gives 12).
+pub fn pubspec_build_number(raw: &str) -> Option<i64> {
+    let value = raw.lines().find_map(|line| line.strip_prefix("version:"))?;
+    let value = value.split(" #").next()?.trim().trim_matches(['"', '\'']);
+    let (_, number) = value.split_once('+')?;
+    number
+        .trim()
+        .parse()
+        .ok()
+        .filter(|number: &i64| *number > 0)
+}
+
+/// `pubspec_build_number` of the workspace root's `pubspec.yaml`.
+pub fn read_pubspec_build_number(workspace: &Path) -> Option<i64> {
+    pubspec_build_number(&std::fs::read_to_string(workspace.join("pubspec.yaml")).ok()?)
+}
+
 /// Fails when Google Play would reject `version_code` on `track`: when the
 /// code was already uploaded, or is not above the track's highest release.
+/// The message says how to fix it for the way the build is numbered.
 pub fn ensure_play_version_code(
     version_code: i64,
     store: &PlayVersionCodes,
     track: &str,
+    numbering: VersionNumbering,
 ) -> anyhow::Result<()> {
     if let Some(highest) = store.track_highest
         && version_code <= highest
     {
         anyhow::bail!(
-            "Version code {version_code} is not higher than {highest}, the highest version code on the Google Play {track} track. Raise build_number_offset by at least {} so this build gets a higher OORE_VERSION_CODE.",
-            highest - version_code + 1
+            "Version code {version_code} is not higher than {highest}, the highest version code on the Google Play {track} track. {}",
+            numbering.fix(version_code, highest + 1, "a higher")
         );
     }
     if store.used.contains(&version_code) {
         let highest_used = store.used.last().copied().unwrap_or(version_code);
         anyhow::bail!(
-            "Version code {version_code} was already uploaded to Google Play (highest uploaded is {highest_used}). Raise build_number_offset by at least {} so this build gets an unused OORE_VERSION_CODE.",
-            highest_used - version_code + 1
+            "Version code {version_code} was already uploaded to Google Play (highest uploaded is {highest_used}). {}",
+            numbering.fix(version_code, highest_used + 1, "an unused")
         );
     }
     Ok(())
@@ -166,6 +227,40 @@ pub fn ensure_play_version_code(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const OORE: VersionNumbering = VersionNumbering::OoreCounter;
+    const PUBSPEC: VersionNumbering = VersionNumbering::Pubspec;
+
+    #[test]
+    fn reads_the_pubspec_build_number() {
+        assert_eq!(
+            pubspec_build_number("name: app\nversion: 2.5.1+12\n"),
+            Some(12)
+        );
+        assert_eq!(pubspec_build_number("version: \"2.5.1+7\" # QA\n"), Some(7));
+        assert_eq!(pubspec_build_number("version: 2.5.1\n"), None);
+        assert_eq!(
+            pubspec_build_number("dependencies:\n  version: 1.0.0+3\n"),
+            None
+        );
+    }
+
+    #[test]
+    fn numbering_follows_where_the_code_came_from() {
+        assert_eq!(VersionNumbering::of(12, Some(12)), PUBSPEC);
+        assert_eq!(VersionNumbering::of(147, Some(12)), OORE);
+        assert_eq!(VersionNumbering::of(147, None), OORE);
+    }
+
+    #[test]
+    fn pubspec_numbered_builds_are_told_to_bump_pubspec() {
+        let error = ensure_play_version_code(12, &codes("production"), "production", PUBSPEC)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("pubspec.yaml"), "{error}");
+        assert!(error.contains("at least 132"), "{error}");
+        assert!(!error.contains("build_number_offset"), "{error}");
+    }
 
     fn codes(track: &str) -> PlayVersionCodes {
         let tracks: PlayTracks = serde_json::from_value(serde_json::json!({
@@ -199,7 +294,7 @@ mod tests {
 
     #[test]
     fn rejects_codes_not_above_the_target_track_naming_both_numbers() {
-        let error = ensure_play_version_code(42, &codes("production"), "production")
+        let error = ensure_play_version_code(42, &codes("production"), "production", OORE)
             .unwrap_err()
             .to_string();
         assert!(
@@ -207,12 +302,12 @@ mod tests {
             "{error}"
         );
         assert!(error.contains("by at least 90"), "{error}");
-        assert!(ensure_play_version_code(131, &codes("production"), "production").is_err());
+        assert!(ensure_play_version_code(131, &codes("production"), "production", OORE).is_err());
     }
 
     #[test]
     fn rejects_codes_already_uploaded_elsewhere() {
-        let error = ensure_play_version_code(140, &codes("production"), "production")
+        let error = ensure_play_version_code(140, &codes("production"), "production", OORE)
             .unwrap_err()
             .to_string();
         assert!(
@@ -224,8 +319,8 @@ mod tests {
 
     #[test]
     fn accepts_unused_codes_above_the_track() {
-        ensure_play_version_code(135, &codes("production"), "production").unwrap();
-        ensure_play_version_code(1, &PlayVersionCodes::default(), "internal").unwrap();
+        ensure_play_version_code(135, &codes("production"), "production", OORE).unwrap();
+        ensure_play_version_code(1, &PlayVersionCodes::default(), "internal", PUBSPEC).unwrap();
     }
 
     #[tokio::test]
