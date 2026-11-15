@@ -500,7 +500,7 @@ function ProjectDetailPage() {
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />
           <AlertDescription className={splitRowVariants()}>
             <span>
-              This project has no repository.{' '}
+              This app has no repository.{' '}
               {canWriteInstanceSettings
                 ? 'Connect one before running builds.'
                 : 'Ask an owner or admin to connect one before running builds.'}
@@ -546,7 +546,7 @@ function ProjectDetailPage() {
             ) : (
               <span className={splitRowVariants()}>
                 <span>
-                  Oore cannot find this project&apos;s source repository. Builds
+                  Oore cannot find this app&apos;s source repository. Builds
                   remain queued until{' '}
                   {canWriteInstanceSettings
                     ? 'you repair the source link.'
@@ -764,7 +764,7 @@ function ProjectDetailPage() {
                     onClick={() => setDeleteOpen(true)}
                   >
                     <HugeiconsIcon icon={Delete02Icon} />
-                    Delete project
+                    Delete app
                   </Button>
                 }
               />

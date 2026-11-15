@@ -32,8 +32,8 @@ import {
 } from '@/components/ui/select'
 
 const CONFIG_SOURCES = {
-  auto: 'Use repo config if found (.oore.yaml, .oore.yml)',
-  explicit: 'Choose a config file',
+  auto: 'Use .oore.yaml (or .oore.yml) if the repository has one',
+  explicit: 'Use a file at another path',
 } satisfies Record<string, string>
 
 const PLATFORM_FIELDS = [
@@ -116,13 +116,13 @@ export function PipelineBasicsSection({
 
           <SettingsSurfaceSeparator />
 
-          <PipelineFormSubsection title="Configuration">
+          <PipelineFormSubsection title="Pipeline file">
             <FormField
               control={form.control}
               name="config_mode"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Config source</FormLabel>
+                  <FormLabel>File</FormLabel>
                   <Select
                     value={field.value}
                     onValueChange={field.onChange}
@@ -131,9 +131,9 @@ export function PipelineBasicsSection({
                     <FormControl>
                       <SelectTrigger
                         className="w-full"
-                        aria-label="Config source"
+                        aria-label="Pipeline file"
                       >
-                        <SelectValue placeholder="Choose source" />
+                        <SelectValue placeholder="Choose a file" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
@@ -157,7 +157,7 @@ export function PipelineBasicsSection({
                 name="config_path"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Config path</FormLabel>
+                    <FormLabel>File path</FormLabel>
                     <FormControl>
                       <Input
                         placeholder="e.g. ci/oore.yaml"

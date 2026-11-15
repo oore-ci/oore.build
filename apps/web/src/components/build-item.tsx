@@ -67,10 +67,13 @@ function runnerState(build: Build): RunnerState {
 export function BuildItem({
   build,
   inList = false,
+  showProject = true,
 }: {
   build: Build
   /** Drop the row's own border when it sits on a shared list surface. */
   inList?: boolean
+  /** Off inside one app's page: the row leads with the pipeline instead. */
+  showProject?: boolean
 }) {
   const projectName = build.context?.project_name ?? build.project_id
   const pipelineName = build.context?.pipeline_name ?? 'Build pipeline'
@@ -121,7 +124,9 @@ export function BuildItem({
 
         <ItemContent className="min-w-0">
           <ItemTitle className="w-full min-w-0">
-            <span className="truncate">{projectName}</span>
+            <span className="truncate">
+              {showProject ? projectName : pipelineName}
+            </span>
             <span
               className={cn(
                 textVariants({ variant: 'caption' }),
@@ -139,7 +144,8 @@ export function BuildItem({
               </>
             ) : (
               <>
-                {pipelineName} · {buildSourceRef(build) ?? 'No branch'} ·{' '}
+                {showProject ? `${pipelineName} · ` : ''}
+                {buildSourceRef(build) ?? 'No branch'} ·{' '}
                 <span className="font-mono">{commitLabel}</span>
               </>
             )}

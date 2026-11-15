@@ -8,6 +8,9 @@ import { PageMeta } from '@/lib/seo'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import { SecretsPanel } from '@/components/secrets/secrets-panel'
+import { AppStoreConnectKeysPanel } from '@/components/store-credentials/app-store-connect-keys-panel'
+import { GooglePlayServiceAccountPanel } from '@/components/store-credentials/google-play-service-account-panel'
+import { Stack } from '@/components/layout/stack'
 import { Button } from '@/components/ui/button'
 
 export const Route = createLazyFileRoute('/settings/secrets')({
@@ -20,9 +23,9 @@ function SecretsPage() {
 
   return (
     <PageLayout width="wide">
-      <PageMeta title="Secrets" noindex />
+      <PageMeta title="Secrets and credentials" noindex />
       <PageHeader
-        title="Secrets"
+        title="Secrets and credentials"
         actions={
           canWrite ? (
             <Button onClick={() => setCreateOpen(true)}>
@@ -32,13 +35,23 @@ function SecretsPage() {
           ) : undefined
         }
       />
-      <SecretsPanel
-        canWrite={canWrite}
-        createOpen={createOpen}
-        onCreateOpenChange={setCreateOpen}
-        target={{ scope: 'instance' }}
-        title="Instance secrets"
-      />
+      <Stack gap={10}>
+        <SecretsPanel
+          canWrite={canWrite}
+          createOpen={createOpen}
+          onCreateOpenChange={setCreateOpen}
+          target={{ scope: 'instance' }}
+          title="Instance secrets"
+        />
+        <Stack
+          id="store-credentials"
+          gap={10}
+          className="scroll-mt-[calc(var(--header-height)+4rem)]"
+        >
+          <AppStoreConnectKeysPanel canWrite={canWrite} />
+          <GooglePlayServiceAccountPanel canWrite={canWrite} />
+        </Stack>
+      </Stack>
     </PageLayout>
   )
 }

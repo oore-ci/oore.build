@@ -173,9 +173,7 @@ const SettingsRetentionRoute = SettingsRetentionRouteImport.update({
   id: '/retention',
   path: '/retention',
   getParentRoute: () => SettingsRouteRoute,
-} as any).lazy(() =>
-  import('./routes/settings/retention.lazy').then((d) => d.Route),
-)
+} as any)
 const SettingsRunnersRoute = SettingsRunnersRouteImport.update({
   id: '/runners',
   path: '/runners',
@@ -200,9 +198,7 @@ const SettingsStoreCredentialsRoute =
     id: '/store-credentials',
     path: '/store-credentials',
     getParentRoute: () => SettingsRouteRoute,
-  } as any).lazy(() =>
-    import('./routes/settings/store-credentials.lazy').then((d) => d.Route),
-  )
+  } as any)
 const SettingsTestersRoute = SettingsTestersRouteImport.update({
   id: '/testers',
   path: '/testers',

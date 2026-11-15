@@ -434,7 +434,7 @@ function AppCard({ app, anchor }: { app: StoreAppVitals; anchor?: string }) {
               variant="outline"
               size="xs"
               nativeButton={false}
-              render={<Link to="/settings/store-credentials" />}
+              render={<Link to="/settings/secrets" hash="store-credentials" />}
             >
               Fix in Store credentials
             </Button>

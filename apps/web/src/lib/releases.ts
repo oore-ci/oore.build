@@ -9,6 +9,7 @@ import type {
   ReleaseState,
   ReleaseStore,
 } from '@oore/client/models'
+import { playTrackLabel } from '@/lib/store-destination'
 
 export const RELEASE_STATE_LABEL = {
   uploading: 'Uploading',
@@ -204,7 +205,7 @@ export function releaseDestinationLabel(
   if (release.store === 'app_store') {
     return isTestFlight(release) ? `TestFlight · ${release.track}` : 'App Store'
   }
-  return `${RELEASE_STORE_LABEL[release.store]} · ${release.track}`
+  return `${RELEASE_STORE_LABEL[release.store]} · ${playTrackLabel(release.track)}`
 }
 
 /** One phrase for a status chip: "App Store processing". */

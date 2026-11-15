@@ -1,18 +1,14 @@
-import { createLazyFileRoute } from '@tanstack/react-router'
 import { useForm, useWatch } from 'react-hook-form'
 import type { UseFormReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
 
-import { PageMeta } from '@/lib/seo'
 import {
   useRetentionLastCleanup,
   useRetentionPolicy,
   useUpdateRetentionPolicy,
 } from '@/hooks/use-retention'
-import PageLayout from '@/components/page-layout'
-import PageHeader from '@/components/page-header'
 import { FormActions } from '@/components/form-actions'
 import {
   SettingsSection,
@@ -43,13 +39,9 @@ import {
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { RetentionSummaryCard } from './-retention-summary-card'
+import { RetentionSummaryCard } from '@/components/settings/retention-summary-card'
 import { Stack } from '@/components/layout/stack'
 import { splitRowVariants } from '@/lib/recipes'
-
-export const Route = createLazyFileRoute('/settings/retention')({
-  component: RetentionPage,
-})
 
 const TERMINAL_STATUSES = [
   { value: 'succeeded', label: 'Succeeded' },
@@ -154,7 +146,7 @@ function EnabledRetentionFields({
                   />
                 </FormControl>
                 <FormDescription>
-                  Oldest builds are cleaned up once a project&apos;s artifacts
+                  Oldest builds are cleaned up once an app&apos;s artifacts
                   exceed this
                 </FormDescription>
                 <FormMessage />
@@ -302,7 +294,11 @@ function EnabledRetentionFields({
   )
 }
 
-function RetentionPage() {
+/**
+ * The Retention section of the Storage settings page: when Oore cleans up
+ * old builds, logs and artifacts.
+ */
+export function RetentionSettings() {
   const {
     data: policyData,
     error: policyError,
@@ -403,15 +399,13 @@ function RetentionPage() {
 
   if (policyLoading) {
     return (
-      <PageLayout width="wide">
-        <PageMeta title="Retention" />
-        <PageHeader title="Retention" />
+      <SettingsSection id="retention" title="Retention">
         <Stack gap={4} aria-label="Loading retention settings">
           <Skeleton className="h-4 w-48" />
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </Stack>
-      </PageLayout>
+      </SettingsSection>
     )
   }
 
@@ -419,9 +413,7 @@ function RetentionPage() {
     const message =
       policyError?.message ?? 'The response did not include a retention policy.'
     return (
-      <PageLayout width="wide">
-        <PageMeta title="Retention" />
-        <PageHeader title="Retention" />
+      <SettingsSection id="retention" title="Retention">
         <Alert variant="destructive">
           <AlertDescription className={splitRowVariants()}>
             <span>Failed to load the retention policy: {message}</span>
@@ -435,25 +427,23 @@ function RetentionPage() {
             </Button>
           </AlertDescription>
         </Alert>
-      </PageLayout>
+      </SettingsSection>
     )
   }
 
   return (
-    <PageLayout width="wide">
-      <PageMeta title="Retention" />
-      <PageHeader
-        title="Retention"
-        meta={
-          <RetentionSummaryCard
-            error={cleanupError}
-            isLoading={cleanupLoading}
-            lastCleanup={lastCleanup ?? undefined}
-            onRetry={() => void refetchCleanup()}
-          />
-        }
-      />
-
+    <SettingsSection
+      id="retention"
+      title="Retention"
+      meta={
+        <RetentionSummaryCard
+          error={cleanupError}
+          isLoading={cleanupLoading}
+          lastCleanup={lastCleanup ?? undefined}
+          onRetry={() => void refetchCleanup()}
+        />
+      }
+    >
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsSurface className="flex flex-col gap-6">
@@ -495,6 +485,6 @@ function RetentionPage() {
           />
         </form>
       </Form>
-    </PageLayout>
+    </SettingsSection>
   )
 }
