@@ -65,7 +65,10 @@ import { isNearScrollEnd } from '@/lib/scroll'
 import { Stack } from '@/components/layout/stack'
 import { Row } from '@/components/layout/row'
 import { Text } from '@/components/layout/text'
-import { TriggerBuildStoreSection } from '@/components/trigger-build-store-section'
+import {
+  TriggerBuildDestination,
+  TriggerBuildStoreSection,
+} from '@/components/trigger-build-store-section'
 import { TriggerBuildWorkflowField } from '@/components/trigger-build-workflow-field'
 import {
   choosableWorkflows,
@@ -845,6 +848,14 @@ export default function TriggerBuildDrawer({
                     submitted, released or sent to testers.
                   </AlertDescription>
                 </Alert>
+              ) : null}
+              {selectedPipelineId && !rehearsal ? (
+                <TriggerBuildDestination
+                  enabled={open}
+                  pipelineId={selectedPipelineId}
+                  platforms={availablePlatforms}
+                  filePublishes={chosenWorkflow?.publishes ?? []}
+                />
               ) : null}
               <RecentRunChips
                 runs={recentRuns.filter(

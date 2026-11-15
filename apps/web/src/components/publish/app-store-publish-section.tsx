@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   useFieldArray,
@@ -26,6 +27,7 @@ import {
 } from '@/hooks/use-pipeline-publish'
 import { CollectionError } from '@/components/collection'
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard'
+import { AdvancedOptions } from '@/components/publish/advanced-options'
 import {
   PublishReadiness,
   type ReadinessCheck,
@@ -609,6 +611,41 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
           </FormItem>
         )}
       />
+      {fields.length < MAX_NOTES ? (
+        <div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => append({ locale: '', whats_new: '' })}
+          >
+            <HugeiconsIcon icon={Add01Icon} />
+            Add locale
+          </Button>
+        </div>
+      ) : null}
+    </Stack>
+  )
+}
+
+const ADVANCED_FIELDS = [
+  'listing_dir',
+  'preflight',
+  'uses_non_exempt_encryption',
+] as const
+
+function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
+  const [listingDir, preflight, encryption] = useWatch({
+    control: form.control,
+    name: ADVANCED_FIELDS,
+  })
+  const { errors } = useFormState({ control: form.control })
+  return (
+    <AdvancedOptions
+      changed={!!listingDir || preflight !== 'auto' || encryption}
+      hasError={ADVANCED_FIELDS.some((name) => !!errors[name])}
+      summary="Store listing, pre-flight checks, export compliance"
+    >
       <FormField
         control={form.control}
         name="listing_dir"
@@ -633,29 +670,56 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
           </FormItem>
         )}
       />
-      {fields.length < MAX_NOTES ? (
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => append({ locale: '', whats_new: '' })}
-          >
-            <HugeiconsIcon icon={Add01Icon} />
-            Add locale
-          </Button>
-        </div>
-      ) : null}
-    </Stack>
+      <FormField
+        control={form.control}
+        name="preflight"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Pre-flight checks</FormLabel>
+            <FormControl>
+              <RadioGroup
+                value={field.value}
+                onValueChange={field.onChange}
+                className="flex flex-wrap gap-x-6 gap-y-2"
+              >
+                {Object.entries(PREFLIGHT_LEVELS).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <RadioGroupItem value={value} />
+                    {label}
+                  </label>
+                ))}
+              </RadioGroup>
+            </FormControl>
+            <FormDescription>
+              Before uploading, the runner checks for what Apple refuses after
+              the upload, such as an app icon with transparency. Automatic warns
+              until a release from this pipeline has been accepted, then stops
+              the upload.
+            </FormDescription>
+          </FormItem>
+        )}
+      />
+      <SwitchField
+        form={form}
+        name="uses_non_exempt_encryption"
+        label="Uses non-exempt encryption"
+        description="Oore answers Apple’s export compliance question with this on every build. Leave it off if the app only uses encryption built into iOS, such as HTTPS."
+      />
+    </AdvancedOptions>
   )
 }
 
 function AppStorePublishForm({
   canWrite,
+  onEnabledChange,
   pipelineId,
   saved,
 }: {
   canWrite: boolean
+  onEnabledChange: (enabled: boolean) => void
   pipelineId: string
   saved: AppStorePublishResponse
 }) {
@@ -671,6 +735,7 @@ function AppStorePublishForm({
   // Same rule as Google Play: Save needs a change, except that a first
   // setup with uploads on can be saved as it stands.
   const canSave = isDirty || (isNew && enabled)
+  useEffect(() => onEnabledChange(enabled), [enabled, onEnabledChange])
 
   function onSubmit(next: FormValues) {
     updateMutation.mutate(toConfig(next), {
@@ -691,67 +756,25 @@ function AppStorePublishForm({
           <SettingsSurface className="flex flex-col gap-6">
             <UploadToggle form={form} />
 
-            <SettingsSurfaceSeparator />
+            {enabled ? (
+              <>
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Destination">
-              <DestinationFields form={form} />
-            </SettingsSection>
+                <SettingsSection title="Destination">
+                  <DestinationFields form={form} />
+                </SettingsSection>
 
-            <SettingsSurfaceSeparator />
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Release notes">
-              <ReleaseNotesFields form={form} />
-            </SettingsSection>
+                <SettingsSection title="Release notes">
+                  <ReleaseNotesFields form={form} />
+                </SettingsSection>
 
-            <SettingsSurfaceSeparator />
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Pre-flight checks">
-              <FormField
-                control={form.control}
-                name="preflight"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="sr-only">Pre-flight checks</FormLabel>
-                    <FormControl>
-                      <RadioGroup
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        className="flex flex-wrap gap-x-6 gap-y-2"
-                      >
-                        {Object.entries(PREFLIGHT_LEVELS).map(
-                          ([value, label]) => (
-                            <label
-                              key={value}
-                              className="flex items-center gap-2 text-sm"
-                            >
-                              <RadioGroupItem value={value} />
-                              {label}
-                            </label>
-                          ),
-                        )}
-                      </RadioGroup>
-                    </FormControl>
-                    <FormDescription>
-                      Before uploading, the runner checks for what Apple refuses
-                      after the upload, such as an app icon with transparency.
-                      Automatic warns until a release from this pipeline has
-                      been accepted, then stops the upload.
-                    </FormDescription>
-                  </FormItem>
-                )}
-              />
-            </SettingsSection>
-
-            <SettingsSurfaceSeparator />
-
-            <SettingsSection title="Export compliance">
-              <SwitchField
-                form={form}
-                name="uses_non_exempt_encryption"
-                label="Uses non-exempt encryption"
-                description="Oore answers Apple’s export compliance question with this on every build. Leave it off if the app only uses encryption built into iOS, such as HTTPS."
-              />
-            </SettingsSection>
+                <AdvancedFields form={form} />
+              </>
+            ) : null}
 
             {updateMutation.error ? (
               <Alert variant="destructive">
@@ -763,7 +786,7 @@ function AppStorePublishForm({
               </Alert>
             ) : null}
 
-            {canWrite ? (
+            {canWrite && (enabled || isDirty) ? (
               <>
                 <SettingsSurfaceSeparator />
                 <div className="flex justify-end gap-2">
@@ -813,6 +836,10 @@ export function AppStorePublishSection({
 }) {
   const publishQuery = usePipelineAppStorePublish(pipelineId)
   const data = publishQuery.data
+  // Follows the switch in the form, so the checks go away as soon as
+  // uploads are switched off, before the change is saved.
+  const [formEnabled, setFormEnabled] = useState<boolean | null>(null)
+  const uploadsOn = formEnabled ?? data?.config.enabled ?? false
   const storeReadiness = usePipelinePublishReadiness(pipelineId, {
     enabled: !!data?.config.enabled,
   })
@@ -893,7 +920,7 @@ export function AppStorePublishSection({
       title="App Store Connect"
       hint="The Mac that built the app uploads the signed IPA with the API key from iOS signing."
     >
-      {checks.length > 0 ? (
+      {uploadsOn && checks.length > 0 ? (
         <PublishReadiness
           checks={checks}
           footnote={
@@ -913,6 +940,7 @@ export function AppStorePublishSection({
       ) : data ? (
         <AppStorePublishForm
           canWrite={canWrite}
+          onEnabledChange={setFormEnabled}
           pipelineId={pipelineId}
           saved={data}
         />

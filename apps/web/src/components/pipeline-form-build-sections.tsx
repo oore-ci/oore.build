@@ -91,7 +91,9 @@ export function PipelineBuildSection({
   envVarCount,
   playBundle,
   previewDefaults,
+  summary,
 }: {
+  summary?: string
   advancedOpen: boolean
   commandCount: number
   envVarCount: number
@@ -119,6 +121,7 @@ export function PipelineBuildSection({
   return (
     <PipelineFormSection
       id="build"
+      summary={summary}
       title="Build"
       hint="Defaults work for a standard Flutter app."
     >
@@ -320,6 +323,7 @@ export function PipelineBuildSection({
         />
         <SetupHint
           title="Built-in CI variables"
+          summary="Oore adds its own variables to every build."
           items={[
             <span key="built-in-variables">
               Oore also injects <code>PROJECT_ID</code>,{' '}
