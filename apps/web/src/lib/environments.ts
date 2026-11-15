@@ -42,6 +42,15 @@ const PLAY_TRACK_LABEL = new Map([
   ['production', 'Production'],
 ])
 
+/**
+ * Whether Google Play runs staged rollouts on a track. Play stages only
+ * production and open testing; internal, closed and custom tracks release to
+ * everyone at once, and the daemon refuses a staged policy for them.
+ */
+export function playTrackStagesRollouts(track: string): boolean {
+  return ['production', 'open', 'beta'].includes(track.trim())
+}
+
 export function environmentTargetLabel(
   environment: Pick<ProjectEnvironment, 'store' | 'track'>,
 ): string {
@@ -105,7 +114,7 @@ export function rolloutPolicySummary(
       ? "Phased release on Apple's 7-day schedule"
       : 'Full release'
   }
-  if (environment.track === 'internal') return 'Full release'
+  if (!playTrackStagesRollouts(environment.track)) return 'Full release'
   if (steps.length <= 1) return 'Full release'
   const hours = Math.round((policy.interval_hours ?? 24) * 100) / 100
   const schedule = `${formatRolloutSteps(steps).replaceAll(', ', '% → ')}% every ${hours}h`

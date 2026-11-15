@@ -3057,6 +3057,10 @@ pub async fn build_router_with_recovery(
                 .delete(environments::delete_project_environment),
         )
         .route(
+            "/v1/projects/{project_id}/environments/{environment_id}/readiness",
+            get(environments::get_promotion_readiness),
+        )
+        .route(
             "/v1/projects/{project_id}/promotions",
             post(environments::promote_build),
         )
@@ -3138,6 +3142,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal",
             post(rehearsals::report_job_rehearsal),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight",
+            post(store_readiness::check_job_app_store_preflight),
         )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/test-results",

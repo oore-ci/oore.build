@@ -7,6 +7,7 @@ import {
   formatRolloutSteps,
   nextEnvironment,
   parseRolloutSteps,
+  playTrackStagesRollouts,
   rolloutPolicySummary,
 } from './environments'
 
@@ -40,6 +41,14 @@ describe('rolloutPolicySummary', () => {
         rollout_policy: { steps: [0.1, 1] },
       }),
     ).toBe('Full release')
+  })
+
+  test('closed and custom Play tracks never stage', () => {
+    for (const track of ['closed', 'qa-team']) {
+      expect(
+        rolloutPolicySummary({ track, rollout_policy: { steps: [0.1, 1] } }),
+      ).toBe('Full release')
+    }
   })
 
   test('describes the schedule and the crash-rate halt', () => {
@@ -138,5 +147,16 @@ describe('approvers', () => {
       user_ids: [],
     })
     expect(approversInput('named', ['u1'])).toEqual({ user_ids: ['u1'] })
+  })
+})
+
+describe('playTrackStagesRollouts', () => {
+  test('only production and open testing stage', () => {
+    for (const track of ['production', 'open', 'beta', ' open ']) {
+      expect(playTrackStagesRollouts(track)).toBe(true)
+    }
+    for (const track of ['internal', 'closed', 'alpha', 'qa-team']) {
+      expect(playTrackStagesRollouts(track)).toBe(false)
+    }
   })
 })

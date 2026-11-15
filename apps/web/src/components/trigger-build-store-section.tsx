@@ -4,7 +4,10 @@ import {
   CheckmarkCircle02Icon,
 } from '@hugeicons/core-free-icons'
 import type { UseFormReturn } from 'react-hook-form'
-import type { StoreReadinessItem } from '@oore/client/models'
+import type {
+  StoreReadinessItem,
+  StoreReadinessResponse,
+} from '@oore/client/models'
 import { Button } from '@/components/ui/button'
 import {
   FormControl,
@@ -215,14 +218,21 @@ export function TriggerBuildStoreSection({
 export function StoreReadinessChecklist({
   readiness,
   title = 'Ready to submit?',
+  blockingNote,
 }: {
-  readiness: ReturnType<typeof usePipelinePublishReadiness>
+  readiness: {
+    data?: StoreReadinessResponse
+    isPending: boolean
+    error: unknown
+  }
   title?: string
+  /** Replaces the note under blocking findings. */
+  blockingNote?: string
 }) {
   const items = readiness.data?.items ?? []
   const problems = items.filter((item) => item.level !== 'ok')
   return (
-    <Stack gap={2} role="group" aria-label="Ready to submit?">
+    <Stack gap={2} role="group" aria-label={title}>
       <p className="text-sm font-medium">{title}</p>
       {readiness.isPending ? (
         <Skeleton className="h-10 w-full" />
@@ -289,9 +299,10 @@ export function StoreReadinessChecklist({
       )}
       {problems.some((item) => item.level === 'block') ? (
         <Text variant="caption">
-          {readiness.data?.preflight === 'warn'
-            ? 'The upload goes ahead, but the store will refuse it until these are fixed.'
-            : 'Fix these first, or the publish step stops before the upload.'}
+          {blockingNote ??
+            (readiness.data?.preflight === 'warn'
+              ? 'The upload goes ahead, but the store will refuse it until these are fixed.'
+              : 'Fix these first, or the publish step stops before the upload.')}
         </Text>
       ) : null}
     </Stack>

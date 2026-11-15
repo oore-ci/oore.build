@@ -46,6 +46,7 @@ import { formatEnumLabel } from '@/lib/format-utils'
 import { DangerZone } from '@/components/danger-zone'
 import { RelativeTime } from '@/components/relative-time'
 import { StatusBadge } from '@/components/status-badge'
+import { ReleaseOutcomeBadge } from '@/components/release-outcome-badge'
 import { PageMeta } from '@/lib/seo'
 import {
   DataTable,
@@ -122,7 +123,12 @@ const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
     accessorKey: 'status',
     header: 'Status',
-    cell: ({ row }) => <StatusBadge kind="build" value={row.original.status} />,
+    cell: ({ row }) => (
+      <div className="flex flex-wrap items-center gap-1">
+        <StatusBadge kind="build" value={row.original.status} />
+        <ReleaseOutcomeBadge build={row.original} />
+      </div>
+    ),
     enableSorting: false,
   },
   {
