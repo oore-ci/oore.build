@@ -5,10 +5,11 @@
   "sideEffects": false,
   "scripts": {
     "dev": "astro dev --port 3001",
-    "build": "astro build",
+    "build": "astro build && bun tools/check-markdown-output.ts",
     "preview": "astro preview --host 127.0.0.1 --port 4173",
     "types:check": "astro check",
-    "lint": "astro sync && oxlint --type-aware ."
+    "lint": "astro sync && oxlint --type-aware .",
+    "test": "bun test tools"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

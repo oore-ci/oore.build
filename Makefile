@@ -11,7 +11,7 @@
 	register-runner release-smoke run-daemon run-runner setup-token \
 	rust-target-size clean-rust-debug-dry-run clean-rust-debug \
 	check-client-openapi smoke-install \
-	test-deployment-headers test-rust test-site test-tools test-web \
+	test-deployment-headers test-docs test-rust test-site test-tools test-web \
 	validate validate-ci validate-docs validate-frontend validate-rust \
 	validate-shell validate-web-launcher validate-workflows
 
@@ -166,6 +166,9 @@ lint-site:
 test-site:
 	cd apps/site && bun run test
 
+test-docs:
+	cd apps/docs && bun run test
+
 test-deployment-headers:
 	bun test tools/check-deployment-headers.test.ts
 
@@ -292,7 +295,7 @@ validate-web-launcher: build-web
 
 validate-frontend: format-check lint-web test-web check-client-openapi validate-web-launcher
 
-validate-docs: format-check lint-docs lint-site test-site check-docs-types build-docs build-site
+validate-docs: format-check lint-docs lint-site test-site test-docs check-docs-types build-docs build-site
 
 validate-rust: format-rust-check lint-rust test-rust check-openapi
 

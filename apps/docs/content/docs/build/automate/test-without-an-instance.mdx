@@ -1,0 +1,135 @@
+---
+title: 'Test without an instance'
+status: implemented
+description: 'Run a script, an integration or an agent against realistic mock Oore data with @oore/client and MSW, before it touches a real instance.'
+---
+
+`@oore/client` ships the same mock data that powers
+[demo.oore.build](https://demo.oore.build): two apps, their builds and three
+store releases in different states. With [MSW](https://mswjs.io), your code
+talks to it as if it were an Oore instance. Nothing is built, uploaded or
+released, so a script or an agent can try every call safely.
+
+Open [demo.oore.build](https://demo.oore.build) next to your code to see the
+same apps and releases in the web UI.
+
+## Install
+
+```bash
+npm install @oore/client msw@2
+```
+
+The package is ESM only. Run the examples with Node.js 20 or later: Bun does
+not support the request interception that `msw/node` uses.
+
+## Answer every request from the mock
+
+`createOoreMockHandlers` returns MSW handlers that keep their own state. A
+project you create shows up in the next list, and a rollout you pause is
+paused when you read it again. Timestamps and IDs are fixed, so tests give
+the same result every run.
+
+```ts
+import { setupServer } from 'msw/node'
+import { createOoreClient, listProjects, listReleases } from '@oore/client'
+import { createOoreMockHandlers } from '@oore/client/msw/scenarios'
+
+const server = setupServer(...createOoreMockHandlers())
+server.listen({ onUnhandledRequest: 'error' })
+
+// Any base URL works: the handlers match every host.
+const client = createOoreClient({
+  baseUrl: 'https://oore.test',
+  token: 'oore_mock_token',
+})
+
+const { projects } = await listProjects({ client })
+console.log(projects.map((project) => project.name)) // FlutterShop, InternalAdmin
+
+const { releases } = await listReleases({ client })
+console.log(releases.map((release) => `${release.store} ${release.state}`))
+
+server.close()
+```
+
+`onUnhandledRequest: 'error'` makes a call the scenario does not cover fail
+loudly instead of reaching the network.
+
+## What the scenario covers
+
+| Area     | Operations                                                                                                | Data                                                                                                                             |
+| -------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Apps     | `list_projects`, `create_project`                                                                         | FlutterShop (Android and iOS) and InternalAdmin (Android)                                                                        |
+| Releases | `list_releases`, `get_release`, `list_release_events`                                                     | Google Play at 20% and rolling, Google Play halted at 5% after a crash spike, App Store fully rolled out                         |
+| Actions  | `raise_release`, `pause_release`, `resume_release`, `halt_release`, `complete_release`, `approve_release` | Each moves the release as the daemon would. An action the state does not allow answers 409 `invalid_release_state`, as Oore does |
+
+Start from other release states with your own list:
+
+```ts
+import {
+  createOoreMockHandlers,
+  defaultOoreScenario,
+  haltedReleaseScenario,
+} from '@oore/client/msw/scenarios'
+
+const handlers = createOoreMockHandlers({
+  ...defaultOoreScenario,
+  releases: [haltedReleaseScenario],
+})
+```
+
+## Mock any other operation
+
+`@oore/client/msw` has a handler factory for every API operation, named after
+its operation ID. Use one to answer a call the scenario does not cover, or to
+force an error:
+
+```ts
+import { HttpResponse } from 'msw'
+import { setupServer } from 'msw/node'
+import { createBuildMock } from '@oore/client/msw'
+import { createOoreMockHandlers } from '@oore/client/msw/scenarios'
+
+const server = setupServer(
+  createBuildMock(() =>
+    HttpResponse.json(
+      { error: 'Pipeline not found', code: 'not_found' },
+      { status: 404 },
+    ),
+  ),
+  ...createOoreMockHandlers(),
+)
+```
+
+Pass each factory the answer you want. The first handler that matches a
+request wins, so put overrides before the scenario.
+
+## Test an agent or a CLI script
+
+Tools that are not JavaScript, such as the `oore` CLI, `curl` or an agent,
+can point at a small local server that runs the same handlers. Start one with
+MSW's `@mswjs/http-middleware` (`npm install @mswjs/http-middleware`), then
+set `OORE_URL` to it:
+
+```ts
+import { createServer } from '@mswjs/http-middleware'
+import { createOoreMockHandlers } from '@oore/client/msw/scenarios'
+
+createServer(...createOoreMockHandlers()).listen(8787)
+```
+
+```bash
+export OORE_URL='http://127.0.0.1:8787'
+export OORE_TOKEN='oore_mock_token'
+curl -fsS "$OORE_URL/v1/projects" -H "Authorization: Bearer $OORE_TOKEN"
+```
+
+The mock checks no token, and a route the scenario does not cover answers
+`404`. Test sign-in failures against a real instance, or with a handler that
+answers `401`.
+
+## Next steps
+
+- [Automate Oore](/build/automate) shows the same calls against a real
+  instance.
+- [HTTP API](/reference/api) has every operation and its schema.
