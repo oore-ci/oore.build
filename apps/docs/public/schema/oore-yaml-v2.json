@@ -1,0 +1,415 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://docs.oore.build/schema/oore-yaml-v2.json",
+  "title": "Oore pipeline file, version 2",
+  "description": "A `.oore.yaml` pipeline file in format version 2. Reference: https://docs.oore.build/reference/config/oore-yaml-v2. Check a file against your instance with `oore pipeline validate`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "description": "File format version. Must be 2.",
+      "const": 2
+    },
+    "name": {
+      "description": "Display name for a pipeline Oore adds from this file. Defaults to the file's path.",
+      "type": "string"
+    },
+    "app": {
+      "description": "The Flutter app: its Flutter version and flavors.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flutter": {
+          "description": "Flutter version, such as 3.24.5. Quote it when YAML would read it as a number. A `.fvmrc` file takes precedence.",
+          "type": "string"
+        },
+        "flavors": {
+          "description": "Flavor matrix. Each target builds once per flavor. Names use letters, digits, `-` and `_`.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9_-]+$" }
+        }
+      }
+    },
+    "targets": {
+      "description": "What to build per platform. Required unless every workflow names its own targets.",
+      "$ref": "#/$defs/targets"
+    },
+    "steps": {
+      "description": "Steps in order. `build` marks where the targets build. Defaults to `[build]`.",
+      "$ref": "#/$defs/steps"
+    },
+    "env": {
+      "description": "Environment variables for every step. Values may use `${{ vars.NAME }}` and `${{ secrets.NAME }}`. At most 128.",
+      "$ref": "#/$defs/stringMap"
+    },
+    "vars": {
+      "description": "Values to reuse with `${{ vars.NAME }}`. Vars can refer to other vars. At most 128.",
+      "$ref": "#/$defs/stringMap"
+    },
+    "on": {
+      "description": "When builds start. Left out, the pipeline's trigger settings in Oore apply.",
+      "$ref": "#/$defs/trigger"
+    },
+    "workflows": {
+      "description": "Named variants of the build, such as `adhoc` and `release`, each with its own triggers, targets, steps and signing.",
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": { "$ref": "#/$defs/workflow" }
+    },
+    "signing": {
+      "description": "Signing identities from the app's signing library, by name. Every workflow uses them unless it names its own.",
+      "$ref": "#/$defs/signing"
+    },
+    "runs_on": {
+      "description": "Runner labels a runner must have to take the build. One label or a list. Defaults to `[macos]`.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "isolation": {
+      "description": "Where the steps run: `host` (default) directly on the runner, or `vm` in a fresh macOS VM.",
+      "enum": ["host", "vm"]
+    },
+    "build_number_offset": {
+      "description": "Added to Oore's build number to give the app's build number. Defaults to 0.",
+      "type": "integer"
+    },
+    "release_notes": {
+      "description": "Where the release notes live in the repository. Set `changelog` or `dir`, not both.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "changelog": {
+          "description": "A Markdown changelog such as `CHANGELOG.md`. The section headed with the app version, such as `## [2.5.1]`, is used.",
+          "type": "string"
+        },
+        "dir": {
+          "description": "A directory with one `<locale>.txt` per language, or fastlane's `<locale>/release_notes.txt`.",
+          "type": "string"
+        }
+      },
+      "oneOf": [{ "required": ["changelog"] }, { "required": ["dir"] }]
+    }
+  },
+  "$defs": {
+    "platform": {
+      "description": "A build platform.",
+      "enum": ["android", "ios", "macos"]
+    },
+    "stringMap": {
+      "type": "object",
+      "propertyNames": { "type": "string" },
+      "additionalProperties": { "type": "string" }
+    },
+    "targets": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/platform" },
+      "additionalProperties": { "$ref": "#/$defs/target" }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "build": {
+          "description": "The complete build command for the platform, such as `flutter build appbundle --release`. Oore adds nothing to it.",
+          "type": "string"
+        },
+        "artifacts": {
+          "description": "Glob patterns for the files to keep. Defaults to the platform's usual outputs.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "publish": {
+          "description": "Where the build is uploaded. `false` uploads nothing, also in a workflow that would inherit a publish.",
+          "oneOf": [
+            { "$ref": "#/$defs/publish" },
+            { "const": false },
+            { "type": "null" }
+          ]
+        },
+        "budgets": {
+          "description": "Artifact size limits for the commit check, on top of the pipeline's size budget.",
+          "$ref": "#/$defs/sizeBudget"
+        }
+      }
+    },
+    "publish": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "play": {
+          "description": "Upload to Google Play. Android targets only.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["track"],
+          "properties": {
+            "track": {
+              "description": "`internal`, `closed`, `open`, `production`, or a custom track name.",
+              "type": "string"
+            },
+            "rollout": {
+              "description": "Staged rollout fraction, greater than 0 and at most 1, such as 0.05 for 5%. Left out, the Google Play settings decide.",
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "draft": {
+              "description": "`true` creates a draft release in Play Console instead of rolling out. Left out, the Google Play settings decide.",
+              "type": "boolean"
+            },
+            "service_account": {
+              "description": "Name of the secret holding the Google service account JSON key.",
+              "type": "string"
+            },
+            "preflight": { "$ref": "#/$defs/preflight" }
+          }
+        },
+        "testflight": {
+          "description": "Upload to TestFlight. Same as `app_store: { destination: testflight, groups: [group] }`. iOS targets only.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["group"],
+          "properties": {
+            "group": {
+              "description": "The TestFlight group: one name, without commas, at most 128 characters.",
+              "type": "string",
+              "maxLength": 128
+            }
+          }
+        },
+        "app_store": {
+          "description": "Upload to App Store Connect. Fields left out keep the pipeline's App Store settings. iOS targets only.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "destination": {
+              "description": "`app_store` (default) attaches the build to the App Store version; `testflight` adds it to TestFlight groups.",
+              "enum": ["testflight", "app_store"]
+            },
+            "groups": {
+              "description": "TestFlight groups, for destination testflight.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "submit_for_review": {
+              "description": "Submit the version for App Review, for destination app_store.",
+              "type": "boolean"
+            },
+            "phased_release": {
+              "description": "Release with Apple's seven-day phased release, for destination app_store.",
+              "type": "boolean"
+            },
+            "release_type": {
+              "description": "When Apple releases the approved version: `after_approval` (default), `manual` or `scheduled`.",
+              "enum": ["after_approval", "manual", "scheduled"]
+            },
+            "earliest_release_date": {
+              "description": "RFC 3339 time a scheduled release goes out, such as 2026-12-01T09:00:00Z. Only with release_type scheduled.",
+              "type": "string"
+            },
+            "release_notes_dir": {
+              "description": "Repository directory with \"What's New\" per locale, as `<locale>.txt` or fastlane's `<locale>/release_notes.txt`.",
+              "type": "string"
+            },
+            "cancel_previous_submission": {
+              "description": "`true` cancels another open App Review submission before submitting.",
+              "type": "boolean"
+            },
+            "preflight": { "$ref": "#/$defs/preflight" }
+          }
+        }
+      }
+    },
+    "preflight": {
+      "description": "What a failed pre-flight check does: `auto` (default) warns until the store has accepted a release, then blocks; `block`, `warn` or `off`.",
+      "enum": ["auto", "block", "warn", "off"]
+    },
+    "sizeBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "description": "`fail` fails the check when an artifact is over; `warn` (default) only says so.",
+          "enum": ["warn", "fail"]
+        },
+        "rules": {
+          "description": "Limits per artifact kind. At most 20. Empty turns the budget off.",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "description": "The artifact's lowercase file extension, such as `aab`, `apk` or `ipa`.",
+                "type": "string",
+                "maxLength": 16
+              },
+              "max_bytes": {
+                "description": "Largest size allowed, in bytes. Greater than 0.",
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "max_increase_bytes": {
+                "description": "Largest growth over the baseline build, in bytes. 0 or more.",
+                "type": "integer",
+                "minimum": 0
+              },
+              "max_increase_percent": {
+                "description": "Largest growth over the baseline build, in percent. 0 or more.",
+                "type": "number",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "android": {
+          "description": "Name of an Android keystore in the app's signing library. It signs release builds.",
+          "type": "string"
+        },
+        "ios": {
+          "description": "Name of an iOS distribution identity in the app's signing library: a certificate and its profiles.",
+          "type": "string"
+        }
+      }
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "description": "`build`, where the targets build, or in a workflow the name of a top-level step.",
+            "type": "string"
+          },
+          {
+            "description": "A command step.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "run"],
+            "properties": {
+              "name": {
+                "description": "The step's name, shown in the build log.",
+                "type": "string"
+              },
+              "run": {
+                "description": "The shell command to run.",
+                "type": "string"
+              },
+              "reports": {
+                "description": "Reports the step writes.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["tests"],
+                "properties": {
+                  "tests": {
+                    "description": "Path to the step's test results, such as `flutter test --machine` output.",
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "branchTrigger": {
+      "oneOf": [
+        {
+          "description": "`true` for every branch, `false` for none.",
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["branches"],
+          "properties": {
+            "branches": {
+              "description": "Branch names or globs, such as `main` or `release/*`.",
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      ]
+    },
+    "trigger": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "push": {
+          "description": "Build on pushes: `true`, or `{ branches: [...] }`.",
+          "$ref": "#/$defs/branchTrigger"
+        },
+        "pull_request": {
+          "description": "Build pull and merge requests: `true`, or `{ branches: [...] }` for their target branches.",
+          "$ref": "#/$defs/branchTrigger"
+        },
+        "tag": {
+          "description": "Build tags matching a glob, such as `v*`. One pattern or a list.",
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" } }
+          ]
+        },
+        "paths": {
+          "description": "Only build when a changed file matches one of these globs.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "description": "When this workflow runs. Replaces the top-level `on`.",
+          "$ref": "#/$defs/trigger"
+        },
+        "targets": {
+          "description": "A list of platforms picks top-level targets; a mapping overrides them per field.",
+          "oneOf": [
+            { "type": "array", "items": { "$ref": "#/$defs/platform" } },
+            {
+              "type": "object",
+              "propertyNames": { "$ref": "#/$defs/platform" },
+              "additionalProperties": {
+                "oneOf": [{ "$ref": "#/$defs/target" }, { "type": "null" }]
+              }
+            }
+          ]
+        },
+        "flavors": {
+          "description": "A subset of `app.flavors` to build.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "steps": {
+          "description": "Replaces the top-level steps. Entries can name top-level steps.",
+          "$ref": "#/$defs/steps"
+        },
+        "env": {
+          "description": "Adds to or replaces top-level env values by name.",
+          "$ref": "#/$defs/stringMap"
+        },
+        "vars": {
+          "description": "Adds to or replaces top-level vars by name.",
+          "$ref": "#/$defs/stringMap"
+        },
+        "signing": {
+          "description": "Signing identities for this workflow, replacing the top-level `signing` per platform.",
+          "$ref": "#/$defs/signing"
+        }
+      }
+    }
+  }
+}
