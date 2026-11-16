@@ -73,6 +73,25 @@ the proxy's own headers with every request as well, for example
 `oore` CLI reads them from `OORE_HTTP_HEADERS`, one `Name: value` per line, or
 from repeated `--header 'Name: value'` flags.
 
+## Live stream limits
+
+Live streams hold a connection open, so each kind has a limit. Newer daemons
+apply these:
+
+| Stream                                        | Per API token or sign-in | Per person | Per build | Per instance |
+| --------------------------------------------- | ------------------------ | ---------- | --------- | ------------ |
+| Events, `GET /v1/events`                      | 8                        | 24         |           | 256          |
+| Build logs, `GET /v1/builds/{id}/logs/stream` | 4                        | 12         | 16        | 128          |
+
+Browser and CLI sign-ins count together as one sign-in per person. The
+per-person limit counts every token the person owns.
+
+When a limit is full, the request answers `429` with `Retry-After: 5` and an
+error whose `code` is `stream_limit`. Its message names the limit that was hit.
+To recover, close a stream you no longer read, give each agent its own token,
+or read the logs so far with `GET /v1/builds/{id}/logs` instead of streaming
+them.
+
 ## For agents
 
 Every page here is also Markdown at the same address plus `.md`, and

@@ -398,18 +398,7 @@ pub async fn dispatch_build_feedback(
     notification.actor_email = None;
     notification.actor_login = None;
     notification.payload["event"] = serde_json::json!("build.qa_feedback");
-    notification.payload["feedback"] = serde_json::json!({
-        "id": feedback.id,
-        "author_email": feedback.author_email,
-        "author_name": feedback.author_name,
-        "message": feedback.message,
-        "device": feedback.device,
-        "os_version": feedback.os_version,
-        "app_version": feedback.app_version,
-        "artifact_id": feedback.artifact_id,
-        "has_screenshot": feedback.has_screenshot,
-        "created_at": feedback.created_at,
-    });
+    notification.payload["feedback"] = feedback_payload(feedback);
     let deliveries = enqueue(pool, &notification).await?;
     if !deliveries.is_empty() {
         tokio::spawn(deliver(pool.clone(), encryption_key.into(), deliveries));
@@ -434,25 +423,50 @@ pub(crate) async fn notify_signing_expiry(
             release_id: None,
             actor_email: None,
             actor_login: None,
-            payload: serde_json::json!({
-                "event": "signing.expiring",
-                "project_id": expiry.project_id,
-                "project_name": expiry.project_name,
-                "signing": {
-                    "key": expiry.key,
-                    "what": expiry.what,
-                    "holder": expiry.holder,
-                    "expires_at": expiry.expires_at,
-                    "band": band.as_str(),
-                    "when": crate::signing_expiry::when(expiry.expires_at, now),
-                    "path": expiry.path,
-                },
-                "timestamp": now,
-            }),
+            payload: signing_notification_payload(&expiry, band, now),
         };
         deliveries.extend(enqueue(pool, &notification).await?);
     }
     Ok(deliveries)
+}
+
+/// The `feedback` object of a `build.qa_feedback` webhook payload.
+fn feedback_payload(feedback: &oore_contract::BuildFeedback) -> serde_json::Value {
+    serde_json::json!({
+        "id": feedback.id,
+        "author_email": feedback.author_email,
+        "author_name": feedback.author_name,
+        "message": feedback.message,
+        "device": feedback.device,
+        "os_version": feedback.os_version,
+        "app_version": feedback.app_version,
+        "artifact_id": feedback.artifact_id,
+        "has_screenshot": feedback.has_screenshot,
+        "created_at": feedback.created_at,
+    })
+}
+
+/// The webhook payload of a certificate or profile expiry reminder.
+fn signing_notification_payload(
+    expiry: &crate::signing_expiry::Expiry,
+    band: crate::signing_expiry::Band,
+    now: i64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "event": "signing.expiring",
+        "project_id": expiry.project_id,
+        "project_name": expiry.project_name,
+        "signing": {
+            "key": expiry.key,
+            "what": expiry.what,
+            "holder": expiry.holder,
+            "expires_at": expiry.expires_at,
+            "band": band.as_str(),
+            "when": crate::signing_expiry::when(expiry.expires_at, now),
+            "path": expiry.path,
+        },
+        "timestamp": now,
+    })
 }
 
 /// "FlutterShop: distribution certificate expires in 6 days".
@@ -2301,6 +2315,10 @@ fn release_email_html(payload: &serde_json::Value) -> (String, String) {
 
     (summary.replace('`', ""), html)
 }
+
+#[cfg(test)]
+#[path = "notification_payload_docs_tests.rs"]
+mod payload_docs_tests;
 
 #[cfg(test)]
 mod tests {
