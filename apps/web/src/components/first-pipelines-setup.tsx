@@ -194,8 +194,9 @@ export function FirstPipelinesSetup({ project }: { project: Project }) {
     } else if (iosPipelineId) {
       toast.success('Pipeline created. Add iOS signing to build it.')
       void navigate({
-        to: '/projects/$projectId/pipelines/$pipelineId/edit',
+        to: '/projects/$projectId/pipelines/$pipelineId',
         params: { projectId: project.id, pipelineId: iosPipelineId },
+        search: { row: 'signing' },
         hash: 'ios-signing',
       })
     } else {

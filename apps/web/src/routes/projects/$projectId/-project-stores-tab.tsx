@@ -159,7 +159,7 @@ function OverridesNote({
           <Link
             to="/projects/$projectId/pipelines/$pipelineId"
             params={{ projectId, pipelineId: item.pipeline_id }}
-            search={{ tab: 'publishing' }}
+            search={{ row: 'publishing' }}
             className="underline underline-offset-4"
           >
             {item.pipeline_name}

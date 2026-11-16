@@ -408,7 +408,7 @@ function IosSigningIdentityFields({
               <Text variant="muted">
                 {appStorePublishing.configured ? (
                   <>
-                    Signed builds upload as set up on the Publishing tab.{' '}
+                    Signed builds upload as set up under Publishing.{' '}
                     {appStorePublishing.link}
                   </>
                 ) : (

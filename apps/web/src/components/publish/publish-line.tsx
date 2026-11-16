@@ -1,6 +1,9 @@
 import { Link } from '@tanstack/react-router'
 
+import { RepositoryFileLink } from '@/components/pipeline-page/source-label'
+
 import { usePipelineWorkflows } from '@/hooks/use-pipelines'
+import { describePublishLine } from '@/lib/pipeline-sources'
 import { Text } from '@/components/layout/text'
 
 /** What the pipeline's file says about uploads to one store. */
@@ -13,16 +16,9 @@ export interface FilePublishing {
   all: boolean
 }
 
-/** `android publishes to the Google Play internal track (workflows…)` → `the Google Play internal track`. */
-function describeLine(line: string) {
-  return line
-    .replace(/^(android|ios) publishes to /, '')
-    .replace(/ \([^()]*\)$/, '')
-}
-
 /**
  * Reads the pipeline's file for `publish` on the platform's target. The file
- * beats the Publishing tab, so the tab says where it is set instead of
+ * beats the Publishing row, so the row says where it is set instead of
  * offering a choice that does nothing.
  */
 export function useFilePublishing(
@@ -40,7 +36,9 @@ export function useFilePublishing(
     const line = workflow.publishes.find((entry) =>
       entry.startsWith(`${platform} `),
     )
-    return line ? [{ name: workflow.name, line: describeLine(line) }] : []
+    return line
+      ? [{ name: workflow.name, line: describePublishLine(line) }]
+      : []
   })
   if (publishing.length === 0) return null
   return {
@@ -50,37 +48,8 @@ export function useFilePublishing(
   }
 }
 
-function FileLink({
-  path,
-  pipelineId,
-  projectId,
-}: {
-  path: string
-  pipelineId: string
-  projectId: string
-}) {
-  return (
-    <Link
-      to="/projects/$projectId/pipelines/$pipelineId"
-      params={{ projectId, pipelineId }}
-      search={{ tab: 'workflows' }}
-      className="font-mono underline underline-offset-4"
-    >
-      {path}
-    </Link>
-  )
-}
-
 /** The read-only line when the file decides where builds go. */
-export function FileControlledLine({
-  file,
-  pipelineId,
-  projectId,
-}: {
-  file: FilePublishing
-  pipelineId: string
-  projectId: string
-}) {
+export function FileControlledLine({ file }: { file: FilePublishing }) {
   const destinations = [...new Set(file.workflows.map((item) => item.line))]
   return (
     <div className="flex flex-col gap-1.5">
@@ -89,12 +58,7 @@ export function FileControlledLine({
         <span className="font-medium">{destinations.join(' or ')}</span>
       </p>
       <Text variant="muted" className="text-[13px]">
-        Set in .oore.yaml:{' '}
-        <FileLink
-          path={file.path}
-          pipelineId={pipelineId}
-          projectId={projectId}
-        />
+        from <RepositoryFileLink path={file.path} />
         {file.workflows.length > 1 || destinations.length > 1
           ? ` (${file.workflows.map((item) => item.name).join(', ')})`
           : null}
@@ -104,15 +68,7 @@ export function FileControlledLine({
 }
 
 /** Under an editable line, when only some workflows set `publish`. */
-export function PartlyFileControlledNote({
-  file,
-  pipelineId,
-  projectId,
-}: {
-  file: FilePublishing
-  pipelineId: string
-  projectId: string
-}) {
+export function PartlyFileControlledNote({ file }: { file: FilePublishing }) {
   return (
     <Text variant="muted" className="text-[13px]">
       {file.workflows.map((item, index) => (
@@ -122,13 +78,7 @@ export function PartlyFileControlledNote({
           {item.line} instead.
         </span>
       ))}{' '}
-      Set in{' '}
-      <FileLink
-        path={file.path}
-        pipelineId={pipelineId}
-        projectId={projectId}
-      />
-      .
+      Set in <RepositoryFileLink path={file.path} />.
     </Text>
   )
 }

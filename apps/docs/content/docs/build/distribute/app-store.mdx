@@ -24,8 +24,8 @@ upload hosts.
 
 ## 1. Export for the App Store
 
-1. Open the pipeline and select **Edit**.
-2. Under **Signing > iOS**, set **Distribution** to **App Store**.
+1. Open the pipeline and its **Signing** row.
+2. Under **iOS**, set **Distribution** to **App Store**.
 3. Select **Save changes**.
 
 - In API or Hybrid mode, saving discards the stored profiles and syncs App
@@ -39,7 +39,7 @@ Testers install them through TestFlight.
 
 ## 2. Turn on publishing
 
-1. Open the pipeline's **Publishing** tab.
+1. Open the pipeline's **Publishing** row.
 2. Under **App Store Connect**, check that the readiness list shows
    **App Store distribution** and **App Store Connect API key** as ready.
 3. Turn on **Upload to App Store Connect after each successful build**.
@@ -108,7 +108,7 @@ it.
 ## TestFlight groups per workflow
 
 To send one workflow's builds to other testers, open the pipeline's
-**Workflows** tab, select the workflow, and list the groups under
+**Source and triggers** row, select the workflow, and list the groups under
 **TestFlight groups**. They replace the groups the file and the pipeline's
 settings name, for uploads to TestFlight only.
 
@@ -159,7 +159,7 @@ uploaded; change them in App Store Connect.
 
 ## Pre-flight
 
-Before the upload, the **Publishing** tab and the runner check what Apple
+Before the upload, the **Publishing** row and the runner check what Apple
 would otherwise refuse after the upload:
 
 - the API key reaches App Store Connect and the app exists for the bundle ID;
@@ -261,14 +261,14 @@ workflows:
   identity with App Store profiles; an ad hoc one refuses the build with
   `invalid_signing`.
 - `publish.app_store` sets the destination, groups, `submit_for_review` and
-  `phased_release`, in place of the **Publishing** tab's.
+  `phased_release`, in place of the **Publishing** row's.
 - The upload still uses the pipeline's App Store Connect API key, so keep the
   pipeline's iOS signing on with **Distribution** set to **App Store**, and
   App Store Connect publishing turned on as in
   [step 2](#2-turn-on-publishing). Release notes and the export compliance
-  answer also come from the **Publishing** tab.
+  answer also come from the **Publishing** row.
 - To stop one workflow's uploads without a commit, open the pipeline's
-  **Workflows** tab, select **Settings** on the workflow, and turn
+  **Source and triggers** row, select **Settings** on the workflow, and turn
   **Publishing** off. **iOS signing** there can pick another identity.
 
 `oore pipeline validate --project "$PROJECT_ID"` checks the identity names
