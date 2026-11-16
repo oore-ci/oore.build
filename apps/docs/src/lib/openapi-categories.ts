@@ -18,7 +18,7 @@ export const OPENAPI_CATEGORIES = [
   {
     slug: 'projects',
     title: 'Projects',
-    tags: ['Projects', 'Project Members'],
+    tags: ['Projects', 'Project Members', 'App Stores'],
   },
   {
     slug: 'artifacts',
