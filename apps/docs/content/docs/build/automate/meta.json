@@ -1,5 +1,5 @@
 {
   "title": "Automate Oore",
   "pagesIndex": "index",
-  "pages": ["index", "test-without-an-instance"]
+  "pages": ["index", "mcp", "test-without-an-instance"]
 }

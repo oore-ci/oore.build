@@ -29,6 +29,7 @@ pub mod integrations;
 pub mod key_check;
 pub mod local_recovery;
 pub mod logs;
+pub mod mcp;
 pub mod notification_channels;
 pub mod notification_dispatch;
 pub mod observability;
@@ -3342,7 +3343,7 @@ pub async fn build_router_with_recovery(
             extractors::scope_request_auth,
         ))
         .layer(cors)
-        .with_state(shared_state)
+        .with_state(shared_state.clone())
         // Merge webhook routes (outside CORS)
         .merge(webhook_routes)
         // Merge GitHub App manifest flow routes (outside CORS — browser-navigated HTML pages)
@@ -3355,5 +3356,6 @@ pub async fn build_router_with_recovery(
         // Request metrics middleware wraps all routes (including /metrics)
         .layer(axum_mw::from_fn(observability::track_http_metrics));
 
-    Ok(router)
+    // MCP goes last: its tools call the API through every layer above.
+    Ok(mcp::mount(router, shared_state))
 }
