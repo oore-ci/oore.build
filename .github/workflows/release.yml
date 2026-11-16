@@ -329,9 +329,73 @@ jobs:
           path: dist/rust
           if-no-files-found: error
 
+  # Linux gets the CLI only (the cli-only profile), linked statically against
+  # musl so it runs in any distribution or container. GitHub-hosted runners
+  # build it, so the macOS runners carry no extra work.
+  rust-linux:
+    name: Build Linux CLI (${{ matrix.arch }})
+    needs: source
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+
+      - name: Install musl tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Install pinned Rust toolchain
+        run: |
+          if [[ -f rust-toolchain.toml ]]; then
+            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          fi
+
+      - name: Setup Rust target
+        run: rustup target add "${{ matrix.target }}"
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          cache-bin: false
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: ${{ matrix.target }}
+
+      - name: Build Linux CLI
+        run: |
+          set -euo pipefail
+          cargo build --release -p oore --target "${{ matrix.target }}" --locked
+          binary="target/${{ matrix.target }}/release/oore"
+          file "$binary"
+          file "$binary" | grep -Eq 'static(ally|-pie) linked' || {
+            echo 'The Linux CLI is not statically linked.' >&2
+            exit 1
+          }
+          "$binary" --help > /dev/null
+          mkdir -p dist/rust
+          cp "$binary" dist/rust/oore
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-linux-${{ matrix.arch }}-${{ needs.source.outputs.commit }}
+          path: dist/rust
+          if-no-files-found: error
+
   release:
     name: Build release assets
-    needs: [source, acceptance, rust]
+    needs: [source, acceptance, rust, rust-linux]
     runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 45
     permissions:
@@ -357,6 +421,16 @@ jobs:
         with:
           name: rust-x86_64-${{ needs.source.outputs.commit }}
           path: dist/rust/x86_64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rust-linux-arm64-${{ needs.source.outputs.commit }}
+          path: dist/rust/linux-arm64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rust-linux-x86_64-${{ needs.source.outputs.commit }}
+          path: dist/rust/linux-x86_64
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -422,11 +496,14 @@ jobs:
           stage_web_darwin_x64="dist/stage-web-darwin-x86_64"
           stage_web_linux_arm="dist/stage-web-linux-arm64"
           stage_web_linux_x64="dist/stage-web-linux-x86_64"
-          rm -rf "$stage_arm" "$stage_x64" "$stage_cli_arm" "$stage_cli_x64" "$stage_web_darwin_arm" "$stage_web_darwin_x64" "$stage_web_linux_arm" "$stage_web_linux_x64"
+          stage_cli_linux_arm="dist/stage-cli-linux-arm64"
+          stage_cli_linux_x64="dist/stage-cli-linux-x86_64"
+          rm -rf "$stage_arm" "$stage_x64" "$stage_cli_arm" "$stage_cli_x64" "$stage_web_darwin_arm" "$stage_web_darwin_x64" "$stage_web_linux_arm" "$stage_web_linux_x64" "$stage_cli_linux_arm" "$stage_cli_linux_x64"
           mkdir -p "$stage_arm/bin" "$stage_x64/bin"
           mkdir -p "$stage_cli_arm/bin" "$stage_cli_x64/bin"
           mkdir -p "$stage_web_darwin_arm/bin" "$stage_web_darwin_x64/bin"
           mkdir -p "$stage_web_linux_arm/bin" "$stage_web_linux_x64/bin"
+          mkdir -p "$stage_cli_linux_arm/bin" "$stage_cli_linux_x64/bin"
 
           install -m 0755 "dist/rust/arm64/oored" "$stage_arm/bin/oored"
           install -m 0755 "dist/rust/arm64/oore"  "$stage_arm/bin/oore"
@@ -470,6 +547,14 @@ jobs:
           cp "LICENSE" "$stage_web_linux_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_linux_x64/VERSION"
 
+          install -m 0755 "dist/rust/linux-arm64/oore" "$stage_cli_linux_arm/bin/oore"
+          cp "LICENSE" "$stage_cli_linux_arm/LICENSE"
+          printf '%s\n' "$ver" > "$stage_cli_linux_arm/VERSION"
+
+          install -m 0755 "dist/rust/linux-x86_64/oore" "$stage_cli_linux_x64/bin/oore"
+          cp "LICENSE" "$stage_cli_linux_x64/LICENSE"
+          printf '%s\n' "$ver" > "$stage_cli_linux_x64/VERSION"
+
           [[ -x "$stage_arm/bin/oore" && -x "$stage_arm/bin/oored" && -x "$stage_arm/bin/oore-web" ]]
           [[ -x "$stage_x64/bin/oore" && -x "$stage_x64/bin/oored" && -x "$stage_x64/bin/oore-web" ]]
 
@@ -483,7 +568,9 @@ jobs:
             RELEASE_WEB_DARWIN_ARM64_STAGE="$stage_web_darwin_arm" \
             RELEASE_WEB_DARWIN_X86_64_STAGE="$stage_web_darwin_x64" \
             RELEASE_WEB_LINUX_ARM64_STAGE="$stage_web_linux_arm" \
-            RELEASE_WEB_LINUX_X86_64_STAGE="$stage_web_linux_x64"
+            RELEASE_WEB_LINUX_X86_64_STAGE="$stage_web_linux_x64" \
+            RELEASE_CLI_LINUX_ARM64_STAGE="$stage_cli_linux_arm" \
+            RELEASE_CLI_LINUX_X86_64_STAGE="$stage_cli_linux_x64"
 
       - name: Generate release notes
         env:

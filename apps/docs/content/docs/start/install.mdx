@@ -75,6 +75,19 @@ to see the component plan without changes. A non-interactive install stops
 after the components; run `oore setup` with a configuration file next, as
 described in the [`oore setup` reference](/reference/cli/oore-setup).
 
+**You want the CLI on Linux, for CI or an agent**
+
+The same script works on Linux (`x86_64` and `arm64`, any distribution). It
+installs a static `oore` CLI only, since the control plane, runners and web
+node need macOS. It needs `curl`, `tar`, `flock` and `ssh-keygen`
+(`openssh-client` on Debian and Ubuntu). Then sign in with `oore login` and
+update later with `oore update`.
+
+```bash
+curl -fsSL https://oore.build/install | OORE_MODIFY_PATH=false bash
+~/.oore/bin/oore login
+```
+
 **You want to install a different role**
 
 The Runner, Control plane, Web node, and CLI only roles split Oore across

@@ -614,6 +614,8 @@ async fn handle_install(args: InstallArgs, terminal: Terminal) -> anyhow::Result
     terminal.intro("Install")?;
     let profile = match args.profile {
         Some(profile) => profile,
+        // Linux release builds carry the CLI only, so there is no role to pick.
+        None if !cfg!(target_os = "macos") => InstallProfile::CliOnly,
         None if terminal.is_interactive() => match choose_install_profile(terminal)? {
             Some(profile) => profile,
             None => return Ok(()),
@@ -622,6 +624,13 @@ async fn handle_install(args: InstallArgs, terminal: Terminal) -> anyhow::Result
             "no interactive terminal was detected; choose a device role with --profile\nRun 'oore install --help' to see the available roles."
         ),
     };
+    if !cfg!(target_os = "macos") && profile != InstallProfile::CliOnly {
+        anyhow::bail!(
+            "the {} profile needs macOS. On {}, Oore installs the CLI only: run `oore install --profile cli-only`, or run the control plane, runners and web node on a Mac",
+            installed_profile_name(manifest_profile(profile)),
+            std::env::consts::OS
+        );
+    }
     let plan = profile.plan();
     terminal.note("Installation plan", format_install_plan(&plan))?;
 
@@ -6442,6 +6451,15 @@ fn release_arch() -> anyhow::Result<&'static str> {
     }
 }
 
+/// The operating system segment of release asset names: `darwin` or `linux`.
+fn release_os() -> anyhow::Result<&'static str> {
+    match std::env::consts::OS {
+        "macos" => Ok("darwin"),
+        "linux" => Ok("linux"),
+        other => anyhow::bail!("unsupported operating system: {other}"),
+    }
+}
+
 /// Resolve the oore install root (`OORE_INSTALL_ROOT` or `~/.oore`).
 fn resolve_install_root() -> anyhow::Result<PathBuf> {
     if let Ok(val) = std::env::var("OORE_INSTALL_ROOT") {
@@ -12147,6 +12165,106 @@ struct ProfileUpdatePlan {
 
 /// The one rule for leaving the installed channel: it needs `--switch-channel`,
 /// except to promote a pre-release to the stable build of the same version.
+/// A bootstrap-only install or the cli-only profile has nothing to update but
+/// the CLI itself, which the signed bootstrap installer already knows how to
+/// replace safely. Linux installs are always this kind.
+fn updates_cli_only(install_root: &Path) -> anyhow::Result<bool> {
+    let manifest_path = install_root.join("install-manifest.json");
+    if install_path_exists(&manifest_path)? {
+        let manifest = install_manifest::InstallManifest::load(&manifest_path)?;
+        return Ok(manifest.profile == install_manifest::InstallProfile::CliOnly);
+    }
+    install_path_exists(&install_root.join("BOOTSTRAP_ARCHIVE"))
+}
+
+const DEFAULT_INSTALLER_URL: &str = "https://oore.build/install";
+
+/// Updates a CLI-only install by rerunning the bootstrap installer for the
+/// exact release the signed channel index names. The installer verifies the
+/// signed checksum manifest, takes the lifecycle lock and rolls back on failure.
+async fn update_cli_only(
+    args: &UpdateArgs,
+    install_root: &Path,
+    repo: &str,
+    channel: ReleaseChannel,
+    installed_channel: ReleaseChannel,
+    current: &semver::Version,
+) -> anyhow::Result<()> {
+    let client = release_http_client()?;
+    let release = fetch_latest_release(&client, repo, channel).await?;
+    let latest = parse_semver_loose(&release.version)
+        .with_context(|| format!("invalid version in release tag: {}", release.tag))?;
+    println!("Channel:         {}", channel.as_str());
+    println!("GitHub repo:     {repo}");
+    println!("Current version: {current}");
+    println!("Latest version:  {latest} ({})", release.tag);
+    if channel != installed_channel {
+        ensure_channel_change_allowed(
+            installed_channel.as_str(),
+            current,
+            channel,
+            &latest,
+            args.switch_channel,
+        )?;
+    }
+    if *current >= latest && !args.force {
+        println!("Already up to date.");
+        return Ok(());
+    }
+    if *current < latest {
+        println!("Update available: {current} -> {latest}");
+    } else {
+        println!("Reinstalling version {latest} (--force).");
+    }
+    if args.check {
+        println!("Run `oore update` without --check to install it.");
+        return Ok(());
+    }
+
+    let installer_url =
+        std::env::var("OORE_INSTALLER_URL").unwrap_or_else(|_| DEFAULT_INSTALLER_URL.to_string());
+    let response = client
+        .get(&installer_url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .with_context(|| format!("failed to download the Oore installer from {installer_url}"))?;
+    let script = response
+        .bytes()
+        .await
+        .with_context(|| format!("failed to read the Oore installer from {installer_url}"))?;
+    let mut installer = tempfile::Builder::new()
+        .prefix("oore-install.")
+        .suffix(".sh")
+        .tempfile()
+        .context("failed to stage the Oore installer")?;
+    installer
+        .write_all(&script)
+        .context("failed to stage the Oore installer")?;
+    installer
+        .flush()
+        .context("failed to stage the Oore installer")?;
+
+    let status = std::process::Command::new("/bin/bash")
+        .arg(installer.path())
+        .arg("--version")
+        .arg(&release.tag)
+        .arg("--install-root")
+        .arg(install_root)
+        .arg("--no-modify-path")
+        .env("OORE_GITHUB_REPO", repo)
+        .env("OORE_CHANNEL", channel.as_str())
+        .stdin(std::process::Stdio::null())
+        .status()
+        .context("failed to run the Oore installer")?;
+    anyhow::ensure!(
+        status.success(),
+        "the Oore installer could not update the CLI ({status}); the previous CLI is still installed"
+    );
+    println!("Updated the Oore CLI to {latest}.");
+    Ok(())
+}
+
 fn ensure_channel_change_allowed(
     installed_channel: &str,
     installed_version: &semver::Version,
@@ -12707,6 +12825,18 @@ async fn handle_update(args: UpdateArgs) -> anyhow::Result<()> {
         Some(raw) => ReleaseChannel::parse(raw)?,
         None => installed_channel,
     };
+
+    if args.staged_release.is_none() && updates_cli_only(&install_root)? {
+        return update_cli_only(
+            &args,
+            &install_root,
+            &repo,
+            channel,
+            installed_channel,
+            &current,
+        )
+        .await;
+    }
 
     // Download and verify before taking the lifecycle lock, so a slow or
     // stalled network never blocks other install, setup or uninstall commands.

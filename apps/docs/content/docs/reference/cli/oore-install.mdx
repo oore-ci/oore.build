@@ -6,7 +6,9 @@ description: 'Choose a device role and install its verified Oore components.'
 
 After the bootstrap script installs the CLI, use `oore install`.
 
-The guided v0.1.42 command supports macOS on `arm64` and `x86_64`. Linux web archives do not provide a guided Web node lifecycle.
+The guided command supports macOS on `arm64` and `x86_64` with every profile.
+
+On Linux (`arm64` and `x86_64`), Oore ships the CLI only. `oore install` accepts only the `cli-only` profile there, and uses it when `--profile` is left out. Any other profile stops with a message that it needs macOS. Linux web archives do not provide a guided Web node lifecycle; see [Run a Web node on Linux](/operate/deploy/linux-web-node).
 
 ```text
 oore install [--profile <PROFILE>] [--plan]

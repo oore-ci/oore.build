@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -ne 10 ]]; then
-  echo "Usage: $0 <tag> <output> <full-arm64> <full-x86_64> <cli-arm64> <cli-x86_64> <web-darwin-arm64> <web-darwin-x86_64> <web-linux-arm64> <web-linux-x86_64>" >&2
+if [[ "$#" -ne 12 ]]; then
+  echo "Usage: $0 <tag> <output> <full-arm64> <full-x86_64> <cli-arm64> <cli-x86_64> <web-darwin-arm64> <web-darwin-x86_64> <web-linux-arm64> <web-linux-x86_64> <cli-linux-arm64> <cli-linux-x86_64>" >&2
   exit 2
 fi
 
@@ -16,6 +16,8 @@ web_darwin_arm64="$7"
 web_darwin_x86_64="$8"
 web_linux_arm64="$9"
 web_linux_x86_64="${10}"
+cli_linux_arm64="${11}"
+cli_linux_x86_64="${12}"
 
 bash "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-release-tag.sh" "$tag"
 version="${tag#v}"
@@ -144,6 +146,8 @@ validate_web_stage "$web_darwin_arm64"
 validate_web_stage "$web_darwin_x86_64"
 validate_web_stage "$web_linux_arm64"
 validate_web_stage "$web_linux_x86_64"
+validate_cli_stage "$cli_linux_arm64"
+validate_cli_stage "$cli_linux_x86_64"
 
 cmp -s "$full_arm64/bin/oore" "$cli_arm64/bin/oore" || {
   echo 'Full and CLI-only arm64 bundles contain different oore binaries.' >&2
@@ -163,6 +167,8 @@ assets=(
   "oore-web_${version}_darwin_x86_64.tar.gz"
   "oore-web_${version}_linux_arm64.tar.gz"
   "oore-web_${version}_linux_x86_64.tar.gz"
+  "oore-cli_${version}_linux_arm64.tar.gz"
+  "oore-cli_${version}_linux_x86_64.tar.gz"
 )
 stages=(
   "$full_arm64"
@@ -173,6 +179,8 @@ stages=(
   "$web_darwin_x86_64"
   "$web_linux_arm64"
   "$web_linux_x86_64"
+  "$cli_linux_arm64"
+  "$cli_linux_x86_64"
 )
 
 mkdir -p "$output_dir"
