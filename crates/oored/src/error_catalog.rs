@@ -573,10 +573,14 @@ mod tests {
                     continue;
                 };
                 let Some(end) = after.find('"') else { continue };
-                codes
-                    .entry(after[..end].to_string())
-                    .or_default()
-                    .insert(429);
+                let code = &after[..end];
+                if !code.is_empty()
+                    && code
+                        .bytes()
+                        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+                {
+                    codes.entry(code.to_string()).or_default().insert(429);
+                }
             }
         }
         // Answered by the extractor and body-limit layers rather than a handler.

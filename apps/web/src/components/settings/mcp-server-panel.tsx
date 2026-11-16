@@ -64,7 +64,9 @@ export function McpServerPanel() {
                   : 'Off. Agents get not found at /mcp.'}
               </ItemDescription>
               {!isOwner ? (
-                <ItemDescription>Only the owner can change this.</ItemDescription>
+                <ItemDescription>
+                  Only the owner can change this.
+                </ItemDescription>
               ) : null}
             </ItemContent>
             <ItemActions className="ml-auto">
