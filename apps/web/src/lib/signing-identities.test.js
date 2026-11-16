@@ -53,9 +53,22 @@ test('summaries describe the material without secrets', () => {
       key_alias: 'upload',
     }),
   ).toBe('upload.jks · alias upload')
-  expect(signingIdentityUsage(ios)).toBe('Picked by Release (release)')
+  expect(signingIdentityUsage(ios)).toBe('Used by Release (release)')
+  expect(
+    signingIdentityUsage({
+      ...ios,
+      used_by_pipelines: [
+        { pipeline_id: 'p1', pipeline_name: 'Android Release' },
+        {
+          pipeline_id: 'p2',
+          pipeline_name: 'Nightly',
+          build_type: 'debug',
+        },
+      ],
+    }),
+  ).toBe('Used by Android Release, Nightly (debug builds), Release (release)')
   expect(signingIdentityUsage({ ...ios, used_by: [] })).toBe(
-    'Not picked in any workflow settings',
+    'Not used by any pipeline',
   )
 })
 

@@ -44,7 +44,7 @@ can still change. Version 1 files keep working unchanged.
 
 ## 1. Generate the file
 
-1. Open the pipeline and select **Edit**.
+1. Open the pipeline and its **Build** row.
 2. Scroll to **What will run** and keep **Form settings** selected.
 3. Under **Repository file**, select **Copy** or **Download**.
 
@@ -90,8 +90,8 @@ pipelines before you copy the file.
 If the file defines several `workflows`, each build runs one of them.
 **Run build** lists the workflows in the file at the branch you build and
 shows what each builds, when it starts and where it publishes. To start every
-manual run on the same one, open the pipeline's **Edit** page and pick it
-under **Default workflow**.
+manual run on the same one, open the pipeline's **Source and triggers** row
+and pick it under **Default workflow**.
 
 Pushes, pull requests and tags start the default workflow. With **Default
 workflow** left at **Not set**, they start one build for each workflow whose

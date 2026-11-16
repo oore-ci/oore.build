@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test'
+import { PIPELINE_OWN_FILES } from '@/lib/pipeline-schema'
 import {
+  androidIdentityValue,
+  buildAndroidSigningPayload,
   buildIosSigningPayload,
   iosProfilesNeedResync,
 } from '@/lib/pipeline-signing'
@@ -97,4 +100,93 @@ test('manual mode keeps the stored key choice', async () => {
     stored,
   )
   expect(payload?.shared_api_key_id).toBeUndefined()
+})
+
+const androidProfile = (overrides) => ({
+  build_type: 'release',
+  enabled: false,
+  has_keystore: false,
+  has_store_password: false,
+  has_key_password: false,
+  ...overrides,
+})
+
+test('Android build types pick a library identity', async () => {
+  const values = {
+    ...formValues,
+    platform_android: true,
+    android_signing_release_identity_id: 'lib-upload',
+    android_signing_debug_identity_id: '',
+  }
+  const { payload } = await buildAndroidSigningPayload(values)
+  expect(payload).toEqual({
+    release: { enabled: true, identity_id: 'lib-upload' },
+    debug: undefined,
+  })
+
+  // Unchanged picks send nothing.
+  const previous = {
+    pipeline_id: 'pipe-1',
+    release: androidProfile({ enabled: true, identity_id: 'lib-upload' }),
+    debug: androidProfile({ build_type: 'debug' }),
+  }
+  expect(
+    (await buildAndroidSigningPayload(values, undefined, previous)).payload,
+  ).toBeNull()
+
+  // Files the pipeline still holds keep signing until another pick.
+  const ownFiles = {
+    ...previous,
+    release: androidProfile({ enabled: true, has_keystore: true }),
+  }
+  expect(androidIdentityValue(ownFiles.release)).toBe(PIPELINE_OWN_FILES)
+  expect(
+    (
+      await buildAndroidSigningPayload(
+        { ...values, android_signing_release_identity_id: PIPELINE_OWN_FILES },
+        undefined,
+        ownFiles,
+      )
+    ).payload,
+  ).toBeNull()
+
+  // Turning signing off keeps the pick for later.
+  expect(
+    (
+      await buildAndroidSigningPayload(
+        { ...values, android_signing_release_identity_id: '' },
+        undefined,
+        previous,
+      )
+    ).payload?.release,
+  ).toEqual({ enabled: false, identity_id: undefined })
+})
+
+test('manual iOS signing picks a library identity', async () => {
+  const values = {
+    ...formValues,
+    ios_signing_mode: 'manual',
+    ios_signing_identity_id: 'lib-store',
+  }
+  const { errors, payload } = await buildIosSigningPayload(
+    values,
+    noFiles,
+    stored,
+  )
+  expect(errors).toEqual([])
+  expect(payload).toMatchObject({
+    enabled: true,
+    mode: 'manual',
+    identity_id: 'lib-store',
+    bundle_ids: [],
+  })
+  expect(
+    (
+      await buildIosSigningPayload(
+        { ...values, ios_signing_identity_id: '' },
+        noFiles,
+        stored,
+      )
+    ).errors,
+  ).toEqual(['Pick an iOS signing identity'])
 })

@@ -83,8 +83,9 @@ export const demoPipelines: Array<Pipeline> = [
     id: PIPELINE_IDS.adminAndroid,
     project_id: PROJECT_IDS.internalAdmin,
     name: 'Debug Build',
-    config_path: '.oore/debug.yaml',
-    config_path_explicit: true,
+    // No file in the repository: every setting is set on the pipeline.
+    config_path: '.oore.yaml',
+    config_path_explicit: false,
     execution_config: {
       platforms: ['android'],
       flutter_version: '3.24.3',

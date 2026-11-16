@@ -48,11 +48,17 @@ const PLATFORM_FIELDS = [
  */
 export function PipelineBasicsSection({
   configMode,
+  part,
   repositoryWorkflow,
   workflowLookup,
   workflowSource,
 }: {
   configMode: PipelineFormValues['config_mode']
+  /**
+   * On the pipeline page, the source row shows the name and file, and the
+   * build row what is built. Omitted, the section shows both.
+   */
+  part?: 'source' | 'build'
   repositoryWorkflow?: React.ReactNode
   /** Reads the config path from the repository for the Workflow field. */
   workflowLookup?: PipelineWorkflowLookup
@@ -65,22 +71,36 @@ export function PipelineBasicsSection({
     ) : null
   const form = useFormContext<PipelineFormValues>()
   return (
-    <PipelineFormSection id="basics" title="Basics">
-      <FormField
-        control={form.control}
-        name="name"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Pipeline name</FormLabel>
-            <FormControl>
-              <Input placeholder="Release" autoFocus {...field} />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+    <PipelineFormSection
+      id={part === 'build' ? undefined : 'basics'}
+      // On the pipeline page the row's own title stands for the section.
+      title={
+        part === 'build'
+          ? 'Build'
+          : part === 'source'
+            ? 'Source and triggers'
+            : 'Basics'
+      }
+    >
+      {part === 'build' ? null : (
+        <>
+          <FormField
+            control={form.control}
+            name="name"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Pipeline name</FormLabel>
+                <FormControl>
+                  <Input placeholder="Release" autoFocus={!part} {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
-      <SettingsSurfaceSeparator />
+          <SettingsSurfaceSeparator />
+        </>
+      )}
 
       {repositoryWorkflow ? (
         <PipelineFormSubsection
@@ -92,156 +112,173 @@ export function PipelineBasicsSection({
         </PipelineFormSubsection>
       ) : (
         <>
-          <PipelineFormSubsection title="Platforms">
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {PLATFORM_FIELDS.map(([name, label]) => (
+          {part === 'source' ? null : (
+            <PipelineFormSubsection title="Platforms">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {PLATFORM_FIELDS.map(([name, label]) => (
+                  <FormField
+                    key={name}
+                    control={form.control}
+                    name={name}
+                    render={({ field }) => (
+                      <label className="flex items-center gap-2 text-sm">
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={(checked) =>
+                            field.onChange(!!checked)
+                          }
+                        />
+                        {label}
+                      </label>
+                    )}
+                  />
+                ))}
+              </div>
+            </PipelineFormSubsection>
+          )}
+
+          {part === 'source' ? null : <SettingsSurfaceSeparator />}
+
+          <PipelineFormSubsection
+            title={part === 'build' ? 'Flutter' : 'Pipeline file'}
+          >
+            {part === 'build' ? null : (
+              <>
                 <FormField
-                  key={name}
                   control={form.control}
-                  name={name}
+                  name="config_mode"
                   render={({ field }) => (
-                    <label className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={field.value}
-                        onCheckedChange={(checked) => field.onChange(!!checked)}
-                      />
-                      {label}
-                    </label>
+                    <FormItem>
+                      <FormLabel>File</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={field.onChange}
+                        items={CONFIG_SOURCES}
+                      >
+                        <FormControl>
+                          <SelectTrigger
+                            className="w-full"
+                            aria-label="Pipeline file"
+                          >
+                            <SelectValue placeholder="Choose a file" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectGroup>
+                            {Object.entries(CONFIG_SOURCES).map(
+                              ([key, value]) => (
+                                <SelectItem key={key} value={key}>
+                                  {value}
+                                </SelectItem>
+                              ),
+                            )}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
                   )}
                 />
-              ))}
-            </div>
-          </PipelineFormSubsection>
 
-          <SettingsSurfaceSeparator />
+                {configMode === 'explicit' ? (
+                  <FormField
+                    control={form.control}
+                    name="config_path"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>File path</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="e.g. ci/oore.yaml"
+                            className="font-mono"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
 
-          <PipelineFormSubsection title="Pipeline file">
-            <FormField
-              control={form.control}
-              name="config_mode"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>File</FormLabel>
-                  <Select
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    items={CONFIG_SOURCES}
-                  >
-                    <FormControl>
-                      <SelectTrigger
-                        className="w-full"
-                        aria-label="Pipeline file"
-                      >
-                        <SelectValue placeholder="Choose a file" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      <SelectGroup>
-                        {Object.entries(CONFIG_SOURCES).map(([key, value]) => (
-                          <SelectItem key={key} value={key}>
-                            {value}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {configMode === 'explicit' ? (
-              <FormField
-                control={form.control}
-                name="config_path"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>File path</FormLabel>
-                    <FormControl>
-                      <Input
-                        placeholder="e.g. ci/oore.yaml"
-                        className="font-mono"
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
+                {workflowLookup ? (
+                  <WorkflowFileLookup {...workflowLookup} />
+                ) : (
+                  workflowField
                 )}
-              />
-            ) : null}
-
-            {workflowLookup ? (
-              <WorkflowFileLookup {...workflowLookup} />
-            ) : (
-              workflowField
+              </>
             )}
 
-            <FormField
-              control={form.control}
-              name="flutter_version"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel
-                    hint={
-                      <>
-                        Oore uses <span className="font-mono">.fvmrc</span> when
-                        present, then this value, then stable. VM builds use the
-                        image for that version; host builds use the runner's
-                        installed Flutter.
-                      </>
-                    }
-                  >
-                    Flutter version (optional)
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder="Empty uses .fvmrc or stable"
-                      className="font-mono"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            {part === 'source' ? null : (
+              <>
+                <FormField
+                  control={form.control}
+                  name="flutter_version"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel
+                        hint={
+                          <>
+                            Oore uses <span className="font-mono">.fvmrc</span>{' '}
+                            when present, then this value, then stable. VM
+                            builds use the image for that version; host builds
+                            use the runner's installed Flutter.
+                          </>
+                        }
+                      >
+                        Flutter version (optional)
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="Empty uses .fvmrc or stable"
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-            <FormField
-              control={form.control}
-              name="build_number_offset"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel
-                    hint={
-                      <>
-                        Only for a new store number on every build. By default
-                        the store number is the{' '}
-                        <span className="font-mono">+N</span> in{' '}
-                        <span className="font-mono">pubspec.yaml</span>, bumped
-                        for each release. To number every build instead, pass{' '}
-                        <span className="font-mono">
-                          --build-number=$OORE_VERSION_CODE
-                        </span>{' '}
-                        to <span className="font-mono">flutter build</span> and
-                        set this above the store&apos;s highest number;{' '}
-                        <span className="font-mono">OORE_VERSION_CODE</span> is
-                        the build number plus this offset.
-                      </>
-                    }
-                  >
-                    Build number offset (optional)
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      inputMode="numeric"
-                      placeholder="0"
-                      className="font-mono"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                <FormField
+                  control={form.control}
+                  name="build_number_offset"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel
+                        hint={
+                          <>
+                            Only for a new store number on every build. By
+                            default the store number is the{' '}
+                            <span className="font-mono">+N</span> in{' '}
+                            <span className="font-mono">pubspec.yaml</span>,
+                            bumped for each release. To number every build
+                            instead, pass{' '}
+                            <span className="font-mono">
+                              --build-number=$OORE_VERSION_CODE
+                            </span>{' '}
+                            to <span className="font-mono">flutter build</span>{' '}
+                            and set this above the store&apos;s highest number;{' '}
+                            <span className="font-mono">OORE_VERSION_CODE</span>{' '}
+                            is the build number plus this offset.
+                          </>
+                        }
+                      >
+                        Build number offset (optional)
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          inputMode="numeric"
+                          placeholder="0"
+                          className="font-mono"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </>
+            )}
           </PipelineFormSubsection>
         </>
       )}

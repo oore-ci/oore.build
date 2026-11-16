@@ -276,7 +276,7 @@ export function PipelinePlanPanel({
   )
 }
 
-function PlanResult({
+export function PlanResult({
   empty,
   error,
   loading,

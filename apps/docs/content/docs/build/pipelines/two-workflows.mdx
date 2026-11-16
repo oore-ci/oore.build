@@ -98,18 +98,18 @@ pipeline:
 - **Google Play**: with `service_account` in the file, the upload needs no
   Google Play settings: it sends the app version's release notes and
   uploads `mapping.txt`. Turn Google Play publishing on in the pipeline's
-  **Publishing** tab only to set an expected package, notes from files or
+  **Publishing** row only to set an expected package, notes from files or
   an in-app update priority.
 - **App Store Connect**: turn on App Store Connect publishing in the
-  **Publishing** tab, and keep the pipeline's iOS signing on with
+  **Publishing** row, and keep the pipeline's iOS signing on with
   **Distribution** set to **App Store** and an App Store Connect API key. The
   upload uses that key. The certificate and profiles come from
   `coin-app-store`.
 
 ## 4. Choose what starts each workflow
 
-Commit the file, then open the pipeline's **Edit** page and look at
-**Default workflow**:
+Commit the file, then open the pipeline's **Source and triggers** row and
+look at **Default workflow**:
 
 - **Not set**: a pull request starts `adhoc` and a push to `main` starts
   `release`, each matching its own `on`. Use this for the file above.
@@ -118,7 +118,8 @@ Commit the file, then open the pipeline's **Edit** page and look at
 
 ## 5. Change a workflow without a commit
 
-Open the pipeline's **Workflows** tab. Each row shows what the workflow
+Open the pipeline's **Source and triggers** row. Under **Workflows**, each
+row shows what the workflow
 builds, signs with and publishes, and its approval. Select **Settings** on a
 row to:
 
@@ -164,7 +165,7 @@ push.
 
 **The App Store Connect upload fails because App Store Connect is not set up**
 
-Turn on App Store Connect publishing in the pipeline's **Publishing** tab, and
+Turn on App Store Connect publishing in the pipeline's **Publishing** row, and
 set the pipeline's iOS signing to App Store with an API key.
 
 ## Next step

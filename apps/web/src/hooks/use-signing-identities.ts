@@ -4,6 +4,7 @@ import {
   useQuery,
   useQueryClient,
   type Query,
+  type QueryClient,
 } from '@tanstack/react-query'
 import * as z from 'zod'
 
@@ -33,11 +34,15 @@ export type {
   SigningIdentityKind,
 } from '@oore/client/models'
 
-// An identity lists the workflow settings that pick it, and the settings
-// name identities, so a change to either refreshes both.
+// An identity lists the pipelines and workflow settings that pick it, and
+// they name identities, so a change to either refreshes both. The app's
+// setup progress counts the library too.
 const SIGNING_OPERATIONS = new Set([
   'listSigningIdentities',
   'listPipelineWorkflowSettings',
+  'getPipelineAndroidSigning',
+  'getPipelineIosSigning',
+  'getProject',
 ])
 
 const generatedQueryKeySchema = z.object({ _id: z.string() })
@@ -47,6 +52,11 @@ function isSigningQuery(query: Query) {
     const operation = generatedQueryKeySchema.safeParse(part).data?._id
     return !!operation && SIGNING_OPERATIONS.has(operation)
   })
+}
+
+/** Refresh everything that shows or names signing identities. */
+export function invalidateSigningQueries(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ predicate: isSigningQuery })
 }
 
 function selectIdentities(response: ListSigningIdentitiesResponse) {

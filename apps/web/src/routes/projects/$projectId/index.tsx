@@ -79,9 +79,9 @@ const ProjectReleasesTab = lazy(() =>
     default: module.ProjectReleasesTab,
   })),
 )
-const ProjectEnvironmentsTab = lazy(() =>
-  import('./-project-environments-tab').then((module) => ({
-    default: module.ProjectEnvironmentsTab,
+const ProjectStoresTab = lazy(() =>
+  import('./-project-stores-tab').then((module) => ({
+    default: module.ProjectStoresTab,
   })),
 )
 const loadProjectSettingsForm = () => import('./-project-settings-form')
@@ -112,7 +112,7 @@ const TAB_VALUES = [
   'pipelines',
   'builds',
   'releases',
-  'environments',
+  'stores',
   'settings',
 ] as const
 type TabValue = (typeof TAB_VALUES)[number]
@@ -155,7 +155,11 @@ function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
   const pipelinePage = searchNumber(search, 'pipelinePage')
   const pipelinePageSize = searchNumber(search, 'pipelinePageSize')
   const pipelineQ = searchString(search, 'pipelineQ')?.trim() ?? ''
-  const selectedTab = TAB_VALUES.find((value) => value === tab)
+  // The Environments tab became the Releases tab's tracks; old links land there.
+  const selectedTab =
+    tab === 'environments'
+      ? 'releases'
+      : TAB_VALUES.find((value) => value === tab)
 
   return {
     tab: selectedTab,
@@ -587,7 +591,7 @@ function ProjectDetailPage() {
               Builds{buildCount > 0 ? ` (${buildCount})` : ''}
             </TabsTrigger>
             <TabsTrigger value="releases">Releases</TabsTrigger>
-            <TabsTrigger value="environments">Environments</TabsTrigger>
+            <TabsTrigger value="stores">Stores</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
         </div>
@@ -681,16 +685,18 @@ function ProjectDetailPage() {
             <ProjectReleasesTab
               projectId={projectId}
               canManage={canManageReleases || isInstanceAdmin}
+              canOperate={canOperateReleases}
               canRehearse={canRunBuild}
             />
           </Suspense>
         ) : null}
 
-        {activeTab === 'environments' ? (
+        {activeTab === 'stores' ? (
           <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-            <ProjectEnvironmentsTab
-              canManage={canManageReleases}
-              canOperate={canOperateReleases}
+            <ProjectStoresTab
+              canManageTracks={canManageReleases}
+              canReadInstanceSecrets={canReadInstanceSettings}
+              canWrite={canWritePipelines}
               projectId={projectId}
             />
           </Suspense>

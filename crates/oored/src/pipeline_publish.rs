@@ -28,16 +28,41 @@ type ApiFailure = (StatusCode, Json<ApiError>);
 type ApiResult<T> = Result<Json<T>, ApiFailure>;
 
 const GOOGLE_PLAY: &str = "google_play";
-const PLAY_API_BASE: &str =
+pub(crate) const PLAY_API_BASE: &str =
     "https://androidpublisher.googleapis.com/androidpublisher/v3/applications";
-const PLAY_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+pub(crate) const PLAY_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn store_error(context: &str, e: impl std::fmt::Display) -> ApiFailure {
     error!(error = %e, "{context}");
     api_err(StatusCode::INTERNAL_SERVER_ERROR, "store_error", context)
 }
 
+/// The pipeline's Google Play settings as uploads use them: an empty service
+/// account secret or a missing package is filled in from the app's Google
+/// Play connection. Pipelines of an app without one keep their own values.
 pub(crate) async fn load_google_play(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+) -> anyhow::Result<Option<(GooglePlayPublishConfig, i64)>> {
+    let Some((mut config, updated_at)) = load_google_play_stored(pool, pipeline_id).await? else {
+        return Ok(None);
+    };
+    if let Some(connection) =
+        crate::store_connections::pipeline_google_play_connection(pool, pipeline_id).await?
+    {
+        if config.service_account_secret.trim().is_empty() {
+            config.service_account_secret = connection.service_account_secret;
+        }
+        if config.package_name.is_none() {
+            config.package_name = connection.package_name;
+        }
+    }
+    Ok(Some((config, updated_at)))
+}
+
+/// The pipeline's Google Play settings as saved, where an empty service
+/// account secret means the app's connection.
+pub(crate) async fn load_google_play_stored(
     pool: &SqlitePool,
     pipeline_id: &str,
 ) -> anyhow::Result<Option<(GooglePlayPublishConfig, i64)>> {
@@ -60,10 +85,14 @@ async fn google_play_response(
     project_id: &str,
     pipeline_id: String,
 ) -> ApiResult<PipelineGooglePlayPublishResponse> {
-    let loaded = load_google_play(&state.db, &pipeline_id)
+    let loaded = load_google_play_stored(&state.db, &pipeline_id)
         .await
         .map_err(|e| store_error("Failed to load Google Play settings", e))?;
-    let service_account_secret_present = match &loaded {
+    let effective = load_google_play(&state.db, &pipeline_id)
+        .await
+        .map_err(|e| store_error("Failed to load Google Play settings", e))?;
+    let service_account_secret_present = match &effective {
+        Some((config, _)) if config.service_account_secret.is_empty() => false,
         Some((config, _)) => secret_name_visible(
             &state.db,
             project_id,
@@ -191,7 +220,18 @@ pub async fn update_pipeline_google_play_publish(
     config.service_account_secret = config.service_account_secret.trim().to_string();
     config.track = config.track.trim().to_string();
     config.release_notes_locale = config.release_notes_locale.trim().to_string();
-    let errors = validate_google_play_publish_config(&config);
+    let mut errors = validate_google_play_publish_config(&config);
+    if config.service_account_secret.is_empty()
+        && crate::store_connections::google_play_connection(&state.db, &project_id)
+            .await
+            .map_err(|e| store_error("Failed to load the app's Google Play connection", e))?
+            .is_none()
+    {
+        errors.push(
+            "service_account_secret is required until the app's Google Play store is connected"
+                .to_string(),
+        );
+    }
     if !errors.is_empty() {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -268,7 +308,17 @@ pub async fn test_pipeline_google_play_credentials(
     )
     .await?;
 
-    let secret_name = request.service_account_secret.trim();
+    // Empty checks the app's Google Play connection.
+    let app_secret = match request.service_account_secret.trim() {
+        "" => crate::store_connections::google_play_connection(&state.db, &project_id)
+            .await
+            .map_err(|e| store_error("Failed to load the app's Google Play connection", e))?
+            .map(|connection| connection.service_account_secret),
+        _ => None,
+    };
+    let secret_name = app_secret
+        .as_deref()
+        .unwrap_or_else(|| request.service_account_secret.trim());
     if let Err(error) = oore_contract::validate_secret_name(secret_name) {
         return Err(api_err(
             StatusCode::BAD_REQUEST,
@@ -380,10 +430,10 @@ async fn default_play_package(
 }
 
 #[derive(Debug)]
-struct PlayCheck {
-    ok: bool,
-    message: String,
-    service_account_email: Option<String>,
+pub(crate) struct PlayCheck {
+    pub ok: bool,
+    pub message: String,
+    pub service_account_email: Option<String>,
 }
 
 impl PlayCheck {
@@ -399,7 +449,7 @@ impl PlayCheck {
 /// Each step an upload depends on, stopping at the first that fails: the
 /// secret exists, holds a service account key, Google accepts the key, and
 /// the account can open an edit for the app.
-async fn check_play_credentials(
+pub(crate) async fn check_play_credentials(
     http: &reqwest::Client,
     api_base: &str,
     secret_name: &str,
@@ -409,7 +459,7 @@ async fn check_play_credentials(
     let Some(service_account) = service_account else {
         return PlayCheck::failed(
             format!(
-                "No secret named {secret_name} is visible to this pipeline. Add it to the pipeline, its project or the instance."
+                "No secret named {secret_name} is set. Add it to the pipeline, its app or the instance."
             ),
             None,
         );

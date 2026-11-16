@@ -2,6 +2,7 @@ import { demoApi } from './api'
 import { HttpResponse, delay } from 'msw'
 import * as z from 'zod'
 import { PIPELINE_IDS, ago } from '../seed'
+import { SIGNING_IDENTITY_IDS } from '../data/signing-identities'
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import {
   requireDemoInstancePermission,
@@ -23,6 +24,7 @@ import {
   demoSharedKeySummary,
   setDemoSharedKeyUsage,
 } from './store-credentials'
+import { demoAppHasAppStoreKey } from './stores'
 import type { JsonObject } from '@/lib/types'
 import type {
   AppStorePublishConfig,
@@ -130,6 +132,7 @@ const updatePipelineSchema = z.toZod<UpdatePipelineRequest>()(
 )
 const androidSigningInputSchema = z.object({
   enabled: z.boolean().optional(),
+  identity_id: z.string().nullish(),
   keystore_filename: z.string().nullish(),
   keystore_base64: z.string().nullish(),
   store_password: z.string().nullish(),
@@ -219,40 +222,23 @@ const iosSigningByPipeline: IosSigningFixtures = {
     ],
     updated_at: ago(86400 * 3),
   },
+  // Signs with an identity from the app's signing library; the shared key
+  // still uploads to TestFlight.
   [PIPELINE_IDS.paymentsAll]: {
     enabled: true,
-    mode: 'hybrid',
+    mode: 'manual',
     export_method: 'app_store',
-    team_id: 'F6G7H8I9J0',
-    bundle_ids: [
-      'com.example.nativepayments',
-      'com.example.nativepayments.share',
-    ],
-    has_p12: true,
-    p12_filename: 'distribution.p12',
-    has_p12_password: true,
+    team_id: 'A1B2C3D4E5',
+    bundle_ids: ['com.acme.coin', 'com.acme.coin.widgets'],
+    identity_id: SIGNING_IDENTITY_IDS.coinAppStore,
+    identity_name: 'coin-app-store',
+    has_p12: false,
+    has_p12_password: false,
     has_api_key: true,
     api_key_id: 'M3N4P5Q6RS',
     api_issuer_id: '69d2de96-0000-47e3-e053-0824d011072a',
     shared_api_key_id: DEMO_SHARED_KEY_ID,
-    provisioning_profiles: [
-      {
-        bundle_id: 'com.example.nativepayments',
-        has_profile: true,
-        profile_filename: 'NativePayments_AppStore.mobileprovision',
-        profile_uuid: 'B2C3D4E5-F6A7-8901-BCDE-F12345678901',
-        profile_name: 'NativePayments App Store',
-        expires_at: ago(-365 * 86400),
-      },
-      {
-        bundle_id: 'com.example.nativepayments.share',
-        has_profile: true,
-        profile_filename: 'NativePayments_Share_AppStore.mobileprovision',
-        profile_uuid: 'C3D4E5F6-A7B8-9012-CDEF-123456789012',
-        profile_name: 'NativePayments Share App Store',
-        expires_at: ago(-365 * 86400),
-      },
-    ],
+    provisioning_profiles: [],
     updated_at: ago(86400 * 7),
   },
 }
@@ -304,6 +290,7 @@ const appStoreConfigSchema = z.object({
   listing_dir: z.string().nullish(),
   cancel_previous_submission: z.boolean().optional(),
   preflight: z.enum(['auto', 'block', 'warn', 'off']).optional(),
+  upload_with_signing_key: z.boolean().optional(),
 })
 
 const iosSigningSummarySchema = z.object({
@@ -312,6 +299,36 @@ const iosSigningSummarySchema = z.object({
   has_api_key: z.boolean().optional(),
   shared_api_key_id: z.string().optional(),
 })
+
+/** A pipeline's iOS signing as stored, before the first read copies it. */
+export function demoPipelineIosSigning(pipelineId: string): JsonObject {
+  return (
+    demoState.iosSigning[pipelineId] ?? iosSigningByPipeline[pipelineId] ?? {}
+  )
+}
+
+/** Identity fields for a pick: `''` clears it, undefined keeps it. */
+function pickedIdentity(
+  projectId: string | null,
+  id: string | null | undefined,
+) {
+  if (id == null) return undefined
+  if (id === '') return { identity: undefined }
+  const identity = demoState.signingIdentities.find(
+    (candidate) => candidate.project_id === projectId && candidate.id === id,
+  )
+  return identity ? { identity } : null
+}
+
+function unsignedAndroidProfile(buildType: 'debug' | 'release') {
+  return {
+    build_type: buildType,
+    enabled: false,
+    has_keystore: false,
+    has_store_password: false,
+    has_key_password: false,
+  }
+}
 
 function storedIosSigning(pipelineId: string) {
   return iosSigningSummarySchema.parse(
@@ -349,7 +366,11 @@ function appStoreResponse(pipelineId: string) {
       phased_release: false,
     },
     updated_at: saved?.updated_at,
-    has_api_key: !!signing.has_api_key || !!signing.shared_api_key_id,
+    has_api_key:
+      (demoAppHasAppStoreKey(pipelineId) &&
+        !saved?.config.upload_with_signing_key) ||
+      !!signing.has_api_key ||
+      !!signing.shared_api_key_id,
     app_store_export:
       (signing.enabled ?? false) && signing.export_method === 'app_store',
   }
@@ -710,65 +731,57 @@ export const pipelineHandlers = [
   demoApi.getPipelineAndroidSigning(async ({ params }) => {
     await delay(150)
     const id = String(params.pipeline_id)
-    demoState.androidSigning[id] ??= {
-      pipeline_id: params.pipeline_id,
-      debug: {
-        build_type: 'debug',
-        enabled: false,
-        has_keystore: false,
-        has_store_password: false,
-        has_key_password: false,
+    return HttpResponse.json(
+      demoState.androidSigning[id] ?? {
+        pipeline_id: id,
+        debug: unsignedAndroidProfile('debug'),
+        release: unsignedAndroidProfile('release'),
       },
-      release: {
-        build_type: 'release',
-        enabled: true,
-        has_keystore: true,
-        keystore_filename: 'release.keystore',
-        keystore_checksum: 'sha256:abc123...',
-        key_alias: 'upload',
-        has_store_password: true,
-        has_key_password: true,
-        updated_at: ago(86400 * 10),
-      },
-    }
-    return HttpResponse.json(demoState.androidSigning[id])
+    )
   }),
 
   demoApi.updatePipelineAndroidSigning(async ({ params, request }) => {
     await delay(300)
-    const forbidden = requirePipelinePermission(
-      request,
-      String(params.pipeline_id),
-      'pipelines:write',
-    )
+    const id = String(params.pipeline_id)
+    const forbidden = requirePipelinePermission(request, id, 'pipelines:write')
     if (forbidden) return forbidden
     const body = androidSigningRequestSchema.parse(await request.json())
-    const existing = demoState.androidSigning[String(params.pipeline_id)] ?? {}
-    const existingRelease = jsonObjectSchema.safeParse(existing.release)
-    const release = {
-      build_type: 'release',
-      enabled: true,
-      has_keystore: true,
-      keystore_filename: 'release.keystore',
-      has_store_password: true,
-      has_key_password: true,
-      updated_at: ago(0),
+    const existing = demoState.androidSigning[id] ?? {}
+    const signing: JsonObject = { pipeline_id: id }
+    for (const buildType of ['debug', 'release'] as const) {
+      const stored = jsonObjectSchema.safeParse(existing[buildType]).data ?? {
+        ...unsignedAndroidProfile(buildType),
+      }
+      const input = body[buildType]
+      if (!input) {
+        signing[buildType] = stored
+        continue
+      }
+      const picked = pickedIdentity(pipelineProjectId(id), input.identity_id)
+      if (picked === null) {
+        return HttpResponse.json(
+          {
+            error: "The signing identity is not in this app's signing library",
+            code: 'invalid_input',
+          },
+          { status: 400 },
+        )
+      }
+      const profile: JsonObject = {
+        ...stored,
+        enabled: input.enabled ?? false,
+        updated_at: ago(0),
+      }
+      if (picked?.identity) {
+        profile.identity_id = picked.identity.id
+        profile.identity_name = picked.identity.name
+      } else if (picked) {
+        delete profile.identity_id
+        delete profile.identity_name
+      }
+      signing[buildType] = profile
     }
-    if (existingRelease.success) Object.assign(release, existingRelease.data)
-    if (body.release) Object.assign(release, body.release)
-    const signing = {
-      pipeline_id: params.pipeline_id,
-      debug: {
-        build_type: 'debug',
-        enabled: false,
-        has_keystore: false,
-        has_store_password: false,
-        has_key_password: false,
-        ...body.debug,
-      },
-      release,
-    }
-    demoState.androidSigning[String(params.pipeline_id)] = signing
+    demoState.androidSigning[id] = signing
     return HttpResponse.json(signing)
   }),
 
@@ -811,13 +824,55 @@ export const pipelineHandlers = [
     const methodChanged =
       body.export_method != null &&
       body.export_method !== (existing.export_method ?? 'ad_hoc')
-    const { shared_api_key_id: rawSharedKeyId, ...changes } = body
+    const {
+      shared_api_key_id: rawSharedKeyId,
+      identity_id: rawIdentityId,
+      ...changes
+    } = body
     const sharedKeyId = z.string().optional().parse(rawSharedKeyId)
+    const picked =
+      changes.mode === 'manual'
+        ? pickedIdentity(
+            pipelineProjectId(id),
+            z.string().nullish().parse(rawIdentityId),
+          )
+        : { identity: undefined }
+    if (picked === null) {
+      return HttpResponse.json(
+        {
+          error: "The signing identity is not in this app's signing library",
+          code: 'invalid_input',
+        },
+        { status: 400 },
+      )
+    }
     const merged: JsonObject = {
       pipeline_id: id,
       ...existing,
       ...changes,
       updated_at: ago(0),
+    }
+    if (picked) {
+      if (picked.identity) {
+        merged.identity_id = picked.identity.id
+        merged.identity_name = picked.identity.name
+      } else {
+        delete merged.identity_id
+        delete merged.identity_name
+      }
+    }
+    // The identity sets the team, distribution and bundles, as on the daemon.
+    const identity = picked?.identity
+    if (identity) {
+      merged.team_id = identity.team_id ?? null
+      merged.export_method = identity.export_method ?? 'ad_hoc'
+      merged.bundle_ids = (identity.profiles ?? []).map(
+        (profile) => profile.bundle_id,
+      )
+    } else if (merged.identity_id) {
+      merged.team_id = existing.team_id ?? null
+      merged.export_method = existing.export_method ?? 'ad_hoc'
+      merged.bundle_ids = existing.bundle_ids ?? []
     }
     // Omitted keeps the shared key, an empty string switches to the own key.
     if (sharedKeyId === '') delete merged.shared_api_key_id
@@ -877,7 +932,7 @@ export const pipelineHandlers = [
     }
     if (parsed.data.enabled && !current.has_api_key) {
       return invalidPublishConfig(
-        'App Store publishing needs an App Store Connect API key in iOS signing.',
+        "Connect App Store Connect in the app's Stores, or add an API key in iOS signing, before publishing",
       )
     }
     demoAppStoreConfigs.set(id, {

@@ -55,6 +55,8 @@ fn empty_profile(build_type: AndroidSigningBuildType) -> AndroidSigningProfile {
         has_store_password: false,
         has_key_password: false,
         updated_at: None,
+        identity_id: None,
+        identity_name: None,
     }
 }
 
@@ -113,6 +115,8 @@ fn row_to_public_profile(
             .get::<Option<String>, _>("key_password_encrypted")
             .is_some(),
         updated_at: Some(row.get("updated_at")),
+        identity_id: row.get("identity_id"),
+        identity_name: None,
     })
 }
 
@@ -125,6 +129,10 @@ fn row_to_runner_profile(
         return Ok(None);
     };
     if row.get::<i32, _>("enabled") == 0 {
+        return Ok(None);
+    }
+    if row.get::<Option<String>, _>("identity_id").is_some() {
+        // Served from the signing library by the caller.
         return Ok(None);
     }
 
@@ -213,6 +221,19 @@ async fn upsert_profile(
     let store_password_input = trim_opt(input.store_password);
     let key_alias_input = trim_opt(input.key_alias);
     let key_password_input = trim_opt(input.key_password);
+    // An upload replaces the picked identity; the caller then adds the
+    // upload to the signing library and links it.
+    let identity_id = if keystore_payload_input.is_some() {
+        None
+    } else {
+        match input.identity_id.as_deref().map(str::trim) {
+            Some("") => None,
+            Some(id) => Some(id.to_string()),
+            None => existing
+                .as_ref()
+                .and_then(|row| row.get::<Option<String>, _>("identity_id")),
+        }
+    };
 
     let now = now_unix();
 
@@ -313,6 +334,7 @@ async fn upsert_profile(
     }
 
     if input.enabled
+        && identity_id.is_none()
         && (keystore_encrypted.is_none()
             || keystore_filename.is_none()
             || store_password_encrypted.is_none()
@@ -323,7 +345,7 @@ async fn upsert_profile(
             StatusCode::BAD_REQUEST,
             "incomplete_signing_profile",
             format!(
-                "Enabled {build_type_label} profile requires keystore, filename, store password, key alias, and key password"
+                "Enabled {build_type_label} profile requires a signing identity, or a keystore, filename, store password, key alias, and key password"
             ),
         ));
     }
@@ -340,7 +362,8 @@ async fn upsert_profile(
                  key_alias_encrypted = ?6,
                  key_password_encrypted = ?7,
                  updated_by = ?8,
-                 updated_at = ?9
+                 updated_at = ?9,
+                 identity_id = ?11
              WHERE id = ?10",
         )
         .bind(if input.enabled { 1 } else { 0 })
@@ -353,6 +376,7 @@ async fn upsert_profile(
         .bind(actor_id)
         .bind(now)
         .bind(id)
+        .bind(&identity_id)
         .execute(&mut *connection)
         .await
         .map_err(|e| {
@@ -369,12 +393,12 @@ async fn upsert_profile(
                 id, pipeline_id, build_type, enabled,
                 keystore_filename, keystore_encrypted, keystore_checksum,
                 store_password_encrypted, key_alias_encrypted, key_password_encrypted,
-                created_by, updated_by, created_at, updated_at
+                created_by, updated_by, created_at, updated_at, identity_id
              ) VALUES (
                 ?1, ?2, ?3, ?4,
                 ?5, ?6, ?7,
                 ?8, ?9, ?10,
-                ?11, ?11, ?12, ?12
+                ?11, ?11, ?12, ?12, ?13
              )",
         )
         .bind(Uuid::new_v4().to_string())
@@ -389,6 +413,7 @@ async fn upsert_profile(
         .bind(key_password_encrypted)
         .bind(actor_id)
         .bind(now)
+        .bind(&identity_id)
         .execute(&mut *connection)
         .await
         .map_err(|e| {
@@ -512,6 +537,22 @@ pub async fn get_pipeline_android_signing(
         )
     })?;
 
+    let mut debug = debug;
+    let mut release = release;
+    for profile in [&mut debug, &mut release] {
+        profile.identity_name =
+            crate::signing_identities::identity_name(&pool, profile.identity_id.as_deref())
+                .await
+                .map_err(|e| {
+                    error!(error = %e, "failed to load Android signing identity name");
+                    api_err(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "store_error",
+                        "Failed to load Android signing settings",
+                    )
+                })?;
+    }
+
     Ok(Json(PipelineAndroidSigningResponse {
         pipeline_id,
         debug,
@@ -564,6 +605,24 @@ pub async fn update_pipeline_android_signing(
 
     let debug_updated = req.debug.is_some();
     let release_updated = req.release.is_some();
+    for input in [req.debug.as_ref(), req.release.as_ref()]
+        .into_iter()
+        .flatten()
+    {
+        if let Some(id) = input
+            .identity_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+        {
+            crate::signing_identities::pick_for_pipeline(
+                &pool,
+                &pipeline_id,
+                id,
+                oore_contract::SigningIdentityKind::AndroidKeystore,
+            )
+            .await?;
+        }
+    }
 
     save_profiles(
         &pool,
@@ -574,6 +633,16 @@ pub async fn update_pipeline_android_signing(
         req.release,
     )
     .await?;
+    // A keystore uploaded here goes into the app's signing library.
+    if let Err(e) = crate::signing_adoption::adopt_pipeline_signing(
+        &pool,
+        &state.encryption_key,
+        Some(&pipeline_id),
+    )
+    .await
+    {
+        error!(error = %e, "failed to add the uploaded keystore to the signing library");
+    }
 
     let details = serde_json::json!({
         "pipeline_id": &pipeline_id,
@@ -619,7 +688,21 @@ pub async fn get_job_android_signing(
 
     let pipeline_id =
         require_active_job_signing_grant(&pool, &job_id, &runner_id, &headers).await?;
-    let (debug_row, release_row) = load_profile_rows(&pool, &pipeline_id).await.map_err(|e| {
+    job_android_signing(&pool, &state.encryption_key, &pipeline_id, &job_id)
+        .await
+        .map(Json)
+}
+
+/// The Android signing a build of `pipeline_id` gets. Per build type: the
+/// identity the pipeline picks, else its own files; the release profile of
+/// a workflow that names an identity replaces both.
+pub(crate) async fn job_android_signing(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    pipeline_id: &str,
+    job_id: &str,
+) -> Result<RunnerAndroidSigningResponse, (StatusCode, Json<ApiError>)> {
+    let (debug_row, release_row) = load_profile_rows(pool, pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to query Android signing profiles for job");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -630,7 +713,7 @@ pub async fn get_job_android_signing(
 
     let debug = row_to_runner_profile(
         debug_row.as_ref(),
-        &state.encryption_key,
+        encryption_key,
         AndroidSigningBuildType::Debug,
     )
     .map_err(|e| {
@@ -643,7 +726,7 @@ pub async fn get_job_android_signing(
     })?;
     let release = row_to_runner_profile(
         release_row.as_ref(),
-        &state.encryption_key,
+        encryption_key,
         AndroidSigningBuildType::Release,
     )
     .map_err(|e| {
@@ -655,19 +738,39 @@ pub async fn get_job_android_signing(
         )
     })?;
 
-    // A workflow that names an identity signs release builds with it.
-    let release = match crate::signing_identities::job_android_release_profile(
-        &pool,
-        &state.encryption_key,
-        &job_id,
-    )
-    .await?
-    {
-        Some(profile) => Some(profile),
-        None => release,
-    };
+    // A build type that picks a library identity signs with it.
+    let mut profiles = [debug, release];
+    for (slot, row, build_type) in [
+        (0, debug_row.as_ref(), AndroidSigningBuildType::Debug),
+        (1, release_row.as_ref(), AndroidSigningBuildType::Release),
+    ] {
+        let Some(row) = row.filter(|row| row.get::<i32, _>("enabled") != 0) else {
+            continue;
+        };
+        if let Some(identity_id) = row.get::<Option<String>, _>("identity_id") {
+            profiles[slot] = Some(
+                crate::signing_identities::pipeline_android_profile(
+                    pool,
+                    encryption_key,
+                    &identity_id,
+                    build_type,
+                )
+                .await?,
+            );
+        }
+    }
+    let [debug, release] = profiles;
 
-    Ok(Json(RunnerAndroidSigningResponse { debug, release }))
+    // A workflow that names an identity signs release builds with it.
+    let release =
+        match crate::signing_identities::job_android_release_profile(pool, encryption_key, job_id)
+            .await?
+        {
+            Some(profile) => Some(profile),
+            None => release,
+        };
+
+    Ok(RunnerAndroidSigningResponse { debug, release })
 }
 
 #[cfg(test)]
@@ -684,6 +787,8 @@ mod tests {
             "CREATE TABLE users (id TEXT PRIMARY KEY)",
             "CREATE TABLE pipelines (id TEXT PRIMARY KEY)",
             include_str!("../migrations/013_pipeline_android_signing.sql"),
+            // From 101, without the signing library it points at.
+            "ALTER TABLE pipeline_android_signing_profiles ADD COLUMN identity_id TEXT",
             "INSERT INTO users VALUES ('u1')",
             "INSERT INTO pipelines VALUES ('pl1')",
         ] {
@@ -700,6 +805,7 @@ mod tests {
             store_password: Some("store".to_string()),
             key_alias: Some("alias".to_string()),
             key_password: Some("key".to_string()),
+            identity_id: None,
         }
     }
 
@@ -742,5 +848,55 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(saved_build_types(&pool).await, ["debug", "release"]);
+    }
+
+    async fn release_identity(pool: &SqlitePool) -> Option<String> {
+        sqlx::query_scalar(
+            "SELECT identity_id FROM pipeline_android_signing_profiles WHERE build_type = 'release'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_picked_identity_signs_without_files_and_an_upload_replaces_it() {
+        let pool = pool().await;
+        let key = [7u8; 32];
+        let pick = |id: &str| AndroidSigningProfileInput {
+            enabled: true,
+            identity_id: Some(id.to_string()),
+            ..AndroidSigningProfileInput::default()
+        };
+        save_profiles(&pool, &key, "pl1", "u1", None, Some(pick("lib-1")))
+            .await
+            .unwrap();
+        assert_eq!(release_identity(&pool).await.as_deref(), Some("lib-1"));
+
+        // Omitted keeps the pick, so turning signing off and on keeps it.
+        let keep = AndroidSigningProfileInput {
+            enabled: true,
+            ..AndroidSigningProfileInput::default()
+        };
+        save_profiles(&pool, &key, "pl1", "u1", None, Some(keep))
+            .await
+            .unwrap();
+        assert_eq!(release_identity(&pool).await.as_deref(), Some("lib-1"));
+
+        let keystore = base64::engine::general_purpose::STANDARD.encode(b"keystore");
+        save_profiles(&pool, &key, "pl1", "u1", None, Some(profile(&keystore)))
+            .await
+            .unwrap();
+        assert_eq!(release_identity(&pool).await, None);
+
+        // Clearing the pick with no files of its own is refused when enabled.
+        sqlx::query("UPDATE pipeline_android_signing_profiles SET keystore_encrypted = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _) = save_profiles(&pool, &key, "pl1", "u1", None, Some(pick("")))
+            .await
+            .unwrap_err();
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

@@ -46,6 +46,9 @@ const DEMO_WORKFLOW_FILES = [
         platforms: ['android', 'ios'],
         triggers: ['pull requests into main'],
         uses_pipeline_triggers: false,
+        publishes: [
+          'android publishes to the Google Play internal track (workflows.adhoc.targets.android.publish.play)',
+        ],
       },
       release: {
         platforms: ['android', 'ios'],
@@ -77,7 +80,13 @@ const DEMO_WORKFLOW_FILES = [
           'ios publishes to the TestFlight group Beta testers (workflows.testflight.targets.ios.publish.testflight)',
         ],
       },
-      'app-store': { triggers: ['tag v*'], uses_pipeline_triggers: false },
+      'app-store': {
+        triggers: ['tag v*'],
+        uses_pipeline_triggers: false,
+        publishes: [
+          'ios publishes to the App Store and submits for review (workflows.app-store.targets.ios.publish.app_store)',
+        ],
+      },
     },
   },
 ] satisfies Array<DemoWorkflowFile>

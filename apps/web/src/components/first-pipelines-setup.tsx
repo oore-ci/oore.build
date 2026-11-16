@@ -16,16 +16,12 @@ import { useCreatePipeline } from '@/hooks/use-pipelines'
 import { useProjectAppDetection } from '@/hooks/use-projects'
 import { useRunners } from '@/hooks/use-runners'
 import { proposedPipelines, type ProposedPipeline } from '@/lib/first-pipelines'
+import { listWords } from '@/lib/new-pipeline'
 import {
   PLATFORM_LABEL,
   platformReadiness,
   type PlatformReadiness,
 } from '@/lib/runner-toolchain'
-
-function listWords(words: Array<string>) {
-  if (words.length <= 1) return words.join('')
-  return `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`
-}
 
 function ReadinessLine({ readiness }: { readiness: PlatformReadiness }) {
   switch (readiness.state) {
@@ -95,7 +91,7 @@ export function FirstPipelinesSetup({ project }: { project: Project }) {
       }
       nativeButton={false}
     >
-      Set up manually
+      Set up another way
     </Button>
   )
 
@@ -198,8 +194,9 @@ export function FirstPipelinesSetup({ project }: { project: Project }) {
     } else if (iosPipelineId) {
       toast.success('Pipeline created. Add iOS signing to build it.')
       void navigate({
-        to: '/projects/$projectId/pipelines/$pipelineId/edit',
+        to: '/projects/$projectId/pipelines/$pipelineId',
         params: { projectId: project.id, pipelineId: iosPipelineId },
+        search: { row: 'signing' },
         hash: 'ios-signing',
       })
     } else {

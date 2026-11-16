@@ -22,7 +22,7 @@ import {
   SIGNING_IDENTITY_KIND_LABELS,
   SIGNING_IDENTITY_NAME,
   signingIdentitySummary,
-  signingIdentityUseLabel,
+  signingIdentityUses,
 } from '@/lib/signing-identities'
 import { toast } from '@/lib/toast'
 import { FileField } from '@/components/file-field'
@@ -79,10 +79,13 @@ const IDENTITY_KINDS = [
 const MATERIAL_SURFACE =
   'grid gap-3 rounded-[min(var(--radius-2xl),16px)] bg-muted/40 p-4'
 
-function formValues(existing?: SigningIdentity): IdentityFormValues {
+function formValues(
+  existing?: SigningIdentity,
+  kind?: SigningIdentityKind,
+): IdentityFormValues {
   return {
     name: existing?.name ?? '',
-    kind: existing?.kind ?? 'ios_distribution',
+    kind: existing?.kind ?? kind ?? 'ios_distribution',
     replace: !existing,
     key_alias: existing?.key_alias ?? '',
     store_password: '',
@@ -180,11 +183,16 @@ function ProfileFilesField({
  */
 export function SigningIdentityDialog({
   existing,
+  kind: presetKind,
+  onCreated,
   onOpenChange,
   open,
   projectId,
 }: {
   existing?: SigningIdentity
+  /** A new identity of this kind only, as when a pipeline adds one. */
+  kind?: SigningIdentityKind
+  onCreated?: (identity: SigningIdentity) => void
   onOpenChange: (open: boolean) => void
   open: boolean
   projectId: string
@@ -204,7 +212,7 @@ export function SigningIdentityDialog({
 
   const form = useForm<IdentityFormValues>({
     resolver: zodResolver(identityFormSchema),
-    values: formValues(existing),
+    values: formValues(existing, presetKind),
   })
   const kind = useWatch({ control: form.control, name: 'kind' })
   const replace = useWatch({ control: form.control, name: 'replace' })
@@ -214,7 +222,7 @@ export function SigningIdentityDialog({
     // Closing mid-save would hide the result, including a save error.
     if (!next && mutation.isPending) return
     if (!next) {
-      form.reset(formValues(existing))
+      form.reset(formValues(existing, presetKind))
       mutation.reset()
       setKeystore(null)
       setP12(null)
@@ -290,8 +298,9 @@ export function SigningIdentityDialog({
       }
     }
     const name = values.name.trim()
-    const onSuccess = () => {
+    const onSuccess = (saved: SigningIdentity) => {
       toast.success(existing ? `Saved ${name}` : `Added ${name}`)
+      if (!existing) onCreated?.(saved)
       handleOpenChange(false)
     }
     const onError = (err: Error) => {
@@ -321,7 +330,7 @@ export function SigningIdentityDialog({
   }
 
   const rootError = errors.root?.message
-  const uses = existing?.used_by ?? []
+  const uses = existing ? signingIdentityUses(existing) : []
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -335,9 +344,9 @@ export function SigningIdentityDialog({
           <DialogDescription>
             {existing
               ? uses.length > 0
-                ? `Picked by ${uses.map(signingIdentityUseLabel).join(', ')}. Their next build uses the change.`
+                ? `Used by ${uses.join(', ')}. Their next build uses the change.`
                 : 'Builds that name it pick up the change on their next run.'
-              : 'Workflows name it under signing in .oore.yaml, or pick it in a pipeline’s Workflows settings.'}
+              : 'Pipelines and workflows pick it by name.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -347,7 +356,7 @@ export function SigningIdentityDialog({
             onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
             className="space-y-4"
           >
-            {!existing ? (
+            {!existing && !presetKind ? (
               <FormField
                 control={form.control}
                 name="kind"

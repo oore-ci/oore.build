@@ -8,7 +8,7 @@ import {
   requireDemoProjectPermission,
 } from '../authorization'
 import { demoState } from '../state'
-import { demoAppStorePublishEnabled } from './pipelines'
+import { demoAppStorePublishEnabled, demoPipelineIosSigning } from './pipelines'
 import { demoPlayPublishEnabled } from './secrets'
 import { parseDemoJsonObject } from '../request'
 import type {
@@ -48,13 +48,19 @@ function demoSetupProgress(projectId: string) {
     .filter((pipeline) => pipeline.project_id === projectId)
     .map((pipeline) => pipeline.id)
   return {
-    release_signing: pipelineIds.some(
-      (id) =>
-        signingEnabledSchema.safeParse(demoState.androidSigning[id]?.release)
-          .data?.enabled === true ||
-        signingEnabledSchema.safeParse(demoState.iosSigning[id]).data
-          ?.enabled === true,
-    ),
+    // As on the daemon: a pipeline signs, or the signing library holds an
+    // identity.
+    release_signing:
+      demoState.signingIdentities.some(
+        (identity) => identity.project_id === projectId,
+      ) ||
+      pipelineIds.some(
+        (id) =>
+          signingEnabledSchema.safeParse(demoState.androidSigning[id]?.release)
+            .data?.enabled === true ||
+          signingEnabledSchema.safeParse(demoPipelineIosSigning(id)).data
+            ?.enabled === true,
+      ),
     store_publishing: pipelineIds.some(
       (id) => demoPlayPublishEnabled(id) || demoAppStorePublishEnabled(id),
     ),

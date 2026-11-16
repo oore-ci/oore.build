@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useFieldArray, useFormContext } from 'react-hook-form'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -45,10 +46,16 @@ const LOCAL_APPROVAL_EVENTS = ['manual', 'schedule'] as const
  */
 export function PipelineTriggersSection({
   canChangeApproval,
+  fileTriggers,
   manualOnlyTriggers,
   summary,
 }: {
   canChangeApproval: boolean
+  /**
+   * Shown in place of events, branches and paths when the pipeline's file
+   * sets `on` for every workflow webhooks start, so those fields are unused.
+   */
+  fileTriggers?: ReactNode
   manualOnlyTriggers: boolean
   summary?: string
 }) {
@@ -98,6 +105,10 @@ export function PipelineTriggersSection({
             source.
           </AlertDescription>
         </Alert>
+      ) : fileTriggers ? (
+        <PipelineFormSubsection title="Events">
+          {fileTriggers}
+        </PipelineFormSubsection>
       ) : (
         <>
           <PipelineFormSubsection title="Events">

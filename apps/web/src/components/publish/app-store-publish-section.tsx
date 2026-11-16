@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   useForm,
@@ -24,13 +23,21 @@ import { CollectionError } from '@/components/collection'
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard'
 import { AdvancedOptions } from '@/components/publish/advanced-options'
 import {
+  FileControlledLine,
+  NotConnectedLine,
+  PartlyFileControlledNote,
+  useFilePublishing,
+  type FilePublishing,
+} from '@/components/publish/publish-line'
+import { useProjectStores } from '@/hooks/use-project-stores'
+import { InfoHint } from '@/components/ui/info-hint'
+import {
   PublishReadiness,
   type ReadinessCheck,
 } from '@/components/publish/publish-readiness'
 import {
   SettingsSection,
   SettingsSurface,
-  SettingsSurfaceSeparator,
 } from '@/components/settings/settings-section'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -44,6 +51,13 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
@@ -53,11 +67,6 @@ import { Stack } from '@/components/layout/stack'
 // Limits match the daemon's validation in app_store_publish.rs.
 const MAX_GROUPS = 20
 const MAX_GROUP_NAME_LENGTH = 128
-
-const DESTINATIONS = {
-  testflight: 'TestFlight',
-  app_store: 'App Store',
-} as const
 
 const formSchema = z
   .object({
@@ -73,6 +82,7 @@ const formSchema = z
     release_notes_dir: z.string().trim(),
     listing_dir: z.string().trim(),
     preflight: z.enum(['auto', 'block', 'warn', 'off']),
+    upload_with_signing_key: z.boolean(),
   })
   .superRefine((values, ctx) => {
     if (
@@ -159,6 +169,7 @@ function toFormValues(config: AppStorePublishConfig): FormValues {
     release_notes_dir: config.release_notes_dir ?? '',
     listing_dir: config.listing_dir ?? '',
     preflight: config.preflight ?? 'auto',
+    upload_with_signing_key: config.upload_with_signing_key ?? false,
   }
 }
 
@@ -207,6 +218,7 @@ function toConfig(
     release_notes_dir: values.release_notes_dir || null,
     listing_dir: values.listing_dir || null,
     preflight: values.preflight,
+    upload_with_signing_key: values.upload_with_signing_key,
   }
 }
 
@@ -223,75 +235,82 @@ const PREFLIGHT_LEVELS = {
   off: 'Off',
 } as const
 
-const EFFECT_FIELDS = [
-  'enabled',
-  'destination',
-  'testflight_groups',
-  'submit_for_review',
-  'phased_release',
-] as const
+const LINE_ITEMS = {
+  off: 'Nowhere',
+  testflight: 'TestFlight',
+  app_store: 'App Store',
+} as const
 
-type EffectValues = Pick<FormValues, (typeof EFFECT_FIELDS)[number]>
-
-/** One sentence describing what the saved settings will do to a build. */
-function describeEffect(values: EffectValues) {
-  if (!values.enabled) {
-    return 'Builds of this pipeline are not uploaded to App Store Connect.'
-  }
-  if (values.destination === 'testflight') {
-    const groups = parseGroups(values.testflight_groups)
-    const target =
-      groups.length > 0 ? groups.join(', ') : 'the TestFlight groups below'
-    return `After each successful build, the signed IPA is uploaded to App Store Connect and, once Apple finishes processing it, added to ${target} in TestFlight.`
-  }
-  const review = values.submit_for_review
-    ? ' and submitted for review'
-    : ', ready for you to submit from App Store Connect'
-  const release =
-    values.submit_for_review && values.phased_release
-      ? ' Once approved, Apple releases it to users over seven days.'
-      : ''
-  return `After each successful build, the signed IPA is uploaded to App Store Connect and attached to the App Store version matching its version string${review}.${release}`
-}
-
-function UploadToggle({ form }: { form: UseFormReturn<FormValues> }) {
-  const [
-    enabled,
-    destination,
-    testflight_groups,
-    submit_for_review,
-    phased_release,
-  ] = useWatch({ control: form.control, name: EFFECT_FIELDS })
-  const effect = describeEffect({
-    enabled,
-    destination,
-    testflight_groups,
-    submit_for_review,
-    phased_release,
+/** "After a successful build, send to" and the destination, one line. */
+function DestinationLine({ form }: { form: UseFormReturn<FormValues> }) {
+  const [enabled, destination] = useWatch({
+    control: form.control,
+    name: ['enabled', 'destination'],
   })
-
   return (
-    <FormField
-      control={form.control}
-      name="enabled"
-      render={({ field }) => (
-        <SettingsSection
-          title="Upload after each build"
-          status={effect}
-          actions={
-            <FormItem>
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <label htmlFor="app-store-destination" className="text-sm">
+          After a successful build, send to
+        </label>
+        <Select
+          value={enabled ? destination : 'off'}
+          onValueChange={(next) => {
+            if (next === 'testflight' || next === 'app_store') {
+              form.setValue('enabled', true, { shouldDirty: true })
+              form.setValue('destination', next, { shouldDirty: true })
+            } else {
+              form.setValue('enabled', false, { shouldDirty: true })
+            }
+          }}
+          items={LINE_ITEMS}
+        >
+          <SelectTrigger id="app-store-destination" className="min-w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {Object.entries(LINE_ITEMS).map(([key, label]) => (
+              <SelectItem key={key} value={key}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {enabled ? (
+          <InfoHint label="Destination">
+            {destination === 'testflight'
+              ? 'Internal groups get the build as soon as it is processed. External groups wait for TestFlight beta review first.'
+              : 'Apple creates the version if it does not exist yet. Nothing reaches users until the version is approved and released.'}
+          </InfoHint>
+        ) : null}
+      </div>
+      {enabled && destination === 'testflight' ? (
+        <FormField
+          control={form.control}
+          name="testflight_groups"
+          render={({ field }) => (
+            <FormItem className="max-w-md">
+              <FormLabel
+                hint={
+                  'One group name per line, as it appears in App Store Connect. A name that doesn’t exist fails the release.'
+                }
+              >
+                TestFlight groups
+              </FormLabel>
               <FormControl>
-                <Switch
-                  checked={field.value}
-                  onCheckedChange={field.onChange}
-                  aria-label="Upload to App Store Connect after each successful build"
+                <Textarea
+                  rows={2}
+                  placeholder={'Internal QA\nBeta testers'}
+                  spellCheck={false}
+                  {...field}
                 />
               </FormControl>
+              <FormMessage />
             </FormItem>
-          }
+          )}
         />
-      )}
-    />
+      ) : null}
+    </div>
   )
 }
 
@@ -311,6 +330,7 @@ function SwitchField({
     | 'submit_for_review'
     | 'phased_release'
     | 'cancel_previous_submission'
+    | 'upload_with_signing_key'
 }) {
   return (
     <FormField
@@ -335,28 +355,53 @@ function SwitchField({
   )
 }
 
-function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
-  const [destination, submitForReview, releaseType] = useWatch({
+function AppStoreReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
+  const [submitForReview, releaseType] = useWatch({
     control: form.control,
-    name: ['destination', 'submit_for_review', 'release_type'],
+    name: ['submit_for_review', 'release_type'],
   })
 
   return (
-    <>
+    <Stack gap={4}>
+      <SwitchField
+        form={form}
+        name="submit_for_review"
+        label="Submit for review"
+        description="Send the version to App Review as soon as the build is attached. Off leaves the submission to you."
+      />
+      <SwitchField
+        form={form}
+        name="phased_release"
+        label="Phased release"
+        disabled={!submitForReview}
+        description={
+          submitForReview
+            ? 'After approval, Apple releases to 1, 2, 5, 10, 20, 50 and then 100% of automatic updates over seven days. Pause or complete it from the release board.'
+            : 'Available when Oore submits the version for review.'
+        }
+      />
+      <SwitchField
+        form={form}
+        name="cancel_previous_submission"
+        label="Replace an open submission"
+        disabled={!submitForReview}
+        description="Apple allows one open review submission per app. On, Oore cancels one that holds other items before submitting; off, the release is blocked until you cancel it."
+      />
       <FormField
         control={form.control}
-        name="destination"
+        name="release_type"
         render={({ field }) => (
           <FormItem>
             <FormLabel
               hint={
-                field.value === 'testflight'
-                  ? 'Internal groups get the build as soon as it is processed. External groups wait for TestFlight beta review first.'
-                  : 'Apple creates the version if it does not exist yet. Nothing reaches users until the version is approved and released.'
+                field.value === 'manual'
+                  ? 'Approved versions wait for you. Release them from the release board with Release now.'
+                  : field.value === 'scheduled'
+                    ? 'Apple releases the approved version at this time, or on approval if the time has passed.'
+                    : 'Apple puts the version on the App Store as soon as App Review approves it.'
               }
-              className="sr-only"
             >
-              Destination
+              Release after approval
             </FormLabel>
             <FormControl>
               <RadioGroup
@@ -364,7 +409,7 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
                 onValueChange={field.onChange}
                 className="flex flex-wrap gap-x-6 gap-y-2"
               >
-                {Object.entries(DESTINATIONS).map(([value, label]) => (
+                {Object.entries(RELEASE_TYPES).map(([value, label]) => (
                   <label
                     key={value}
                     className="flex items-center gap-2 text-sm"
@@ -379,113 +424,22 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
           </FormItem>
         )}
       />
-
-      {destination === 'testflight' ? (
+      {releaseType === 'scheduled' ? (
         <FormField
           control={form.control}
-          name="testflight_groups"
+          name="earliest_release_date"
           render={({ field }) => (
             <FormItem>
-              <FormLabel
-                hint={
-                  'One group name per line, as it appears in App Store Connect. A name that doesn’t exist fails the release.'
-                }
-              >
-                TestFlight groups
-              </FormLabel>
+              <FormLabel>Release on</FormLabel>
               <FormControl>
-                <Textarea
-                  rows={3}
-                  placeholder={'Internal QA\nBeta testers'}
-                  spellCheck={false}
-                  {...field}
-                />
+                <Input type="datetime-local" className="w-fit" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
-      ) : (
-        <Stack gap={4}>
-          <SwitchField
-            form={form}
-            name="submit_for_review"
-            label="Submit for review"
-            description="Send the version to App Review as soon as the build is attached. Off leaves the submission to you."
-          />
-          <SwitchField
-            form={form}
-            name="phased_release"
-            label="Phased release"
-            disabled={!submitForReview}
-            description={
-              submitForReview
-                ? 'After approval, Apple releases to 1, 2, 5, 10, 20, 50 and then 100% of automatic updates over seven days. Pause or complete it from the release board.'
-                : 'Available when Oore submits the version for review.'
-            }
-          />
-          <SwitchField
-            form={form}
-            name="cancel_previous_submission"
-            label="Replace an open submission"
-            disabled={!submitForReview}
-            description="Apple allows one open review submission per app. On, Oore cancels one that holds other items before submitting; off, the release is blocked until you cancel it."
-          />
-          <FormField
-            control={form.control}
-            name="release_type"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel
-                  hint={
-                    field.value === 'manual'
-                      ? 'Approved versions wait for you. Release them from the release board with Release now.'
-                      : field.value === 'scheduled'
-                        ? 'Apple releases the approved version at this time, or on approval if the time has passed.'
-                        : 'Apple puts the version on the App Store as soon as App Review approves it.'
-                  }
-                >
-                  Release after approval
-                </FormLabel>
-                <FormControl>
-                  <RadioGroup
-                    value={field.value}
-                    onValueChange={field.onChange}
-                    className="flex flex-wrap gap-x-6 gap-y-2"
-                  >
-                    {Object.entries(RELEASE_TYPES).map(([value, label]) => (
-                      <label
-                        key={value}
-                        className="flex items-center gap-2 text-sm"
-                      >
-                        <RadioGroupItem value={value} />
-                        {label}
-                      </label>
-                    ))}
-                  </RadioGroup>
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          {releaseType === 'scheduled' ? (
-            <FormField
-              control={form.control}
-              name="earliest_release_date"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Release on</FormLabel>
-                  <FormControl>
-                    <Input type="datetime-local" className="w-fit" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          ) : null}
-        </Stack>
-      )}
-    </>
+      ) : null}
+    </Stack>
   )
 }
 
@@ -494,20 +448,55 @@ const ADVANCED_FIELDS = [
   'listing_dir',
   'preflight',
   'uses_non_exempt_encryption',
+  'submit_for_review',
+  'upload_with_signing_key',
+  'destination',
 ] as const
 
-function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
-  const [notesDir, listingDir, preflight, encryption] = useWatch({
-    control: form.control,
-    name: ADVANCED_FIELDS,
-  })
+function AdvancedFields({
+  appKeyName,
+  form,
+}: {
+  /** The app's App Store Connect key, when the app has one. */
+  appKeyName: string | undefined
+  form: UseFormReturn<FormValues>
+}) {
+  const [notesDir, listingDir, , encryption, submit, ownKey, destination] =
+    useWatch({
+      control: form.control,
+      name: ADVANCED_FIELDS,
+    })
   const { errors } = useFormState({ control: form.control })
+  const summary = [
+    destination === 'app_store'
+      ? submit
+        ? 'Submits for review'
+        : 'No review submission'
+      : null,
+    notesDir ? 'notes from files' : null,
+    listingDir ? 'store listing' : null,
+    encryption ? 'non-exempt encryption' : null,
+    ownKey ? 'signing key' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
   return (
     <AdvancedOptions
-      changed={!!notesDir || !!listingDir || preflight !== 'auto' || encryption}
+      changed={false}
       hasError={ADVANCED_FIELDS.some((name) => !!errors[name])}
-      summary="Notes and store listing from the repository, pre-flight checks, export compliance"
+      summary={summary || 'Notes, store listing, pre-flight checks'}
     >
+      {destination === 'app_store' ? (
+        <AppStoreReleaseFields form={form} />
+      ) : null}
+      {appKeyName ? (
+        <SwitchField
+          form={form}
+          name="upload_with_signing_key"
+          label="Upload with this pipeline’s signing key"
+          description={`Off uses the app’s key, ${appKeyName}.`}
+        />
+      ) : null}
       <FormField
         control={form.control}
         name="release_notes_dir"
@@ -599,14 +588,18 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
 }
 
 function AppStorePublishForm({
+  appKeyName,
   canWrite,
-  onEnabledChange,
+  file,
   pipelineId,
+  projectId,
   saved,
 }: {
+  appKeyName: string | undefined
   canWrite: boolean
-  onEnabledChange: (enabled: boolean) => void
+  file: FilePublishing | null
   pipelineId: string
+  projectId: string
   saved: AppStorePublishResponse
 }) {
   const updateMutation = useUpdatePipelineAppStorePublish(pipelineId)
@@ -618,10 +611,7 @@ function AppStorePublishForm({
   const { isDirty } = useFormState({ control: form.control })
   const enabled = useWatch({ control: form.control, name: 'enabled' })
   const isNew = saved.updated_at == null
-  // Same rule as Google Play: Save needs a change, except that a first
-  // setup with uploads on can be saved as it stands.
-  const canSave = isDirty || (isNew && enabled)
-  useEffect(() => onEnabledChange(enabled), [enabled, onEnabledChange])
+  const connected = !!appKeyName || saved.has_api_key
 
   function onSubmit(next: FormValues) {
     updateMutation.mutate(toConfig(next, saved.config), {
@@ -639,21 +629,23 @@ function AppStorePublishForm({
         onSubmit={(event) => void form.handleSubmit(onSubmit)(event)}
       >
         <fieldset disabled={!canWrite} className="min-w-0">
-          <SettingsSurface className="flex flex-col gap-6">
-            <UploadToggle form={form} />
+          <SettingsSurface className="flex flex-col gap-4">
+            {file?.all ? (
+              <FileControlledLine file={file} />
+            ) : connected ? (
+              <DestinationLine form={form} />
+            ) : (
+              <NotConnectedLine
+                projectId={projectId}
+                store="App Store Connect"
+              />
+            )}
+            {file && !file.all ? (
+              <PartlyFileControlledNote file={file} />
+            ) : null}
 
-            {enabled ? (
-              <>
-                <SettingsSurfaceSeparator />
-
-                <SettingsSection title="Destination">
-                  <DestinationFields form={form} />
-                </SettingsSection>
-
-                <SettingsSurfaceSeparator />
-
-                <AdvancedFields form={form} />
-              </>
+            {(enabled || file?.all) && connected ? (
+              <AdvancedFields appKeyName={appKeyName} form={form} />
             ) : null}
 
             {updateMutation.error ? (
@@ -666,32 +658,24 @@ function AppStorePublishForm({
               </Alert>
             ) : null}
 
-            {canWrite && (enabled || isDirty) ? (
-              <>
-                <SettingsSurfaceSeparator />
-                <div className="flex justify-end gap-2">
-                  {isDirty && !isNew ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => form.reset(toFormValues(saved.config))}
-                    >
-                      Discard changes
-                    </Button>
-                  ) : null}
+            {canWrite && isDirty ? (
+              <div className="flex justify-end gap-2">
+                {!isNew ? (
                   <Button
-                    type="submit"
-                    disabled={updateMutation.isPending || !canSave}
+                    type="button"
+                    variant="outline"
+                    onClick={() => form.reset(toFormValues(saved.config))}
                   >
-                    {updateMutation.isPending ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : null}
-                    {isNew && enabled
-                      ? 'Turn on App Store publishing'
-                      : 'Save changes'}
+                    Discard changes
                   </Button>
-                </div>
-              </>
+                ) : null}
+                <Button type="submit" disabled={updateMutation.isPending}>
+                  {updateMutation.isPending ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : null}
+                  Save changes
+                </Button>
+              </div>
             ) : null}
           </SettingsSurface>
         </fieldset>
@@ -715,11 +699,12 @@ export function AppStorePublishSection({
   projectId: string
 }) {
   const publishQuery = usePipelineAppStorePublish(pipelineId)
+  const storesQuery = useProjectStores(projectId)
+  const file = useFilePublishing(pipelineId, 'ios')
   const data = publishQuery.data
-  // Follows the switch in the form, so the checks go away as soon as
-  // uploads are switched off, before the change is saved.
-  const [formEnabled, setFormEnabled] = useState<boolean | null>(null)
-  const uploadsOn = formEnabled ?? data?.config.enabled ?? false
+  const appKey = storesQuery.data?.app_store?.key
+  const appKeyName = appKey ? `${appKey.name} (${appKey.key_id})` : undefined
+  const uploadsOn = !!data?.config.enabled || !!file
   const storeReadiness = usePipelinePublishReadiness(pipelineId, {
     enabled: !!data?.config.enabled,
   })
@@ -731,9 +716,9 @@ export function AppStorePublishSection({
         nativeButton={false}
         render={
           <Link
-            to="/projects/$projectId/pipelines/$pipelineId/edit"
+            to="/projects/$projectId/pipelines/$pipelineId"
             params={{ projectId, pipelineId }}
-            search={{}}
+            search={{ row: 'signing' }}
             hash="ios-signing"
           />
         }
@@ -741,38 +726,45 @@ export function AppStorePublishSection({
         {label}
       </Button>
     ) : undefined
-  const checks: Array<ReadinessCheck> = data
+  // Only what blocks an upload is shown; a ready pipeline is one line.
+  const problems: Array<ReadinessCheck> = data
     ? [
-        {
-          key: 'distribution',
-          label: 'App Store distribution',
-          ready: data.app_store_export,
-          detail: data.app_store_export
-            ? 'iOS signing uses an App Store distribution profile.'
-            : 'iOS signing must use App Store distribution. Ad hoc builds cannot go to TestFlight or the App Store.',
-          action: data.app_store_export
-            ? undefined
-            : editLink('Edit iOS signing'),
-        },
-        {
-          key: 'key',
-          label: 'App Store Connect API key',
-          ready: data.has_api_key,
-          detail: data.has_api_key
-            ? 'Uploads use the API key from this pipeline’s iOS signing.'
-            : 'Choose a shared key or add this pipeline’s own key in iOS signing.',
-          action: data.has_api_key ? undefined : editLink('Add API key'),
-        },
+        ...(data.app_store_export
+          ? []
+          : [
+              {
+                key: 'distribution',
+                label: 'App Store distribution',
+                ready: false,
+                detail:
+                  'iOS signing must use App Store distribution. Ad hoc builds cannot go to TestFlight or the App Store.',
+                action: editLink('Edit iOS signing'),
+              },
+            ]),
+        ...(data.has_api_key
+          ? []
+          : [
+              {
+                key: 'key',
+                label: 'App Store Connect API key',
+                ready: false,
+                detail:
+                  'Connect App Store Connect in the app’s Stores, or add a key in iOS signing.',
+              },
+            ]),
         ...(storeReadiness.data?.items ?? [])
           .filter(
-            (item) => item.store === 'app_store' && item.code !== 'api_key',
+            (item) =>
+              item.store === 'app_store' &&
+              item.code !== 'api_key' &&
+              item.level !== 'ok',
           )
           .map((item): ReadinessCheck => ({
             key: `store-${item.code}`,
             label: item.remembered
               ? `${item.title} (Apple’s last refusal)`
               : item.title,
-            ready: item.level === 'ok',
+            ready: false,
             detail: item.detail ?? '',
             action: item.console_url ? (
               <Button
@@ -789,26 +781,11 @@ export function AppStorePublishSection({
           })),
       ]
     : []
-  // Only the setup checks stop a save; store findings stop a submission.
-  const blocked = checks
-    .filter((check) => !check.key.startsWith('store-'))
-    .some((check) => !check.ready)
 
   return (
-    <SettingsSection
-      id="app-store"
-      title="App Store Connect"
-      hint="The Mac that built the app uploads the signed IPA with the API key from iOS signing."
-    >
-      {uploadsOn && checks.length > 0 ? (
-        <PublishReadiness
-          checks={checks}
-          footnote={
-            blocked
-              ? 'Saving with uploads on is refused until the steps above are done.'
-              : undefined
-          }
-        />
+    <SettingsSection id="app-store" title="App Store Connect">
+      {uploadsOn && problems.length > 0 ? (
+        <PublishReadiness checks={problems} />
       ) : null}
 
       {publishQuery.error ? (
@@ -817,15 +794,17 @@ export function AppStorePublishSection({
           description={publishQuery.error.message}
           onRetry={() => void publishQuery.refetch()}
         />
-      ) : data ? (
+      ) : data && !storesQuery.isLoading ? (
         <AppStorePublishForm
+          appKeyName={appKeyName}
           canWrite={canWrite}
-          onEnabledChange={setFormEnabled}
+          file={file}
           pipelineId={pipelineId}
+          projectId={projectId}
           saved={data}
         />
       ) : (
-        <Skeleton className="h-96 w-full" />
+        <Skeleton className="h-16 w-full" />
       )}
     </SettingsSection>
   )

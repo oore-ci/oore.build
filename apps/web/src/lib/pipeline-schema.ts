@@ -113,7 +113,15 @@ export const pipelineFormSchema = z
     android_signing_debug_store_password: z.string().optional(),
     android_signing_debug_key_alias: z.string().optional(),
     android_signing_debug_key_password: z.string().optional(),
+    /**
+     * The signing library identity each build type signs with: an id,
+     * `PIPELINE_OWN_FILES` for files the pipeline still holds, or empty.
+     */
+    android_signing_release_identity_id: z.string().optional(),
+    android_signing_debug_identity_id: z.string().optional(),
     ios_signing_enabled: z.boolean(),
+    /** Manual mode: the signing library identity, as for Android. */
+    ios_signing_identity_id: z.string().optional(),
     ios_signing_mode: z.enum(['manual', 'api', 'hybrid']),
     ios_signing_export_method: z.enum(['ad_hoc', 'app_store']),
     ios_signing_team_id: z.string().optional(),
@@ -218,7 +226,15 @@ export const pipelineFormSchema = z
         path: ['ios_signing_enabled'],
       })
     }
-    if (data.ios_signing_enabled) {
+    if (data.ios_signing_enabled && data.ios_signing_mode === 'manual') {
+      if (!data.ios_signing_identity_id) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Pick a signing identity',
+          path: ['ios_signing_identity_id'],
+        })
+      }
+    } else if (data.ios_signing_enabled) {
       if (!data.ios_signing_team_id?.trim()) {
         ctx.addIssue({
           code: 'custom',
@@ -257,6 +273,12 @@ export const pipelineFormSchema = z
   })
 
 export type PipelineFormValues = z.infer<typeof pipelineFormSchema>
+
+/**
+ * Picker value for signing files a pipeline still holds itself, from before
+ * the signing library. The daemon moves them into the library on start.
+ */
+export const PIPELINE_OWN_FILES = '__pipeline__'
 
 /** Whether iOS signing uses the pipeline's own key rather than a shared one. */
 export function usesOwnApiKey(source: string | undefined) {

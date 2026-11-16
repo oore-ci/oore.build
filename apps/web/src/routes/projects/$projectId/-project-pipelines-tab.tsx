@@ -126,9 +126,9 @@ function PipelineActions({
             <DropdownMenuItem
               render={
                 <Link
-                  to="/projects/$projectId/pipelines/$pipelineId/edit"
+                  to="/projects/$projectId/pipelines/$pipelineId"
                   params={{ projectId, pipelineId: pipeline.id }}
-                  search={{}}
+                  search={{ row: 'source' }}
                 />
               }
             >
@@ -244,8 +244,9 @@ export function ProjectPipelinesTab({
               ) : null}
               {health?.state === 'file_missing' ? (
                 <Link
-                  to="/projects/$projectId/pipelines/$pipelineId/edit"
+                  to="/projects/$projectId/pipelines/$pipelineId"
                   params={{ projectId, pipelineId: row.original.id }}
+                  search={{ row: 'build' }}
                   hash="plan"
                   className="text-xs underline underline-offset-4"
                 >

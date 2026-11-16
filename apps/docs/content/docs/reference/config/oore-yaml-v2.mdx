@@ -222,8 +222,8 @@ A `targets` map entry overrides one top-level target field by field:
 | `publish`    | The top-level target's, unless this entry sets its own `build`: that `publish` uploads what the top-level build makes | Replaces it. `false` uploads nothing and keeps `build` |
 | `budgets`    | The top-level target's, even with a new `build`                                                                       | Replaces it                                            |
 
-The pipeline can still change a workflow without a commit. Its **Workflows**
-tab can pick other signing identities, turn the workflow's publishing off, or
+The pipeline can still change a workflow without a commit. Its **Source and triggers**
+row, under **Workflows**, can pick other signing identities, turn the workflow's publishing off, or
 change its approval. See
 [Workflow settings](/reference/config/pipeline-settings#workflow-settings).
 

@@ -545,6 +545,7 @@ workflows:
             expires_at: None,
             profiles: Vec::new(),
             used_by: Vec::new(),
+            used_by_pipelines: Vec::new(),
             created_at: 0,
             updated_at: 0,
         }

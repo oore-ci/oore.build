@@ -52,10 +52,10 @@ a few distribution certificates per team.
 
 ## 3. Add the API credentials
 
-1. Open the pipeline, select **Edit**, and find **Signing > iOS**.
+1. Open the pipeline, then its **Signing** row, and find **iOS**.
 2. Turn on **Enable iOS signing**.
-3. For **Signing mode**, select
-   **API (App Store Connect automation)**.
+3. For **Signs with**, select
+   **App Store Connect (automatic)**.
 4. Enter **Apple Team ID** and the **Bundle identifiers**.
 5. For **App Store Connect API key**, choose a shared key. To use a key only
    for this pipeline, choose **This pipeline's own key**, enter **API key ID**
@@ -65,13 +65,13 @@ a few distribution certificates per team.
 A pipeline's own key overrides the shared keys. Oore keeps it stored when you
 switch the pipeline to a shared key, so you can switch back.
 
-Use **Hybrid (manual cert + API automation)** only when the pipeline needs a
+Use **Hybrid (uploaded certificate, synced profiles)** only when the pipeline needs a
 manually uploaded certificate together with API-synchronized profiles.
 
 ## 4. Synchronize profiles
 
-Open the pipeline's **Edit** page and select **Sync profiles** beside the
-**iOS** heading under **Signing**. Oore synchronizes signing assets for the configured
+Open the pipeline's **Signing** row and select **Sync profiles** beside the
+**iOS** heading. Oore synchronizes signing assets for the configured
 bundle identifiers and reports warnings separately from updated profiles.
 
 ## Verify the result

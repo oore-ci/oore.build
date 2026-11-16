@@ -1,5 +1,6 @@
 import type { IosSigningFiles } from '@/lib/pipeline-signing'
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -45,8 +46,12 @@ import type {
 import { PipelineSectionIndex } from '@/components/pipeline-form-section-index'
 import {
   PipelineSectionsCollapsible,
+  PipelineSectionsEmbeddedIn,
+  PipelineSectionsSetHere,
   revealInvalidPipelineSections,
 } from '@/components/pipeline-form-section'
+import { SettingsSurfaceSeparator } from '@/components/settings/settings-section'
+import { Stack } from '@/components/layout/stack'
 import { PipelineBuildSection } from '@/components/pipeline-form-build-sections'
 import { PipelineTriggersSection } from '@/components/pipeline-form-triggers-section'
 import { PipelineSizeBudgetSection } from '@/components/pipeline-form-size-budget-section'
@@ -108,7 +113,32 @@ interface PipelineFormProps {
    * "More settings", as a new pipeline needs only a name and what to build.
    */
   compact?: boolean
+  /**
+   * On the pipeline page: render only these parts, in this order, as one
+   * row's content, with Save and Cancel shown once something changes.
+   */
+  parts?: ReadonlyArray<PipelineFormPart>
+  /** The pipeline page row's title, so a section does not repeat it. */
+  embeddedIn?: string
+  /** Replaces events, branches and paths when the file decides them. */
+  fileTriggers?: ReactNode
+  /** Replaces a platform's signing picker when something else decides it. */
+  signingReadOnly?: Partial<Record<'android' | 'ios', ReactNode>>
+  /** Under a platform's signing picker. */
+  signingNotes?: Partial<Record<'android' | 'ios', ReactNode>>
+  /** Label each group of fields "set here", beside values from the file. */
+  markSetHere?: boolean
 }
+
+/** A part of the pipeline form a pipeline page row can show on its own. */
+export type PipelineFormPart =
+  | 'source'
+  | 'triggers'
+  | 'build-basics'
+  | 'build'
+  | 'plan'
+  | 'signing'
+  | 'size-budget'
 
 /** Fields with an error; an array field with several bad rows counts once. */
 function countFieldErrors(errors: FieldErrors) {
@@ -170,7 +200,14 @@ export default function PipelineForm({
   workflowSource,
   workflowLookup,
   compact = false,
+  parts,
+  embeddedIn,
+  fileTriggers,
+  signingReadOnly,
+  signingNotes,
+  markSetHere = false,
 }: PipelineFormProps) {
+  const embedded = parts !== undefined
   const [moreOpen, setMoreOpen] = useState(!compact)
   const form = useForm<PipelineFormValues>({
     resolver: zodResolver(pipelineFormSchema),
@@ -185,10 +222,6 @@ export default function PipelineForm({
   const { errors, isSubmitted } = useFormState({ control: form.control })
   const errorCount = isSubmitted ? countFieldErrors(errors) : 0
 
-  const [releaseKeystoreFile, setReleaseKeystoreFile] = useState<File | null>(
-    null,
-  )
-  const [debugKeystoreFile, setDebugKeystoreFile] = useState<File | null>(null)
   const [iosP12File, setIosP12File] = useState<File | null>(null)
   const [iosApiKeyFile, setIosApiKeyFile] = useState<File | null>(null)
   const [iosProfileFiles, setIosProfileFiles] = useState<
@@ -196,7 +229,7 @@ export default function PipelineForm({
   >({})
   const { isSubmitting } = form.formState
   const signingFilesDirty = hasSigningFileChanges(
-    [releaseKeystoreFile, debugKeystoreFile, iosP12File, iosApiKeyFile],
+    [iosP12File, iosApiKeyFile],
     iosProfileFiles,
   )
   const isDirty = form.formState.isDirty || signingFilesDirty
@@ -213,7 +246,8 @@ export default function PipelineForm({
   }
 
   function handleFormSubmit(data: PipelineFormValues) {
-    return onSubmit(data, releaseKeystoreFile, debugKeystoreFile, {
+    // Keystores are uploaded to the app's signing library, not here.
+    return onSubmit(data, null, null, {
       p12File: iosP12File,
       apiKeyFile: iosApiKeyFile,
       profileFiles: iosProfileFiles,
@@ -282,79 +316,142 @@ export default function PipelineForm({
           }
           className="flex flex-col gap-8"
         >
-          <PipelineSectionIndex sections={sections} />
-          <PipelineBasicsSection
-            configMode={configMode}
-            repositoryWorkflow={repositoryWorkflow}
-            workflowLookup={workflowLookup}
-            workflowSource={workflowSource}
-          />
-          {repositoryWorkflow || !moreOpen ? null : (
-            <PipelineBuildSection
-              advancedOpen={hasPlatformOverrides(initialValues)}
-              commandCount={totalCmdCount}
-              envVarCount={envVarCount}
-              playBundle={googlePlayUpload}
-              previewDefaults={previewDefaults}
-              summary={summaries.build}
-            />
-          )}
-          <PipelinePlanPanel
-            manualOnlyTriggers={manualOnlyTriggers}
-            otherPipelines={otherPipelines}
-            playBundle={googlePlayUpload}
-            publish={publishSettings}
-            repositoryConfig={!!repositoryWorkflow}
-            values={values}
-          />
-          {compact ? (
-            <div className="flex flex-col gap-1 rounded-lg border p-4">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="-ml-2 self-start"
-                aria-expanded={moreOpen}
-                onClick={() => setMoreOpen((open) => !open)}
-              >
-                {moreOpen ? 'Fewer settings' : 'More settings'}
-              </Button>
-              <Text variant="muted">
-                {moreOpen
-                  ? 'Build commands, signing, triggers and the size budget. Every setting can change later.'
-                  : `${moreSettingsSummary(values, manualOnlyTriggers)} Build commands, signing, triggers and the size budget are here.`}
-              </Text>
-            </div>
-          ) : null}
-          {moreOpen ? (
+          {embedded ? (
+            <PipelineSectionsEmbeddedIn.Provider value={embeddedIn ?? ''}>
+              <PipelineSectionsSetHere.Provider value={markSetHere}>
+                <Stack gap={5}>
+                  {parts.map((part, index) => (
+                    <Fragment key={part}>
+                      {index > 0 ? <SettingsSurfaceSeparator /> : null}
+                      {part === 'source' || part === 'build-basics' ? (
+                        <PipelineBasicsSection
+                          configMode={configMode}
+                          part={part === 'source' ? 'source' : 'build'}
+                          workflowLookup={workflowLookup}
+                          workflowSource={workflowSource}
+                        />
+                      ) : part === 'build' ? (
+                        <PipelineBuildSection
+                          advancedOpen={hasPlatformOverrides(initialValues)}
+                          commandCount={totalCmdCount}
+                          envVarCount={envVarCount}
+                          playBundle={googlePlayUpload}
+                          previewDefaults={previewDefaults}
+                          summary={summaries.build}
+                        />
+                      ) : part === 'plan' ? (
+                        <PipelinePlanPanel
+                          manualOnlyTriggers={manualOnlyTriggers}
+                          otherPipelines={otherPipelines}
+                          playBundle={googlePlayUpload}
+                          publish={publishSettings}
+                          repositoryConfig={false}
+                          values={values}
+                        />
+                      ) : part === 'signing' ? (
+                        <PipelineSigningSection
+                          androidSigningData={signingData}
+                          bundleIds={iosBundleIds}
+                          iosActions={iosSigningActions}
+                          iosApiKeyFile={iosApiKeyFile}
+                          iosAppStorePublishing={iosAppStorePublishing}
+                          iosP12File={iosP12File}
+                          iosProfileFiles={iosProfileFiles}
+                          iosSigningData={iosSigningData}
+                          onApiKeyFileChange={setIosApiKeyFile}
+                          onP12FileChange={setIosP12File}
+                          onProfileFileChange={handleProfileFileChange}
+                          platformNotes={signingNotes}
+                          readOnlyPlatforms={signingReadOnly}
+                          values={values}
+                        />
+                      ) : part === 'triggers' ? (
+                        <PipelineTriggersSection
+                          canChangeApproval={canChangeApproval}
+                          fileTriggers={fileTriggers}
+                          manualOnlyTriggers={manualOnlyTriggers}
+                        />
+                      ) : (
+                        <PipelineSizeBudgetSection />
+                      )}
+                    </Fragment>
+                  ))}
+                </Stack>
+              </PipelineSectionsSetHere.Provider>
+            </PipelineSectionsEmbeddedIn.Provider>
+          ) : (
             <>
-              <PipelineSigningSection
-                androidSigningData={signingData}
-                bundleIds={iosBundleIds}
-                debugKeystoreFile={debugKeystoreFile}
-                iosActions={iosSigningActions}
-                iosApiKeyFile={iosApiKeyFile}
-                iosAppStorePublishing={iosAppStorePublishing}
-                iosP12File={iosP12File}
-                iosProfileFiles={iosProfileFiles}
-                iosSigningData={iosSigningData}
-                onApiKeyFileChange={setIosApiKeyFile}
-                onDebugKeystoreFileChange={setDebugKeystoreFile}
-                onP12FileChange={setIosP12File}
-                onProfileFileChange={handleProfileFileChange}
-                onReleaseKeystoreFileChange={setReleaseKeystoreFile}
-                releaseKeystoreFile={releaseKeystoreFile}
-                summary={summaries.signing}
+              <PipelineSectionIndex sections={sections} />
+              <PipelineBasicsSection
+                configMode={configMode}
+                repositoryWorkflow={repositoryWorkflow}
+                workflowLookup={workflowLookup}
+                workflowSource={workflowSource}
+              />
+              {repositoryWorkflow || !moreOpen ? null : (
+                <PipelineBuildSection
+                  advancedOpen={hasPlatformOverrides(initialValues)}
+                  commandCount={totalCmdCount}
+                  envVarCount={envVarCount}
+                  playBundle={googlePlayUpload}
+                  previewDefaults={previewDefaults}
+                  summary={summaries.build}
+                />
+              )}
+              <PipelinePlanPanel
+                manualOnlyTriggers={manualOnlyTriggers}
+                otherPipelines={otherPipelines}
+                playBundle={googlePlayUpload}
+                publish={publishSettings}
+                repositoryConfig={!!repositoryWorkflow}
                 values={values}
               />
-              <PipelineTriggersSection
-                canChangeApproval={canChangeApproval}
-                manualOnlyTriggers={manualOnlyTriggers}
-                summary={summaries.triggers}
-              />
-              <PipelineSizeBudgetSection summary={summaries.sizeBudget} />
+              {compact ? (
+                <div className="flex flex-col gap-1 rounded-lg border p-4">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-ml-2 self-start"
+                    aria-expanded={moreOpen}
+                    onClick={() => setMoreOpen((open) => !open)}
+                  >
+                    {moreOpen ? 'Fewer settings' : 'More settings'}
+                  </Button>
+                  <Text variant="muted">
+                    {moreOpen
+                      ? 'Build commands, signing, triggers and the size budget. Every setting can change later.'
+                      : `${moreSettingsSummary(values, manualOnlyTriggers)} Build commands, signing, triggers and the size budget are here.`}
+                  </Text>
+                </div>
+              ) : null}
+              {moreOpen ? (
+                <>
+                  <PipelineSigningSection
+                    androidSigningData={signingData}
+                    bundleIds={iosBundleIds}
+                    iosActions={iosSigningActions}
+                    iosApiKeyFile={iosApiKeyFile}
+                    iosAppStorePublishing={iosAppStorePublishing}
+                    iosP12File={iosP12File}
+                    iosProfileFiles={iosProfileFiles}
+                    iosSigningData={iosSigningData}
+                    onApiKeyFileChange={setIosApiKeyFile}
+                    onP12FileChange={setIosP12File}
+                    onProfileFileChange={handleProfileFileChange}
+                    summary={summaries.signing}
+                    values={values}
+                  />
+                  <PipelineTriggersSection
+                    canChangeApproval={canChangeApproval}
+                    manualOnlyTriggers={manualOnlyTriggers}
+                    summary={summaries.triggers}
+                  />
+                  <PipelineSizeBudgetSection summary={summaries.sizeBudget} />
+                </>
+              ) : null}
             </>
-          ) : null}
+          )}
 
           {validationErrors.length > 0 ? (
             <div>
@@ -387,29 +484,42 @@ export default function PipelineForm({
               values.ios_signing_mode === 'hybrid') &&
             children}
 
-          <FormActions
-            disabled={readOnly}
-            disabledReason={readOnlyReason}
-            isPending={isPending}
-            onCancel={onCancel}
-            sticky={isDirty}
-            submitLabel={readOnly ? 'Demo is read-only' : submitLabel}
-          >
-            {errorCount > 0 ? (
-              <Button
-                type="button"
-                variant="link"
-                className="mr-auto px-1 text-destructive"
-                onClick={() => revealFirstInvalidField(formRef)}
-              >
-                <HugeiconsIcon
-                  icon={AlertCircleIcon}
-                  data-icon="inline-start"
-                />
-                Fix {errorCount} {errorCount === 1 ? 'field' : 'fields'} to save
-              </Button>
-            ) : null}
-          </FormActions>
+          {embedded && !isDirty ? null : (
+            <FormActions
+              disabled={readOnly}
+              disabledReason={readOnlyReason}
+              isPending={isPending}
+              onCancel={
+                embedded
+                  ? () => {
+                      form.reset()
+                      setIosP12File(null)
+                      setIosApiKeyFile(null)
+                      setIosProfileFiles({})
+                      onCancel()
+                    }
+                  : onCancel
+              }
+              sticky={isDirty}
+              submitLabel={readOnly ? 'Demo is read-only' : submitLabel}
+            >
+              {errorCount > 0 ? (
+                <Button
+                  type="button"
+                  variant="link"
+                  className="mr-auto px-1 text-destructive"
+                  onClick={() => revealFirstInvalidField(formRef)}
+                >
+                  <HugeiconsIcon
+                    icon={AlertCircleIcon}
+                    data-icon="inline-start"
+                  />
+                  Fix {errorCount} {errorCount === 1 ? 'field' : 'fields'} to
+                  save
+                </Button>
+              ) : null}
+            </FormActions>
+          )}
         </form>
         <AlertDialog
           open={blocker.status === 'blocked'}

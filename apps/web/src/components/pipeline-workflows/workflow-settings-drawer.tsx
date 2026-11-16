@@ -7,6 +7,11 @@ import { Alert02Icon } from '@hugeicons/core-free-icons'
 import type { BuildPlatform, SigningIdentity } from '@oore/client/models'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useUpdatePipelineWorkflowSettings } from '@/hooks/use-signing-identities'
+import {
+  usePipelineAndroidSigning,
+  usePipelineIosSigning,
+} from '@/hooks/use-pipelines'
+import { SigningIdentityDialog } from '@/components/signing/signing-identity-dialog'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { BUILD_PLATFORM_LABELS } from '@/lib/build-platforms'
 import {
@@ -41,6 +46,7 @@ import {
   SelectContent,
   SelectGroup,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
@@ -106,17 +112,23 @@ function FileSummary({ row }: { row: WorkflowRow }) {
   )
 }
 
+/** Select value that opens the add dialog instead of picking. */
+const NEW_IDENTITY = '__new__'
+
 function IdentityField({
   disabled,
   fileName,
   form,
   identities,
+  pipelineName,
   platform,
   projectId,
 }: {
   disabled: boolean
   /** The identity the file names for this workflow, if any. */
   fileName?: string
+  /** What the pipeline's own signing uses, if anything. */
+  pipelineName?: string
   form: ReturnType<typeof useForm<WorkflowSettingsFormValues>>
   identities: Array<SigningIdentity>
   platform: BuildPlatform
@@ -126,84 +138,116 @@ function IdentityField({
   const name =
     platform === 'android' ? 'android_identity_id' : 'ios_identity_id'
   const choices = identities.filter((identity) => identity.kind === kind)
+  const [adding, setAdding] = useState(false)
   return (
-    <FormField
-      control={form.control}
-      name={name}
-      render={({ field }) => {
-        // Keep a picked identity visible even when the library lost it.
-        const missing =
-          field.value !== FOLLOW_FILE &&
-          !choices.some((identity) => identity.id === field.value)
-        const entries: Array<[string, string]> = [
-          [
-            FOLLOW_FILE,
-            fileName
-              ? `${fileName} (from the file)`
-              : 'From the file, or the pipeline’s signing',
-          ],
-          ...choices.map((identity): [string, string] => [
-            identity.id,
-            identityLabel(identity),
-          ]),
-        ]
-        if (missing) entries.push([field.value, 'Deleted identity'])
-        const items = Object.fromEntries(entries)
-        return (
-          <FormItem>
-            <FormLabel>{BUILD_PLATFORM_LABELS[platform]} signing</FormLabel>
-            <Select
-              value={field.value}
-              onValueChange={(value) => field.onChange(value ?? FOLLOW_FILE)}
-              items={items}
-              disabled={disabled}
-            >
-              <FormControl>
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent>
-                <SelectGroup>
-                  {Object.entries(items).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
+    <>
+      <SigningIdentityDialog
+        open={adding}
+        onOpenChange={setAdding}
+        projectId={projectId}
+        kind={kind}
+        onCreated={(identity) =>
+          form.setValue(name, identity.id, { shouldDirty: true })
+        }
+      />
+      <FormField
+        control={form.control}
+        name={name}
+        render={({ field }) => {
+          // Keep a picked identity visible even when the library lost it.
+          const missing =
+            field.value !== FOLLOW_FILE &&
+            !choices.some((identity) => identity.id === field.value)
+          const entries: Array<[string, string]> = [
+            [
+              FOLLOW_FILE,
+              fileName
+                ? `${fileName} (from the file)`
+                : pipelineName
+                  ? `${pipelineName} (the pipeline’s)`
+                  : 'The pipeline’s signing',
+            ],
+            ...choices.map((identity): [string, string] => [
+              identity.id,
+              identityLabel(identity),
+            ]),
+          ]
+          if (missing) entries.push([field.value, 'Deleted identity'])
+          const items = Object.fromEntries([
+            ...entries,
+            [
+              NEW_IDENTITY,
+              platform === 'android' ? 'New keystore…' : 'New certificate…',
+            ],
+          ])
+          return (
+            <FormItem>
+              <FormLabel hint="This workflow’s pick beats the file’s signing, which beats the pipeline’s.">
+                {BUILD_PLATFORM_LABELS[platform]} signing
+              </FormLabel>
+              <Select
+                value={field.value}
+                onValueChange={(value) => {
+                  if (value === NEW_IDENTITY) {
+                    setAdding(true)
+                    return
+                  }
+                  field.onChange(value ?? FOLLOW_FILE)
+                }}
+                items={items}
+                disabled={disabled}
+              >
+                <FormControl>
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  <SelectGroup>
+                    {entries.map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectSeparator />
+                  <SelectGroup>
+                    <SelectItem value={NEW_IDENTITY}>
+                      {items[NEW_IDENTITY]}
                     </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FormDescription>
-              {missing ? (
-                'This identity was deleted. Builds are refused until you pick another.'
-              ) : choices.length === 0 ? (
-                <>
-                  The library has no{' '}
-                  {platform === 'android'
-                    ? 'Android keystore'
-                    : 'iOS distribution'}{' '}
-                  identity yet. Add one in{' '}
-                  <Link
-                    to="/projects/$projectId"
-                    params={{ projectId }}
-                    search={{ tab: 'settings' }}
-                    hash="signing"
-                    className="underline underline-offset-4"
-                  >
-                    App settings &gt; Signing
-                  </Link>
-                  .
-                </>
-              ) : field.value === FOLLOW_FILE ? (
-                `Uses the identity the file names under signing.${platform}, or the pipeline’s signing settings when it names none.`
-              ) : (
-                `Replaces the file’s signing.${platform} for this workflow.`
-              )}
-            </FormDescription>
-          </FormItem>
-        )
-      }}
-    />
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              {missing || choices.length === 0 ? (
+                <FormDescription>
+                  {missing ? (
+                    'This identity was deleted. Builds are refused until you pick another.'
+                  ) : (
+                    <>
+                      The library has no{' '}
+                      {platform === 'android'
+                        ? 'Android keystore'
+                        : 'iOS distribution'}{' '}
+                      identity yet. Add one in{' '}
+                      <Link
+                        to="/projects/$projectId"
+                        params={{ projectId }}
+                        search={{ tab: 'settings' }}
+                        hash="signing"
+                        className="underline underline-offset-4"
+                      >
+                        App settings &gt; Signing
+                      </Link>
+                      .
+                    </>
+                  )}
+                </FormDescription>
+              ) : null}
+            </FormItem>
+          )
+        }}
+      />
+    </>
   )
 }
 
@@ -225,6 +269,26 @@ function adHocUploadConflict(
  * The Settings drawer for one workflow: the identities it signs with, whether
  * it publishes, and whether its builds wait for approval.
  */
+/**
+ * What the pipeline's own signing uses per platform, for the choice that
+ * follows it. Reading it needs pipeline write access, like editing it.
+ */
+function usePipelineSigningNames(pipelineId: string, enabled: boolean) {
+  const android = usePipelineAndroidSigning(pipelineId, { enabled }).data
+  const ios = usePipelineIosSigning(pipelineId, { enabled }).data
+  const release = android?.release
+  return {
+    android: release?.enabled
+      ? (release.identity_name ?? release.keystore_filename ?? undefined)
+      : undefined,
+    ios: ios?.enabled
+      ? (ios.identity_name ??
+        (ios.mode === 'manual' ? ios.p12_filename : 'App Store Connect') ??
+        undefined)
+      : undefined,
+  }
+}
+
 export function WorkflowSettingsDrawer({
   canChangeApproval,
   canWrite,
@@ -246,6 +310,7 @@ export function WorkflowSettingsDrawer({
 }) {
   const isMobile = useIsMobile()
   const mutation = useUpdatePipelineWorkflowSettings(pipelineId)
+  const pipelineSigning = usePipelineSigningNames(pipelineId, canWrite)
   // Keep the content while the drawer animates out after `row` clears.
   const [shown, setShown] = useState(row)
   if (row && row !== shown) setShown(row)
@@ -328,6 +393,11 @@ export function WorkflowSettingsDrawer({
                       fileName={fileSigningName(shown, platform)}
                       form={form}
                       identities={identities}
+                      pipelineName={
+                        platform === 'android'
+                          ? pipelineSigning.android
+                          : pipelineSigning.ios
+                      }
                       platform={platform}
                       projectId={projectId}
                     />

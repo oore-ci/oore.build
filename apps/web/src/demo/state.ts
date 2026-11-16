@@ -56,6 +56,7 @@ import {
 } from './data/environments'
 import { demoPipelines } from './data/pipelines'
 import {
+  demoAndroidSigning,
   demoSigningIdentities,
   demoWorkflowSettings,
 } from './data/signing-identities'
@@ -827,18 +828,24 @@ export function createDemoState(
           errors: [],
           workflows: ['adhoc', 'release', 'nightly'],
           execution: {
-            platforms: ['android'],
+            platforms: ['android', 'ios'],
             flutter_version: '3.24.3',
             commands: {
-              pre_build: ['flutter pub get'],
+              pre_build: ['flutter pub get', 'flutter analyze'],
               build: [],
-              post_build: [],
+              post_build: ['flutter test'],
             },
             isolation: 'host',
             platform_build_args: { android: [], ios: [], macos: [] },
-            platform_commands: { android: 'flutter build apk --release' },
+            platform_commands: {
+              android: 'flutter build apk --release',
+              ios: 'flutter build ipa --release',
+            },
             env_keys: ['PAYMENT_ENV'],
-            artifact_patterns: ['build/app/outputs/flutter-apk/*.apk'],
+            artifact_patterns: [
+              'build/app/outputs/flutter-apk/*.apk',
+              'build/ios/ipa/*.ipa',
+            ],
           },
         },
       ],
@@ -921,7 +928,7 @@ export function createDemoState(
       setup_mode: false,
       is_configured: true,
     },
-    androidSigning: {},
+    androidSigning: clone(demoAndroidSigning),
     iosSigning: {},
     iosDevices: {},
     signingIdentities: clone(demoSigningIdentities),
@@ -995,6 +1002,7 @@ export function createDemoState(
     state.auditLogs = []
     state.signingIdentities = []
     state.workflowSettings = {}
+    state.androidSigning = {}
   }
 
   if (scenario === 'empty') {

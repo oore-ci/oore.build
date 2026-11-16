@@ -58,11 +58,13 @@ pub mod sample_app;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
+pub mod signing_adoption;
 pub mod signing_expiry;
 pub mod signing_identities;
 pub mod step_retry;
 pub mod storage;
 pub mod store;
+pub mod store_connections;
 pub mod store_readiness;
 pub mod store_sync;
 pub mod store_vitals;
@@ -2395,6 +2397,22 @@ pub async fn build_router_with_recovery(
                 tracing::error!(error = %e, "failed to mark interrupted promotions as failed");
             }
         }
+        // Pipelines that still hold their own signing files move them into
+        // the app's signing library, keeping the same keys.
+        match signing_adoption::adopt_pipeline_signing(pool, &encryption_key, None).await {
+            Ok(report) if report.linked > 0 || report.skipped > 0 => {
+                info!(
+                    created = report.created,
+                    linked = report.linked,
+                    skipped = report.skipped,
+                    "moved pipeline signing files into the signing library"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(error = %e, "failed to move pipeline signing files into the signing library");
+            }
+        }
     }
 
     let external_access_network =
@@ -2925,6 +2943,28 @@ pub async fn build_router_with_recovery(
             post(pipeline_publish::test_pipeline_google_play_credentials),
         )
         // Shared App Store Connect API keys (private keys are never returned)
+        .route(
+            "/v1/projects/{project_id}/stores",
+            get(store_connections::get_project_stores),
+        )
+        .route(
+            "/v1/projects/{project_id}/stores/google-play",
+            put(store_connections::update_project_google_play_connection)
+                .delete(store_connections::delete_project_google_play_connection),
+        )
+        .route(
+            "/v1/projects/{project_id}/stores/google-play/test",
+            post(store_connections::test_project_google_play_connection),
+        )
+        .route(
+            "/v1/projects/{project_id}/stores/app-store",
+            put(store_connections::update_project_app_store_connection)
+                .delete(store_connections::delete_project_app_store_connection),
+        )
+        .route(
+            "/v1/projects/{project_id}/stores/app-store/test",
+            post(store_connections::test_project_app_store_connection),
+        )
         .route(
             "/v1/app-store-connect-keys",
             get(app_store_connect_keys::list_app_store_connect_keys)

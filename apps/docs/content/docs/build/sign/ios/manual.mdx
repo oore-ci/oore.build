@@ -1,11 +1,11 @@
 ---
 title: 'Configure manual iOS signing'
 status: implemented
-description: 'Upload a certificate and provisioning profiles for runner-owned iOS signing.'
+description: 'Add a certificate and provisioning profiles to the app’s signing library and pick them on a pipeline.'
 ---
 
-Configure one pipeline with a `.p12` certificate and a provisioning profile
-for every bundle it signs. The Direct macOS runner performs the signing; the
+Add a `.p12` certificate and a provisioning profile for every bundle to the
+app's signing library once, then pick that identity on each pipeline. The Direct macOS runner performs the signing; the
 repository's child processes do not receive the signing files, password, or
 Oore signing capability token.
 
@@ -21,24 +21,26 @@ signing path.
 - An active macOS login session for the Direct macOS runner account while the
   iOS build runs.
 
-## 1. Open iOS signing
+## 1. Add the identity to the signing library
 
-Open the pipeline, select **Edit**, and find **Signing > iOS**.
+Open the app, then its **Settings** tab. Under **Signing**, select
+**Add identity**, choose **iOS distribution**, upload the `.p12` with its
+password, and add one `.mobileprovision` per bundle. Ad hoc profiles make an
+ad hoc identity; App Store profiles make one for TestFlight and the App Store.
+The profiles set the Team ID and bundle IDs.
 
-## 2. Add the manual assets
+## 2. Pick it on the pipeline
 
-1. Turn on **Enable iOS signing**.
-2. For **Distribution**, keep **Ad hoc** for installs on registered devices,
-   or choose **App Store** for TestFlight and the App Store.
-3. For **Signing mode**, select
-   **Manual (.p12 + provisioning profiles)**.
-4. Enter **Apple Team ID**.
-5. Enter **Bundle identifiers**, with the main application first and one
-   extension bundle ID per line.
-6. Upload **Distribution certificate (.p12)** and enter **P12 password**.
-7. Under **Provisioning profiles by bundle ID**, upload the matching
-   `.mobileprovision` file for each bundle.
-8. Select **Save changes**.
+1. Open the pipeline, then its **Signing** row, and find **iOS**.
+2. Turn on **Enable iOS signing**.
+3. For **Signs with**, keep **Signing identity from the library**.
+4. Pick the identity under **Signing identity**. **New certificate…** in the
+   same list adds one without leaving the page.
+5. Select **Save changes**.
+
+Certificates and profiles saved on a pipeline before the signing library
+existed were moved into it automatically, named after the pipeline (such as
+`ios-release-certificate`).
 
 For automation, use the generated
 [Update iOS signing configuration](/openapi/operations/update_pipeline_ios_signing)

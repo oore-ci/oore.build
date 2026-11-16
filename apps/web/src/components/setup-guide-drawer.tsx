@@ -24,7 +24,7 @@ interface GuideTarget {
   label: string
   platform: 'android' | 'ios'
   hash: string
-  /** The pipeline edit page, or the pipeline's Publishing tab. */
+  /** The pipeline's Signing row, or its Publishing row. */
   page: 'edit' | 'publishing'
 }
 
@@ -43,13 +43,16 @@ interface Guide {
   }>
   targets: ReadonlyArray<GuideTarget>
   after: string
+  /** The files go to the app's signing library before a pipeline picks them. */
+  library?: boolean
 }
 
 const GUIDES = {
   signing: {
     title: 'Sign a release',
     description:
-      'Add your signing files to a pipeline once. Every release build from it is signed on the runner, and the files stay on the server.',
+      'Add your keystore or certificate to the app’s signing library once, then pick it on each pipeline.',
+    library: true,
     steps: [
       {
         platform: 'android',
@@ -65,8 +68,8 @@ const GUIDES = {
           {
             title: 'Add it',
             items: [
-              'Turn on release signing and choose the keystore. No Gradle changes are needed.',
-              'Save. In each build, the android-sign step checks that every APK and App Bundle carries this key.',
+              'Add it to the signing library as an Android keystore.',
+              'Pick it for release builds under the pipeline’s Signing. No Gradle changes are needed.',
             ],
           },
         ],
@@ -78,15 +81,15 @@ const GUIDES = {
           {
             title: 'Have ready',
             items: [
-              'An App Store Connect API key (.p8) with the App Manager role, so Oore can fetch certificates and profiles itself.',
-              'Or, to sign by hand: a distribution certificate (.p12) with its password and a provisioning profile per bundle ID.',
+              'A distribution certificate (.p12) with its password and a provisioning profile per bundle ID.',
+              'Or an App Store Connect API key (.p8) with the App Manager role, so Oore fetches them itself.',
             ],
           },
           {
             title: 'Add it',
             items: [
-              'Turn on iOS signing and pick API, manual or hybrid.',
-              'Save, then Sync profiles under iOS signing before the next build.',
+              'Add the certificate and its profiles to the signing library.',
+              'Pick it under the pipeline’s iOS signing, or choose App Store Connect there.',
             ],
           },
         ],
@@ -184,21 +187,14 @@ function TargetLink({
   target: GuideTarget
 }) {
   const params = { projectId, pipelineId: pipeline.id }
-  const link =
-    target.page === 'edit' ? (
-      <Link
-        to="/projects/$projectId/pipelines/$pipelineId/edit"
-        params={params}
-        hash={target.hash}
-      />
-    ) : (
-      <Link
-        to="/projects/$projectId/pipelines/$pipelineId"
-        params={params}
-        search={{ tab: 'publishing' }}
-        hash={target.hash}
-      />
-    )
+  const link = (
+    <Link
+      to="/projects/$projectId/pipelines/$pipelineId"
+      params={params}
+      search={{ row: target.page === 'edit' ? 'signing' : 'publishing' }}
+      hash={target.hash}
+    />
+  )
   return (
     <Button size="sm" variant="outline" nativeButton={false} render={link}>
       {target.label}
@@ -272,7 +268,7 @@ export function SetupGuideDrawer({
 }) {
   const [open, setOpen] = useState(false)
   const isMobile = useIsMobile()
-  const guide = GUIDES[kind]
+  const guide: Guide = GUIDES[kind]
   return (
     <Drawer
       open={open}
@@ -319,6 +315,30 @@ export function SetupGuideDrawer({
                 </Stack>
               </section>
             ))}
+            {guide.library ? (
+              <section aria-label="Signing library">
+                <Stack gap={3}>
+                  <h3 className="text-sm font-semibold">Signing library</h3>
+                  <Row>
+                    <Button
+                      size="sm"
+                      nativeButton={false}
+                      render={
+                        <Link
+                          to="/projects/$projectId"
+                          params={{ projectId }}
+                          search={{ tab: 'settings' }}
+                          hash="signing"
+                          onClick={() => setOpen(false)}
+                        />
+                      }
+                    >
+                      Open signing library
+                    </Button>
+                  </Row>
+                </Stack>
+              </section>
+            ) : null}
             <section aria-label="Choose a pipeline">
               <Stack gap={3}>
                 <h3 className="text-sm font-semibold">Choose a pipeline</h3>

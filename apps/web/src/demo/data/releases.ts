@@ -155,12 +155,14 @@ export const demoReleases: Array<DemoRelease> = [
     package_name: 'build.oore.demo.shop',
     version_name: '2.4.0',
     version_code: 141,
-    state: 'complete',
-    rollout_fraction: 1,
-    next_fraction: null,
+    // Halted on a crash spike from one device after Production got 2.4.0;
+    // the Releases tab offers Resume once the cause is known.
+    state: 'halted',
+    rollout_fraction: 0.5,
+    next_fraction: 1,
     next_step_at: null,
-    health: 'healthy',
-    crash_rate: 0.003,
+    health: 'breached',
+    crash_rate: 0.024,
     crash_rate_threshold: 0.02,
     policy: { ...DEFAULT_POLICY, steps: [0.5, 1], interval_hours: 12 },
     awaiting_approval: false,
@@ -168,7 +170,7 @@ export const demoReleases: Array<DemoRelease> = [
     environment_name: 'Beta',
     promoted_from_release_id: RELEASE_IDS.shopInternal,
     created_at: ago(86400 * 4),
-    updated_at: ago(86400 * 3),
+    updated_at: ago(3600 * 6),
   },
   {
     id: RELEASE_IDS.shopInternal,
