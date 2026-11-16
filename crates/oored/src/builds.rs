@@ -1191,7 +1191,7 @@ fn escape_markdown_inline(value: &str) -> String {
         .replace('>', "\\>")
 }
 
-fn changelog_markdown(commits: Vec<crate::integrations::CommitSummary>) -> String {
+pub(crate) fn changelog_markdown(commits: Vec<crate::integrations::CommitSummary>) -> String {
     let mut markdown = String::new();
     let total = commits.len();
     for (index, commit) in commits.into_iter().enumerate() {
@@ -1997,12 +1997,20 @@ pub async fn get_build(
         None
     });
 
+    let release_notes = crate::version_notes::for_build(pool, &build_id)
+        .await
+        .unwrap_or_else(|e| {
+            warn!(build_id = %build_id, error = %e, "failed to load the release notes");
+            None
+        });
+
     Ok(Json(BuildDetailResponse {
         build,
         events,
         retryable_steps,
         queue,
         retention,
+        release_notes,
     }))
 }
 

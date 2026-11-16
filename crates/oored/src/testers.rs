@@ -778,6 +778,7 @@ fn share_email(
     version: Option<&str>,
     sender: &str,
     message: Option<&str>,
+    release_notes: Option<&str>,
     link: Option<&str>,
 ) -> (String, String) {
     let what = match version {
@@ -799,6 +800,16 @@ fn share_email(
         body.push_str(&format!(
             "<p style=\"margin:0 0 16px;padding:12px;background:#f5f5f4;border-radius:8px\">{}</p>",
             html_escape(message)
+        ));
+    }
+    if let Some(notes) = release_notes
+        .map(str::trim)
+        .filter(|notes| !notes.is_empty())
+    {
+        body.push_str(&format!(
+            "<p style=\"margin:0 0 4px;font-weight:600\">What's new</p>\
+             <p style=\"margin:0 0 16px;white-space:pre-line\">{}</p>",
+            html_escape(notes)
         ));
     }
     if let Some(link) = link {
@@ -881,12 +892,16 @@ pub async fn send_build_to_group(
     let link = crate::commit_checks::frontend_base_url(pool)
         .await
         .map(|base| format!("{}/builds/{build_id}", base.as_str().trim_end_matches('/')));
+    let release_notes = crate::version_notes::sendable_for_build(pool, &build_id)
+        .await
+        .map_err(store_error("Failed to load the release notes"))?;
     let (subject, html) = share_email(
         &project_name,
         build_number,
         version.as_deref(),
         &auth.0.email,
         message.as_deref(),
+        release_notes.as_ref().map(|notes| notes.text.as_str()),
         link.as_deref(),
     );
 
@@ -1098,10 +1113,13 @@ mod tests {
             Some("2.4.0"),
             "lead@example.com",
             Some("Check <checkout>"),
+            Some("- Faster <sync>"),
             Some("https://oore.example.com/builds/b1"),
         );
         assert_eq!(subject, "Shop 2.4.0 (build #12) is ready to test");
         assert!(html.contains("Check &lt;checkout&gt;"));
+        assert!(html.contains("What's new"));
+        assert!(html.contains("- Faster &lt;sync&gt;"));
         assert!(html.contains("https://oore.example.com/builds/b1"));
     }
 

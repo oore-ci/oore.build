@@ -125,10 +125,10 @@ distribution makes:
   **In review** until Apple decides.
 - **TestFlight to the App Store**: the build is attached to the app's App
   Store version with the same version string, which must be one Apple still
-  lets you edit. Create the version and prepare its "What's New" and other
-  metadata in App Store Connect first: promotion does not change the
-  version's release notes, so TestFlight "What to Test" notes never reach the
-  public listing. Phased release is turned on or off from the environment,
+  lets you edit. Create the version and prepare its metadata in App Store
+  Connect first. Promotion sets "What's New" to the app version's release
+  notes when it has some; otherwise App Store Connect keeps what it has. The
+  promote dialog shows the notes, with **Edit**. Phased release is turned on or off from the environment,
   and the version is submitted for review when the environment says so. The
   release shows **In review**, then follows App Review and phased release in
   App Store Connect.
@@ -285,8 +285,7 @@ Store version for release. Follow the review in App Store Connect.
 - A build is promoted within one store. App Store releases are promoted from
   TestFlight only; an App Store version is not promoted further.
 - A promotion into the App Store never creates or renames an App Store
-  version, and never sets its release notes. Uploads that publish straight to
-  the App Store keep doing both.
+  version. Uploads that publish straight to the App Store do.
 - Per-environment notification channels, QA groups and secrets are not
   configurable yet.
 

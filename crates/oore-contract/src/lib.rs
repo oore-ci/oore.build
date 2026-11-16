@@ -1725,7 +1725,8 @@ pub struct Build {
     pub superseded_by: Option<BuildReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
-    /// Release notes written for this build's store uploads.
+    /// Release notes written when the build was started. They become the
+    /// release notes of the build's app version.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1873,6 +1874,90 @@ pub struct ReportBuildIdentityRequest {
     pub version_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version_code: Option<i64>,
+    /// The app version's release notes as the repository holds them at the
+    /// build's commit, when the `.oore.yaml` names where they live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<RepositoryReleaseNotes>,
+}
+
+/// Release notes a runner read from the repository.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct RepositoryReleaseNotes {
+    /// The changelog file or directory, relative to the repository root.
+    pub path: String,
+    /// The default-language text: the changelog's section for the version,
+    /// or the directory's first locale.
+    pub text: String,
+    /// Other languages, from a directory of `<locale>.txt` files.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub locales: Vec<ReleaseNotesLocale>,
+}
+
+/// Release notes in one language.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct ReleaseNotesLocale {
+    /// Such as `de-DE`.
+    pub locale: String,
+    pub text: String,
+}
+
+/// Where an app version's release notes came from.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseNotesSource {
+    /// Drafted from commit titles since the last released version.
+    #[default]
+    Commits,
+    /// Written in Oore.
+    Manual,
+    /// Read from the repository at the newest build's commit.
+    Repository,
+}
+
+/// The release notes of one app version (such as 2.5.1). Every build of the
+/// version shows them, and every store upload and promotion of it sends
+/// them: TestFlight "What to Test", App Store "What's New" and Google Play.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct VersionReleaseNotes {
+    pub project_id: String,
+    pub version_name: String,
+    /// The default-language (en-US) text.
+    pub text: String,
+    /// Other languages. Google Play and the App Store get each one.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub locales: Vec<ReleaseNotesLocale>,
+    pub source: ReleaseNotesSource,
+    /// The repository file or directory, for `repository` notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    /// The version Oore drafted from, for `commits` notes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drafted_since: Option<String>,
+    pub updated_at: i64,
+    /// Who last edited the notes in Oore.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_by: Option<String>,
+}
+
+/// `PUT /v1/projects/{project_id}/release-notes/{version_name}`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+pub struct UpdateVersionReleaseNotesRequest {
+    /// The default-language text, at most 4,000 characters.
+    pub text: String,
+    /// Other languages; replaces the saved ones.
+    #[serde(default)]
+    pub locales: Vec<ReleaseNotesLocale>,
+}
+
+/// Release notes for a version that has none yet: commit titles since the
+/// last released version.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ReleaseNotesDraftResponse {
+    pub text: String,
+    /// The released version the draft starts after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -1926,10 +2011,10 @@ pub struct CreateBuildRequest {
     pub trigger_ref: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
-    /// What's new in this release, as testers and store users read it. It
-    /// replaces the pipeline's Google Play and App Store release notes for
-    /// the build's uploads (Play's notes language, App Store's first
-    /// locale). Omitted uses the pipeline's notes.
+    /// What's new in this release, as testers and store users read it. Once
+    /// the runner reports the build's app version, this becomes that
+    /// version's release notes, unless the repository holds them. Omitted
+    /// keeps the version's notes as they are.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub store_notes: Option<String>,
     /// The `.oore.yaml` version 2 workflow to build. Omitted uses the
@@ -1971,6 +2056,9 @@ pub struct BuildDetailResponse {
     /// How long retention keeps this finished build and why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention: Option<BuildRetention>,
+    /// The release notes of the build's app version.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<VersionReleaseNotes>,
 }
 
 /// Why retention keeps a finished build, and until when.

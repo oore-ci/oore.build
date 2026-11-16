@@ -6,6 +6,7 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { requireDemoProjectPermission } from '../authorization'
 import { demoState } from '../state'
 import { demoRetention } from './testers'
+import { demoNotesForBuild } from './release-notes'
 import { demoBuildWorkflow, demoSigningError } from '../pipeline-workflows'
 import { demoBuildInsights } from '../data/build-insights'
 import { demoBuildAnalyses } from '../data/build-analyses'
@@ -457,6 +458,7 @@ export const buildHandlers = [
       retryable_steps: demoRetryableSteps(build),
       queue: demoQueue(build),
       retention: build.status === 'expired' ? null : demoRetention(build.id),
+      release_notes: demoNotesForBuild(build),
       events: demoState.buildEvents[build.id] ?? [
         {
           id: `evt-auto-${build.id}`,
