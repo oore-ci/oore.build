@@ -66,6 +66,30 @@ The schema rejects unknown fields. Run
 [`oore pipeline plan`](/reference/cli/oore-pipeline-plan) to see the steps each
 workflow runs.
 
+## Check the file in your editor
+
+A JSON Schema for version 2 files is published at
+[`https://docs.oore.build/schema/oore-yaml-v2.json`](/schema/oore-yaml-v2.json).
+Editors and agents use it to complete keys, show each field's description,
+and flag a wrong key or value before you commit, with no Oore instance.
+It checks the file's shape; [`oore pipeline validate`](/reference/cli/oore-pipeline-validate)
+also checks names, references and limits against your instance.
+
+Put this line at the top of `.oore.yaml`. `oore init` writes it into new
+files:
+
+```yaml
+# yaml-language-server: $schema=https://docs.oore.build/schema/oore-yaml-v2.json
+```
+
+- **VS Code**: install the Red Hat YAML extension. It reads the comment.
+- **JetBrains IDEs** (Android Studio, IntelliJ IDEA): the comment works as
+  well. Or map the file under **Settings > Languages & Frameworks >
+  Schemas and DTDs > JSON Schema Mappings**, with the URL above and the file
+  pattern `.oore*.yaml`.
+- **Command line**: any JSON Schema validator that reads YAML, for example
+  `npx ajv-cli validate --spec=draft2020 -s oore-yaml-v2.json -d .oore.yaml`.
+
 ## Top-level fields
 
 | Field                 | Type     | Required | Default                    |

@@ -247,3 +247,6 @@ curl -fsS -X POST "$OORE_URL/v1/projects/$PROJECT_ID/builds" \
 - [HTTP API](/reference/api) lists every operation with a `curl` example, and
   [`openapi.json`](/openapi.json) is the contract to generate a client from.
 - [`oore` command reference](/reference/cli) has every command and flag.
+- [`oore init --agents`](/reference/cli/oore-init#instructions-for-coding-agents)
+  writes instructions into an app repository so a coding agent working there
+  knows how to check the pipeline file, run a build and read a failure.
