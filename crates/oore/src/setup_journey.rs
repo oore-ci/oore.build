@@ -700,6 +700,7 @@ async fn setup_runner(
         .context("runner setup was cancelled")?;
         super::handle_runner_register_with_lifecycle_lock(
             RunnerRegisterArgs {
+                json: false,
                 daemon_url: backend_url.clone(),
                 name: nonempty_optional(name),
                 labels: Vec::new(),
@@ -713,6 +714,7 @@ async fn setup_runner(
     let operation = terminal.operation("Starting the runner service");
     let install_result = super::handle_runner_install_service(
         RunnerServiceArgs {
+            json: false,
             config: None,
             managed_local: false,
             daemon_url: None,
@@ -1091,6 +1093,7 @@ async fn ensure_managed_local_runner(
     let operation = terminal.operation("Starting the local runner");
     let result = super::handle_runner_install_service(
         RunnerServiceArgs {
+            json: false,
             config: None,
             managed_local: true,
             daemon_url: Some(daemon_url.to_string()),

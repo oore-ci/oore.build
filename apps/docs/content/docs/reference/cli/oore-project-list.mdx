@@ -1,0 +1,44 @@
+---
+title: '`oore project list` and `oore pipeline list`'
+status: implemented
+description: 'List apps and pipelines with their IDs, and pass names wherever a command takes an app or a pipeline.'
+---
+
+```text
+oore project list [--search TEXT] [--json]
+oore pipeline list [--project <NAME|ID>] [--search TEXT] [--json]
+```
+
+Both print a table with the ID first, so a script can take it with `awk`, or
+JSON with `--json`.
+
+```text
+$ oore project list
+ID         APP   REPOSITORY      LAST BUILD
+prj_8f2c   Coin  zerodha/coin    2h ago
+prj_19ab   Kite  zerodha/kite    1d ago
+
+$ oore pipeline list --project Coin
+ID         PIPELINE          APP   WORKFLOW
+pl_31d0    Release           Coin  release
+pl_77e2    Pull requests     Coin  checks
+```
+
+`oore pipeline list` without `--project` lists the pipelines of every app you
+can see.
+
+## Names or IDs
+
+Every `--project` and `--pipeline` option takes a name as well as an ID:
+`oore build run`, `oore build list`, `oore pipeline list`. A name matches
+whole and ignores case. An app also matches its repository, such as
+`zerodha/coin` or `coin`.
+
+When a name matches more than one, the command fails with exit code `1` and
+code `ambiguous_name`, and lists the matches with their IDs. Name the app with
+`--project` to narrow a pipeline name, or pass the ID. When nothing matches, it
+fails with exit code `5`.
+
+```bash
+oore build run --project Coin --pipeline Release --wait
+```

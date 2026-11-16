@@ -5,7 +5,7 @@ description: 'Create a loopback Local Only session or import an existing Oore se
 ---
 
 ```text
-oore login [--daemon-url <URL>] [--token <TOKEN> | --email <EMAIL> | --device] [--json]
+oore login [--url <URL>] [--token <TOKEN> | --email <EMAIL> | --device] [--json]
 ```
 
 ## Local Only login
@@ -27,7 +27,7 @@ On a server, a container or any machine that is not the Oore host, use
 switches to this by itself:
 
 ```bash
-oore login --daemon-url https://ci.example.com --device
+oore login --url https://ci.example.com --device
 ```
 
 It prints a short code and a link, and opens the browser when it can. A signed-in
@@ -50,16 +50,20 @@ line on standard output, and the result as another once someone approves:
 
 The command fails when the code expires or the sign-in is denied.
 
-## Import a session
+## Import a session or an API token
 
 Use `--token` to import a session created through the supported browser or
-recovery flow:
+recovery flow, or an API token from **Settings > API tokens**. An API token
+works wherever a session token does:
 
 ```bash
 oore login \
-  --daemon-url https://ci.example.com \
-  --token '<session-token>'
+  --url https://ci.example.com \
+  --token '<session-or-api-token>'
 ```
+
+`--url` was `--daemon-url`, which still works. Without `--url`, the command
+reads `OORE_URL`, then `OORE_DAEMON_URL`.
 
 The CLI validates the token against `/v1/users/me` before saving it. On
 success, it stores the daemon URL and session token in the protected CLI
@@ -69,4 +73,7 @@ and resolution rules.
 Treat command-line tokens as secrets: shell history and process inspection may
 expose them. `--token` is the import interface; after import, authenticated
 commands can read the token from the protected config file or
-`OORE_SESSION_TOKEN`.
+`OORE_TOKEN` (`OORE_SESSION_TOKEN` still works). A CI job or an agent can skip
+`oore login` and set `OORE_URL` and `OORE_TOKEN` instead. Behind an access
+proxy such as Cloudflare Access, add its service token headers with
+`OORE_HTTP_HEADERS` or `--header`.

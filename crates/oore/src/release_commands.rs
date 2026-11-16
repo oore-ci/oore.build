@@ -808,7 +808,12 @@ pub(crate) async fn promote(args: PromoteArgs) -> anyhow::Result<()> {
     }
     if pending {
         // A person must approve it: exit 2, as for other blocked work.
-        std::process::exit(2);
+        return Err(crate::cli_contract::CliError::outcome(
+            crate::cli_contract::exit::BLOCKED,
+            "waiting_for_approval",
+            format!("promotion {} is waiting for approval", decoded.id),
+        )
+        .into());
     }
     Ok(())
 }

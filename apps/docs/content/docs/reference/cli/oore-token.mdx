@@ -13,7 +13,7 @@ oore token revoke <TOKEN_ID> [--yes] [--json]
 
 API tokens let agents, scripts and CI jobs call Oore without a browser. A token
 acts for the person who created it, and never does more than they can. Each
-subcommand takes `--daemon-url` and `--token` like
+subcommand takes `--url` and `--token` (or `OORE_URL` and `OORE_TOKEN`) like
 [`oore build run`](/reference/cli/oore-build-run) and needs a signed-in session.
 
 On a Local Only host, sign in with [`oore login`](/reference/cli/oore-login),

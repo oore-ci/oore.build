@@ -11,25 +11,56 @@ version installed on your host.
 oore <COMMAND>
 ```
 
-| Command     | Purpose                                                     |
-| ----------- | ----------------------------------------------------------- |
-| `install`   | Choose and install the role for this device                 |
-| `uninstall` | Remove this Oore installation                               |
-| `setup`     | Configure a new backend or mint a browser setup token       |
-| `frontend`  | Create a short-lived frontend pairing invitation            |
-| `login`     | Create a Local Only session or import an existing session   |
-| `recovery`  | Mint a single-use browser recovery link on the backend host |
-| `status`    | Show public setup status and authenticated runtime details  |
-| `runner`    | Register, start, install, or remove a Direct macOS runner   |
-| `config`    | Read or write persistent CLI defaults                       |
-| `doctor`    | Check the host and selected build-platform toolchains       |
-| `pipeline`  | Check pipeline files and list a pipeline's workflows        |
-| `build`     | Queue a build of a pipeline                                 |
-| `version`   | Print the installed CLI version                             |
-| `update`    | Check for or install a release from an Oore channel         |
-| `backup`    | Create, verify, or restore an encrypted-state backup        |
+| Command       | Purpose                                                     |
+| ------------- | ----------------------------------------------------------- |
+| `install`     | Choose and install the role for this device                 |
+| `uninstall`   | Remove this Oore installation                               |
+| `setup`       | Configure a new backend or mint a browser setup token       |
+| `frontend`    | Create a short-lived frontend pairing invitation            |
+| `login`       | Create a Local Only session or import an existing session   |
+| `recovery`    | Mint a single-use browser recovery link on the backend host |
+| `status`      | Show public setup status and authenticated runtime details  |
+| `runner`      | Register, start, install, or remove a Direct macOS runner   |
+| `config`      | Read or write persistent CLI defaults                       |
+| `doctor`      | Check the host and selected build-platform toolchains       |
+| `init`        | Write a starter `.oore.yaml` for a Flutter app              |
+| `pipeline`    | Check pipeline files, list pipelines and their workflows    |
+| `build`       | List, start, follow, explain, cancel and re-run builds      |
+| `project`     | List apps                                                   |
+| `artifact`    | Download a build file                                       |
+| `notes`       | Read and write the release notes of an app version          |
+| `api`         | Call any Oore API operation                                 |
+| `commands`    | Print every command and flag, as JSON for agents            |
+| `completions` | Print a shell completion script                             |
+| `version`     | Print the installed CLI version                             |
+| `update`      | Check for or install a release from an Oore channel         |
+| `backup`      | Create, verify, or restore an encrypted-state backup        |
+
+## For scripts and agents
+
+Every command takes `--json`, never prompts when standard input is not a
+terminal, and exits with the codes in [Exit codes](/reference/cli/exit-codes).
+Commands that talk to the backend read the same connection settings:
+
+| Flag       | Environment         | Meaning                                                                                                                      |
+| ---------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `--url`    | `OORE_URL`          | Backend URL. `--daemon-url` and `OORE_DAEMON_URL` still work.                                                                |
+| `--token`  | `OORE_TOKEN`        | An API token or a session token. `OORE_SESSION_TOKEN` still works.                                                           |
+| `--header` | `OORE_HTTP_HEADERS` | Extra request headers, such as an access proxy's service token. One `Name: value` per line in the variable; repeat the flag. |
+
+The flag wins over the new variable, which wins over the old one, which wins
+over the login `oore login` saved. [All commands](/reference/cli/commands)
+lists every flag, generated from the CLI, and `oore commands --json` prints the
+same tree.
+
+`oore-dev`, the small CLI in the `@oore/client` npm package, reads the same
+`OORE_URL` and `OORE_TOKEN`. It is kept for hosts `oore` does not run on yet,
+and retires once `oore` has Linux builds; use `oore` where you can.
 
 ## Detailed pages
+
+- [All commands](/reference/cli/commands)
+- [Exit codes and JSON errors](/reference/cli/exit-codes)
 
 - [`oore install`](/reference/cli/oore-install)
 - [`oore setup`](/reference/cli/oore-setup)
@@ -49,9 +80,17 @@ oore <COMMAND>
 - [`oore pipeline migrate`](/reference/cli/oore-pipeline-migrate)
 - [`oore pipeline workflows`](/reference/cli/oore-pipeline-workflows)
 - [`oore pipeline readiness`](/reference/cli/oore-pipeline-readiness)
+- [`oore project list` and `oore pipeline list`](/reference/cli/oore-project-list)
 - [`oore build run`](/reference/cli/oore-build-run)
 - [`oore build watch`](/reference/cli/oore-build-watch)
+- [`oore build list` and `oore build show`](/reference/cli/oore-build-list)
+- [`oore build logs`](/reference/cli/oore-build-logs)
+- [`oore build why`](/reference/cli/oore-build-why)
+- [`oore build cancel`, `rerun` and `retry-step`](/reference/cli/oore-build-control)
+- [`oore build artifacts`, `install-link` and `artifact download`](/reference/cli/oore-build-artifacts)
 - [`oore notes`](/reference/cli/oore-notes)
+- [`oore api`](/reference/cli/oore-api)
+- [`oore commands` and `oore completions`](/reference/cli/oore-commands)
 - [`oore version`](/reference/cli/oore-version)
 
 The `oore` CLI is distinct from `oored`, the backend daemon. The installer owns

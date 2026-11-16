@@ -11,6 +11,7 @@ use oore_contract::ApiError;
 use serde_json::Value;
 
 use crate::build_commands::Api;
+use crate::cli_contract::{CliError, exit};
 
 /// A failed daemon call. Keeps the status and the API's code so the exit
 /// code and `--json` error can be derived from it.
@@ -275,6 +276,7 @@ impl std::fmt::Display for UsageError {
 
 impl std::error::Error for UsageError {}
 
+#[cfg(test)]
 /// The exit code for an error from these commands, per the CLI's table.
 pub(crate) fn exit_code_for(error: &anyhow::Error) -> i32 {
     if let Some(failure) = error.downcast_ref::<ApiFailure>() {
@@ -286,19 +288,41 @@ pub(crate) fn exit_code_for(error: &anyhow::Error) -> i32 {
     1
 }
 
-/// Runs an admin command on a fresh runtime, and exits with the code from
-/// the CLI's table when it fails.
+/// The CLI's shared error for a failure from these commands, so `--json`
+/// prints the error object and the exit code follows the table.
+pub(crate) fn into_cli_error(error: anyhow::Error) -> anyhow::Error {
+    if let Some(failure) = error.downcast_ref::<ApiFailure>() {
+        let mut cli = CliError::new(
+            u8::try_from(failure.exit_code()).unwrap_or(exit::FAILED),
+            failure
+                .code
+                .clone()
+                .unwrap_or_else(|| format!("http_{}", failure.status)),
+            format!(
+                "{} failed (HTTP {}): {}",
+                failure.what, failure.status, failure.message
+            ),
+        );
+        cli.status = Some(failure.status);
+        if let Some(hint) = &failure.hint {
+            cli = cli.with_hint(hint.clone());
+        }
+        return cli.into();
+    }
+    if let Some(usage) = error.downcast_ref::<UsageError>() {
+        return CliError::usage(usage.0.clone()).into();
+    }
+    error
+}
+
+/// Runs an admin command on a fresh runtime, with its errors in the CLI's
+/// shared shape.
 pub(crate) fn run<F>(future: F) -> anyhow::Result<()>
 where
     F: std::future::Future<Output = anyhow::Result<()>>,
 {
     let runtime = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-    if let Err(error) = runtime.block_on(future) {
-        let code = exit_code_for(&error);
-        eprintln!("Error: {error:#}");
-        std::process::exit(code);
-    }
-    Ok(())
+    runtime.block_on(future).map_err(into_cli_error)
 }
 
 #[cfg(test)]
@@ -324,6 +348,17 @@ mod tests {
         assert_eq!(exit_code_for(&failure(500)), 1);
         assert_eq!(exit_code_for(&UsageError("bad".into()).into()), 64);
         assert_eq!(exit_code_for(&anyhow::anyhow!("other")), 1);
+    }
+
+    #[test]
+    fn failures_become_the_shared_cli_error() {
+        let hinted = into_cli_error(with_forbidden_hint(failure(403), "needs manage"));
+        let cli = hinted.downcast_ref::<CliError>().unwrap();
+        assert_eq!(cli.exit, 4);
+        assert_eq!(cli.status, Some(403));
+        assert_eq!(cli.hint.as_deref(), Some("needs manage"));
+        let usage = into_cli_error(UsageError("bad".into()).into());
+        assert_eq!(usage.downcast_ref::<CliError>().unwrap().exit, 64);
     }
 
     #[test]
