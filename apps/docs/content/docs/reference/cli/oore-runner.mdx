@@ -12,9 +12,24 @@ oore runner start [--daemon-url <URL>] [--config <PATH>]
 oore runner install-service [--config <PATH> | --managed-local [--daemon-url <URL>] [--state-file <PATH>] [--name <NAME>]]
 oore runner rotate-token
 oore runner uninstall-service
+oore runner list [--json]
 ```
 
 To add a build Mac, install the Runner profile instead. See [Add a Direct macOS runner](/operate/runners/direct).
+
+## `oore runner list`
+
+Lists the runners registered with the daemon: ID, name, status, labels and
+when each was last seen, then how many are online. It needs a signed-in
+session and takes `--daemon-url` and `--token` like
+[`oore build run`](/reference/cli/oore-build-run).
+
+```text
+$ oore runner list
+ID        NAME          STATUS  LABELS               LAST SEEN
+run_123   office-mac-1  online  macos,arm64,xcode-26 2026-11-16 20:44 UTC
+1 of 1 online.
+```
 
 ## `oore runner register`
 

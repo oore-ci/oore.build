@@ -1,0 +1,39 @@
+---
+title: '`oore mcp`'
+status: implemented
+description: "Connect an agent that starts local commands to the daemon's MCP server over standard input and output."
+---
+
+```text
+oore mcp [--read-only] [--daemon-url URL] [--token TOKEN]
+```
+
+Some agent clients can only start a local command and talk to it over standard
+input and output. `oore mcp` reads MCP messages on standard input, forwards
+each to the daemon's `/mcp` endpoint with your sign-in, and writes the answers
+to standard output, one per line. Nothing else goes to standard output.
+
+| Option        | Effect                                                                     |
+| ------------- | -------------------------------------------------------------------------- |
+| `--read-only` | Offer only tools marked read-only, and refuse calls to any other.          |
+| `--token`     | The API token to use. Defaults to `OORE_SESSION_TOKEN`, then `oore login`. |
+
+MCP is off until an owner turns it on in Settings. While it is off, the bridge
+answers each request with an error that says so.
+
+A client configuration:
+
+```json
+{
+  "mcpServers": {
+    "oore": {
+      "command": "oore",
+      "args": ["mcp", "--read-only"],
+      "env": {
+        "OORE_DAEMON_URL": "https://ci.example.com",
+        "OORE_SESSION_TOKEN": "<api token>"
+      }
+    }
+  }
+}
+```

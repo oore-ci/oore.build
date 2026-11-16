@@ -887,6 +887,7 @@ async fn setup_cli_only(
             daemon_url: Some(daemon_url.clone()),
             token,
             email: None,
+            device: false,
             json: false,
         },
         true,

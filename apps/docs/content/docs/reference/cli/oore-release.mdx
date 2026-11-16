@@ -1,0 +1,48 @@
+---
+title: '`oore release`'
+status: implemented
+description: 'Read store releases and drive rollouts, approvals and release freezes from the terminal.'
+---
+
+```text
+oore release list [--project ID] [--build ID] [--state STATE] [--limit N] [--json]
+oore release show <RELEASE_ID> [--json]
+oore release pause|halt|resume|complete|approve|release-now|retry <RELEASE_ID> [WRITE OPTIONS]
+oore release raise <RELEASE_ID> --to <PERCENT> [WRITE OPTIONS]
+oore release freeze list [--json]
+oore release freeze set [--project ID] --reason TEXT [WRITE OPTIONS]
+oore release freeze clear <FREEZE_ID> [WRITE OPTIONS]
+```
+
+`show` prints the release's state, rollout, what the store said, its history,
+and the actions it allows now. To move a build into another track, see
+[`oore promote`](/reference/cli/oore-promote).
+
+| Write option | Effect                                                                            |
+| ------------ | --------------------------------------------------------------------------------- |
+| `--dry-run`  | Print what would be sent and the actions the release allows now. Nothing changes. |
+| `--yes`      | Do not ask. Required when no terminal is attached.                                |
+| `--reason`   | Why, recorded in the release's history. Required for `freeze set`.                |
+| `--json`     | Print the result as JSON.                                                         |
+
+Every write sends an `Idempotency-Key`, so a retried request does not act twice.
+
+## What a token needs
+
+Agents may read, pause and halt releases. Everything else changes what users
+get, so it needs more:
+
+| Commands                                                                                                       | Ability           |
+| -------------------------------------------------------------------------------------------------------------- | ----------------- |
+| `list`, `show`, `freeze list`                                                                                  | `read`            |
+| `pause`, `halt`                                                                                                | `release_operate` |
+| `raise`, `resume`, `complete`, `approve`, `release-now`, `retry`, `freeze set`, `freeze clear`, `oore promote` | `release_manage`  |
+
+When the daemon refuses a write, the command exits 4 and names the ability it
+needs.
+
+```bash
+oore release list --project proj_123 --state rolling
+oore release raise rel_456 --to 50 --dry-run
+oore release halt rel_456 --reason "Crash spike in 2.5.1" --yes
+```

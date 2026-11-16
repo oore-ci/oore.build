@@ -131,6 +131,11 @@ pub(crate) struct Api {
 }
 
 impl Api {
+    /// The bearer token every call sends.
+    pub(crate) fn token(&self) -> &str {
+        &self.token
+    }
+
     pub(crate) fn connect(args: &ApiConnectionArgs) -> anyhow::Result<Self> {
         let daemon_url = resolve_daemon_url(args.daemon_url.as_deref())?;
         let token = resolve_session_token(args.token.as_deref(), &daemon_url)?

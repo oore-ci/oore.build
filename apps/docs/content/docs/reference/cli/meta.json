@@ -22,7 +22,15 @@
     "oore-pipeline-readiness",
     "oore-build-run",
     "oore-build-watch",
+    "oore-build-share",
     "oore-notes",
+    "oore-release",
+    "oore-promote",
+    "oore-secret",
+    "oore-signing",
+    "oore-tester",
+    "oore-token",
+    "oore-mcp",
     "oore-version"
   ],
   "pagesIndex": "index"

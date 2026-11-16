@@ -1,0 +1,19 @@
+---
+title: '`oore build share`'
+status: implemented
+description: 'Send a build to a tester group by email.'
+---
+
+```text
+oore build share <BUILD_ID> --group <GROUP> [--message TEXT] [--json]
+```
+
+Every member of the [tester group](/reference/cli/oore-tester) gets an email
+with the build's install link. `GROUP` is the group's name or ID. `--message`
+adds a note for the testers. People who cannot open the app get the email
+without the link, and the command names them.
+
+```text
+$ oore build share bld_123 --group QA --message "Check the new checkout"
+Sent build bld_123 to QA (4 people).
+```
