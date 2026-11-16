@@ -4,9 +4,8 @@ status: implemented
 description: 'Default workflow, per-workflow settings, health, triggers, schedules, concurrency, timeout, approval, and size budget fields on a pipeline, with their UI labels, API fields, and limits.'
 ---
 
-These settings live on the pipeline, not in the repository. The pipeline's
-**Edit** page sets most of them, under **Default workflow**, **Triggers** and
-**Size budget**, and
+These settings live on the pipeline, not in the repository. The pipeline page
+sets most of them, in its **Source and triggers** and **Build** rows, and
 [Update a pipeline](/openapi/operations/update_pipeline) sets the same fields
 through the API. A commit cannot change them, except that a `.oore.yaml`
 version 2 file can replace the events, as described in
@@ -28,7 +27,7 @@ version 2 file can replace the events, as described in
 | **Size budget** rules                                          | `size_budget.rules`           |
 | **When an artifact is over budget**                            | `size_budget.mode`            |
 
-Per-workflow settings live on the pipeline's **Workflows** tab and have their
+Per-workflow settings live under **Workflows** in the pipeline's **Source and triggers** row and have their
 own API; see [Workflow settings](#workflow-settings). Health is read-only; see
 [Health](#health).
 
@@ -56,7 +55,8 @@ fail.
 
 Each workflow of the pipeline's file can have settings that replace, for this
 pipeline only, what the file and the pipeline would otherwise decide. Open
-the pipeline's **Workflows** tab and select **Settings** on a row. The table
+the pipeline's **Source and triggers** row and select **Settings** on a
+workflow. The table
 shows every workflow in the file, what it builds, signs with and publishes,
 and its approval.
 
@@ -64,7 +64,7 @@ and its approval.
 | ------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Android signing** | `android_identity_id` | An Android keystore from the [app's signing library](/build/sign/project-library). Replaces the file's `signing.android`                       |
 | **iOS signing**     | `ios_identity_id`     | An iOS distribution identity from the library. Replaces the file's `signing.ios`, and with it the iOS export method                            |
-| **Publishing**      | `publish_enabled`     | `false` stops every store upload of the workflow, whatever the file and the Publishing tab say. Unset follows them                             |
+| **Publishing**      | `publish_enabled`     | `false` stops every store upload of the workflow, whatever the file and the Publishing row say. Unset follows them                             |
 | **Approval**        | `approval_required`   | `true` holds every build of the workflow for approval and `false` none, whatever its event. Unset follows the pipeline's [approval](#approval) |
 
 - [List workflow settings](/openapi/operations/list_pipeline_workflow_settings):

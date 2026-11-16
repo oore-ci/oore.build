@@ -856,22 +856,14 @@ function GooglePlayPublishForm({
         <fieldset disabled={!canWrite} className="min-w-0">
           <SettingsSurface className="flex flex-col gap-4">
             {file?.all ? (
-              <FileControlledLine
-                file={file}
-                pipelineId={pipelineId}
-                projectId={projectId}
-              />
+              <FileControlledLine file={file} />
             ) : connected ? (
               <TrackLine form={form} />
             ) : (
               <NotConnectedLine projectId={projectId} store="Google Play" />
             )}
             {file && !file.all ? (
-              <PartlyFileControlledNote
-                file={file}
-                pipelineId={pipelineId}
-                projectId={projectId}
-              />
+              <PartlyFileControlledNote file={file} />
             ) : null}
 
             {(enabled || file?.all) && connected ? (
@@ -983,9 +975,9 @@ export function GooglePlayPublishSection({
         nativeButton={false}
         render={
           <Link
-            to="/projects/$projectId/pipelines/$pipelineId/edit"
+            to="/projects/$projectId/pipelines/$pipelineId"
             params={{ projectId, pipelineId }}
-            search={{}}
+            search={{ row: hash === 'build' ? 'build' : 'signing' }}
             hash={hash}
           />
         }

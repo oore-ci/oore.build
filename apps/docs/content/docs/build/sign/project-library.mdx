@@ -76,8 +76,8 @@ Connect.
 
 ## 3. Or pick identities per workflow in Oore
 
-Without changing the file, open the pipeline's **Workflows** tab, select
-**Settings** on a workflow, and choose its **Android signing** or **iOS
+Without changing the file, open the pipeline's **Source and triggers** row,
+select **Settings** on a workflow, and choose its **Android signing** or **iOS
 signing** identity. That choice replaces what the file names for this
 pipeline's builds of the workflow. Leave it at the **From the file** choice to
 follow the file, or the pipeline's signing when the file names none.
@@ -102,14 +102,15 @@ publish:
   one.
 - **The App Store Connect API key** for uploads comes from the pipeline's iOS
   signing settings, which must export App Store IPAs, with App Store Connect
-  publishing turned on in the **Publishing** tab.
+  publishing turned on in the **Publishing** row.
 - **Release notes, the expected Google Play package and export compliance**
-  stay in the **Publishing** tab.
+  stay in the **Publishing** row.
 
 ## Verify the result
 
 - `oore pipeline plan` lists each workflow's identities under `signing:`.
-- The pipeline's **Workflows** tab shows what each workflow signs with.
+- The pipeline's **Signing** row shows what each workflow signs with, and
+  whether the file, the pipeline or a workflow setting decides it.
 - A build of each workflow passes its signing step.
 
 ## Troubleshooting

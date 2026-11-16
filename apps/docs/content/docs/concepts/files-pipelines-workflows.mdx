@@ -61,11 +61,12 @@ The first one that is set wins.
 | --------------- | ------------------------------- | -------------------------------------------- | ------------------------------- |
 | Android signing | **Android signing** identity    | `signing.android`, workflow first            | The pipeline's Android signing  |
 | iOS signing     | **iOS signing** identity        | `signing.ios`, workflow first                | The pipeline's iOS signing      |
-| Store uploads   | **Publishing** off stops them   | `publish` on the targets, workflow first     | **Publishing** tab              |
+| Store uploads   | **Publishing** off stops them   | `publish` on the targets, workflow first     | **Publishing** row              |
 | Approval        | **Approval** required or not    | Not set in files                             | The pipeline's approval policy  |
 | Triggers        | Not set per workflow            | The workflow's `on`, else the top-level `on` | The pipeline's trigger settings |
 
-The per-workflow settings are on the pipeline's **Workflows** tab. They let an
+The per-workflow settings are under **Workflows** in the pipeline's
+**Source and triggers** row. They let an
 admin change a workflow's identity, or stop its uploads, without a commit.
 
 Some things still come only from the pipeline: the App Store Connect API key,

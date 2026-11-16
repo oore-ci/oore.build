@@ -70,7 +70,7 @@ export function GooglePlayServiceAccountPanel({
                     {relativeTime(stored.updated_at)}
                   </>
                 ) : (
-                  'Not stored yet. Add the JSON key once and new pipelines use it on the Publishing tab.'
+                  'Not stored yet. Add the JSON key once and new pipelines use it in Publishing.'
                 )}
               </ItemDescription>
             </ItemContent>

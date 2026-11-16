@@ -32,9 +32,18 @@ export function PipelineSigningSection({
   onApiKeyFileChange,
   onP12FileChange,
   onProfileFileChange,
+  platformNotes,
+  readOnlyPlatforms,
   summary,
   values,
 }: {
+  /** Shown under a platform's picker, such as workflows that sign otherwise. */
+  platformNotes?: Partial<Record<'android' | 'ios', ReactNode>>
+  /**
+   * Shown in place of a platform's picker when something else decides its
+   * identity for every build, such as the pipeline's file.
+   */
+  readOnlyPlatforms?: Partial<Record<'android' | 'ios', ReactNode>>
   summary?: string
   androidSigningData?: PipelineAndroidSigningResponse
   bundleIds: Array<string>
@@ -75,30 +84,40 @@ export function PipelineSigningSection({
         </Button>
       }
     >
-      {values.platform_android ? (
-        <PipelineAndroidSigningSection
-          projectId={projectId}
-          signingData={androidSigningData}
-        />
-      ) : null}
+      {values.platform_android
+        ? (readOnlyPlatforms?.android ?? (
+            <>
+              <PipelineAndroidSigningSection
+                projectId={projectId}
+                signingData={androidSigningData}
+              />
+              {platformNotes?.android}
+            </>
+          ))
+        : null}
       {values.platform_android && values.platform_ios ? (
         <SettingsSurfaceSeparator />
       ) : null}
-      {values.platform_ios ? (
-        <PipelineIosSigningSection
-          actions={iosActions}
-          apiKeyFile={iosApiKeyFile}
-          appStorePublishing={iosAppStorePublishing}
-          bundleIds={bundleIds}
-          onApiKeyFileChange={onApiKeyFileChange}
-          onP12FileChange={onP12FileChange}
-          onProfileFileChange={onProfileFileChange}
-          p12File={iosP12File}
-          profileFiles={iosProfileFiles}
-          projectId={projectId}
-          signingData={iosSigningData}
-        />
-      ) : null}
+      {values.platform_ios
+        ? (readOnlyPlatforms?.ios ?? (
+            <>
+              <PipelineIosSigningSection
+                actions={iosActions}
+                apiKeyFile={iosApiKeyFile}
+                appStorePublishing={iosAppStorePublishing}
+                bundleIds={bundleIds}
+                onApiKeyFileChange={onApiKeyFileChange}
+                onP12FileChange={onP12FileChange}
+                onProfileFileChange={onProfileFileChange}
+                p12File={iosP12File}
+                profileFiles={iosProfileFiles}
+                projectId={projectId}
+                signingData={iosSigningData}
+              />
+              {platformNotes?.ios}
+            </>
+          ))
+        : null}
     </PipelineFormSection>
   )
 }

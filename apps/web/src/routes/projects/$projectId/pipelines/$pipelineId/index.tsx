@@ -1,16 +1,20 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import { Link, createFileRoute, useNavigate } from '@tanstack/react-router'
+import {
+  Link,
+  createFileRoute,
+  useLocation,
+  useNavigate,
+} from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
   Alert02Icon,
   Delete02Icon,
-  Edit02Icon,
   InformationCircleIcon,
   PlayIcon,
 } from '@hugeicons/core-free-icons'
 import { toast } from '@/lib/toast'
-import type { Build, Pipeline } from '@oore/client/models'
+import type { Build, BuildPlatform, Pipeline } from '@oore/client/models'
 
 import {
   getActiveInstanceOrRedirect,
@@ -32,12 +36,30 @@ import {
   useRepositoryWorkflows,
   useUpdatePipeline,
 } from '@/hooks/use-pipelines'
-import { pipelineWorkflowProblem } from '@/lib/pipeline-form-utils'
+import {
+  usePipelineWorkflowSettings,
+  useSigningIdentities,
+} from '@/hooks/use-signing-identities'
+import { useSecrets } from '@/hooks/use-secrets'
+import {
+  pipelineSectionSummaries,
+  pipelineWorkflowProblem,
+} from '@/lib/pipeline-form-utils'
+import {
+  approvalInForce,
+  pipelineFile,
+  publishingInForce,
+  repositoryFileUrl,
+  signingInForce,
+  sourceSummary,
+  triggersInForce,
+  usesPipeline,
+  type SourcedValue,
+} from '@/lib/pipeline-sources'
 import { useProject } from '@/hooks/use-projects'
 import {
   usePipelineAppStorePublish,
   usePipelineGooglePlayPublish,
-  usePipelinePublishReadiness,
 } from '@/hooks/use-pipeline-publish'
 import { CollectionError } from '@/components/collection'
 import { enabledStatus } from '@/lib/status-variants'
@@ -69,7 +91,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { LatestInstallLinksCard } from '@/components/latest-install-links-card'
-import { StoreReadinessChecklist } from '@/components/trigger-build-store-section'
 import {
   Empty,
   EmptyContent,
@@ -78,11 +99,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import {
-  appStoreDestination,
-  describeStoreUploads,
-  playDestination,
-} from '@/lib/store-destination'
+import { appStoreDestination, playDestination } from '@/lib/store-destination'
 import PageHeader from '@/components/page-header'
 import PageLayout from '@/components/page-layout'
 import {
@@ -100,18 +117,31 @@ import {
 } from '@/components/ui/select'
 import { WorkflowBadge } from '@/components/workflow-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { searchChoice, searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
-import {
-  PipelineConfigurationCard,
-  SettingUnavailable,
-} from '../-pipeline-configuration-card'
+import { RepositoryFileUrl } from '@/components/pipeline-page/source-label'
 import { Mono } from '@/components/layout/mono'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { textVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
+import {
+  PIPELINE_ROWS,
+  PipelineRow,
+  PipelineRowList,
+  rowForAnchor,
+  type PipelineRowKey,
+} from './-pipeline-row'
+import {
+  BuildRowContent,
+  PublishingRowContent,
+  SecretsRowContent,
+  SigningRowContent,
+  SourceRowContent,
+  pipelineFormValues,
+  pipelineSigningValue,
+  type PipelineRowContext,
+} from './-pipeline-settings'
 
 const recentBuildColumns: Array<DataTableColumnDef<Build>> = [
   {
@@ -266,42 +296,53 @@ function RecentBuildsTable({ builds }: { builds: Array<Build> }) {
 
 const loadTriggerBuildDrawer = () => import('@/components/trigger-build-drawer')
 const TriggerBuildDrawer = lazy(loadTriggerBuildDrawer)
-const GooglePlayPublishSection = lazy(() =>
-  import('@/components/publish/google-play-publish-section').then((module) => ({
-    default: module.GooglePlayPublishSection,
-  })),
-)
-const AppStorePublishSection = lazy(() =>
-  import('@/components/publish/app-store-publish-section').then((module) => ({
-    default: module.AppStorePublishSection,
-  })),
-)
-const SecretsPanel = lazy(() =>
-  import('@/components/secrets/secrets-panel').then((module) => ({
-    default: module.SecretsPanel,
-  })),
-)
 
-const PipelineWorkflowsPanel = lazy(() =>
-  import('@/components/pipeline-workflows/pipeline-workflows-panel').then(
-    (module) => ({ default: module.PipelineWorkflowsPanel }),
-  ),
-)
+/** The pipeline's own trigger settings, such as `Pushes to main`. */
+function describeTriggers(pipeline: Pipeline, manualOnlyTriggers: boolean) {
+  const schedules = (pipeline.trigger_config.schedules ?? []).length
+  const scheduled =
+    schedules > 0
+      ? `${schedules} ${schedules === 1 ? 'schedule' : 'schedules'}`
+      : ''
+  if (manualOnlyTriggers) return scheduled || 'Only when run by hand'
+  const { branches, events } = pipeline.trigger_config
+  const when =
+    events.length === 0
+      ? 'Every repository event'
+      : joinPhrases(
+          events.map(
+            (event) =>
+              EVENT_PHRASES.get(event) ?? formatEnumLabel(event).toLowerCase(),
+          ),
+        )
+  const where = branches.length > 0 ? ` to ${branches.join(', ')}` : ''
+  const sentence = `${when.charAt(0).toUpperCase()}${when.slice(1)}${where}`
+  return scheduled ? `${sentence}, ${scheduled}` : sentence
+}
 
-const TAB_VALUES = ['overview', 'workflows', 'publishing', 'secrets'] as const
-type TabValue = (typeof TAB_VALUES)[number]
+/** Distinct values of a row, such as `coin-upload, Not signed`. */
+function values(entries: Array<SourcedValue>) {
+  return [...new Set(entries.map((entry) => entry.value))].join(', ')
+}
+
+/** Old tab names, so links to `?tab=publishing` still open the right row. */
+const LEGACY_TABS = ['overview', 'workflows', 'publishing', 'secrets'] as const
 
 interface PipelineDetailSearch {
-  tab?: TabValue
+  /** The row to open. */
+  row?: PipelineRowKey
+  /** @deprecated The page had tabs; `?tab=publishing` opens that row. */
+  tab?: (typeof LEGACY_TABS)[number]
   /** Show only builds of this workflow in Recent builds. */
   workflow?: string
 }
 
 function validatePipelineSearch(search: SearchInput): PipelineDetailSearch {
-  const tab = searchChoice(search, 'tab', TAB_VALUES)
+  const row = searchChoice(search, 'row', PIPELINE_ROWS)
+  const tab = searchChoice(search, 'tab', LEGACY_TABS)
   const workflow = searchString(search, 'workflow')?.trim()
   return {
-    tab: tab === 'overview' ? undefined : tab,
+    row: row ?? rowForAnchor(tab),
     workflow: workflow || undefined,
   }
 }
@@ -374,6 +415,43 @@ function PipelineConfigAlert({
   )
 }
 
+/**
+ * Which rows are open. A link with `?row=` or an old Edit page anchor
+ * opens its row and scrolls to it; the person opens and closes the rest.
+ */
+function useOpenRows(row: PipelineRowKey | undefined) {
+  const hash = useLocation({ select: (location) => location.hash })
+  const target = row ?? rowForAnchor(hash)
+  // What the person opened or closed; a row they did not touch is open
+  // when a link pointed at it.
+  const [choices, setChoices] = useState<ReadonlyMap<PipelineRowKey, boolean>>(
+    () => new Map(),
+  )
+  const [seenTarget, setSeenTarget] = useState(target)
+  if (target !== seenTarget) {
+    // A new link on this page opens its row again, even if it was closed.
+    setSeenTarget(target)
+    if (target) setChoices((current) => new Map(current).set(target, true))
+  }
+  useEffect(() => {
+    if (!target) return
+    // Two frames: the row's content mounts before anything in it is found.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const element =
+          (hash ? document.getElementById(hash) : null) ??
+          document.getElementById(`row-${target}`)
+        element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }),
+    )
+  }, [target, hash])
+  const isOpen = (key: PipelineRowKey) => choices.get(key) ?? key === target
+  function toggle(key: PipelineRowKey, next: boolean) {
+    setChoices((current) => new Map(current).set(key, next))
+  }
+  return [isOpen, toggle] as const
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main page                                                          */
 /* ------------------------------------------------------------------ */
@@ -381,7 +459,8 @@ function PipelineConfigAlert({
 function PipelineDetailPage() {
   const { projectId, pipelineId } = Route.useParams()
   const navigate = useNavigate()
-  const { tab = 'overview', workflow: workflowFilter } = Route.useSearch()
+  const { row, workflow: workflowFilter } = Route.useSearch()
+  const [isRowOpen, toggleRow] = useOpenRows(row)
   const { data, isLoading, error } = usePipeline(pipelineId)
   const [
     canWriteGlobally,
@@ -416,28 +495,17 @@ function PipelineDetailPage() {
     limit: RECENT_BUILD_LIMIT,
   })
   const pipelineWorkflowsQuery = usePipelineWorkflows(pipelineId)
-  const fileWorkflows =
-    pipelineWorkflowsQuery.data?.state === 'valid'
-      ? pipelineWorkflowsQuery.data.workflows.map((workflow) => workflow.name)
-      : []
-  // A file without workflows (or no file) has nothing for the tab to show;
-  // a link straight to the tab still opens it.
-  const workflowsData = pipelineWorkflowsQuery.data
-  const showWorkflowsTab =
-    tab === 'workflows' ||
-    pipelineWorkflowsQuery.isError ||
-    (!!workflowsData &&
-      (!!workflowsData.default_workflow ||
-        !(
-          workflowsData.state === 'missing' ||
-          (workflowsData.state === 'valid' &&
-            workflowsData.workflows.length === 0)
-        )))
+  const workflowSettingsQuery = usePipelineWorkflowSettings(pipelineId)
+  const identitiesQuery = useSigningIdentities(projectId)
+  const secretsQuery = useSecrets({ scope: 'pipeline', pipelineId })
+  const listing = pipelineWorkflowsQuery.data
+  const file = pipelineFile(listing)
+  const fileWorkflows = file?.workflows.map((workflow) => workflow.name) ?? []
   function setWorkflowFilter(workflow?: string) {
     void navigate({
       to: '/projects/$projectId/pipelines/$pipelineId',
       params: { projectId, pipelineId },
-      search: { tab: tab === 'overview' ? undefined : tab, workflow },
+      search: { row, workflow },
       replace: true,
     })
   }
@@ -453,7 +521,7 @@ function PipelineDetailPage() {
   })
   // The daemon's health covers the pipeline's file once it has read the
   // default branch. Until then, look at the file live; discovery needs
-  // pipeline write access, which Edit needs too.
+  // pipeline write access.
   const repositoryFileQuery = useRepositoryWorkflows(
     projectId,
     data && data.pipeline.config_path.trim() !== '.oore.yaml'
@@ -473,6 +541,30 @@ function PipelineDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [disableOpen, setDisableOpen] = useState(false)
   const [buildDrawerOpen, setBuildDrawerOpen] = useState(false)
+
+  const builds = buildsQuery.data?.builds ?? []
+  const project = projectData?.project
+  // A build's context knows a self-managed GitLab host; the project does not.
+  const repositoryHost = builds.find(
+    (build) => build.context?.repository_host_url,
+  )?.context?.repository_host_url
+  const fileUrl = useMemo(
+    () => (path: string) =>
+      repositoryFileUrl({
+        fullName: project?.repository_full_name,
+        host: repositoryHost,
+        path,
+        provider: project?.repository_provider,
+        reference: listing?.reference ?? project?.default_branch,
+      }),
+    [
+      project?.repository_full_name,
+      project?.repository_provider,
+      project?.default_branch,
+      repositoryHost,
+      listing?.reference,
+    ],
+  )
 
   const label = data?.pipeline.name ?? 'Pipeline Details'
 
@@ -504,16 +596,23 @@ function PipelineDetailPage() {
   if (!data) return null
 
   const { pipeline } = data
-  const buildsAndroid = pipeline.execution_config.platforms.includes('android')
-  const buildsIos = pipeline.execution_config.platforms.includes('ios')
-  const builds = buildsQuery.data?.builds ?? []
+  // What builds: the file's workflows when it has them, else the pipeline.
+  const builtPlatforms: Array<BuildPlatform> = [
+    ...new Set([
+      ...pipeline.execution_config.platforms,
+      ...(file?.workflows.flatMap((workflow) => workflow.platforms) ?? []),
+    ]),
+  ]
+  const storePlatforms = builtPlatforms.filter(
+    (platform): platform is 'android' | 'ios' =>
+      platform === 'android' || platform === 'ios',
+  )
   // Unknown until the project loads; only a loaded project without a
   // repository blocks builds.
-  const projectMissingSource =
-    !!projectData && !projectData.project.repository_id
-  const projectHasSource = !!projectData?.project.repository_id
-  const manualOnlyTriggers =
-    projectData?.project.repository_provider === 'local_git'
+  const projectMissingSource = !!project && !project.repository_id
+  const projectHasSource = !!project?.repository_id
+  const manualOnlyTriggers = project?.repository_provider === 'local_git'
+  const canChangeApproval = canChangeApprovalPolicy(instanceRole, projectRole)
 
   const workflowProblem =
     !pipeline.health && repositoryFileQuery.data
@@ -528,57 +627,155 @@ function PipelineDetailPage() {
         )
       : null
 
-  const publishingSummary: Array<{ label: string; value: ReactNode }> = []
-  if (buildsAndroid) {
-    const config = googlePlayQuery.data?.config
-    publishingSummary.push({
-      label: 'Google Play',
-      value: googlePlayQuery.data ? (
-        config?.enabled ? (
-          `Uploads to ${playDestination(config)} after each build`
-        ) : (
-          'Off'
-        )
-      ) : googlePlayQuery.isError ? (
-        <SettingUnavailable
-          what="Google Play publishing"
-          onRetry={googlePlayQuery.refetch}
-        />
-      ) : (
-        <Skeleton className="h-5 w-48" />
-      ),
-    })
-  }
-  if (buildsIos) {
-    const config = appStoreQuery.data?.config
-    publishingSummary.push({
-      label: 'App Store Connect',
-      value: config ? (
-        config.enabled ? (
-          `Uploads to ${appStoreDestination(config)} after each build`
-        ) : (
-          'Off'
-        )
-      ) : appStoreQuery.isError ? (
-        <SettingUnavailable
-          what="App Store publishing"
-          onRetry={appStoreQuery.refetch}
-        />
-      ) : (
-        <Skeleton className="h-5 w-48" />
-      ),
-    })
+  /* What is in force, and where each value comes from. */
+  const workflowSettings = workflowSettingsQuery.data ?? []
+  const identityNames = new Map(
+    (identitiesQuery.data ?? []).map((identity) => [
+      identity.id,
+      identity.name,
+    ]),
+  )
+  const identityName = (id: string) =>
+    identityNames.get(id) ?? 'Deleted identity'
+  const triggers = triggersInForce({
+    file,
+    pipelineValue: describeTriggers(pipeline, manualOnlyTriggers),
+  })
+  const approval = approvalInForce({
+    file,
+    pipelineValue: pipeline.approval.required ? 'Required' : 'Not required',
+    settings: workflowSettings,
+  })
+  const signingKnown = !!signingQuery.data && !!iosSigningQuery.data
+  const signing = new Map(
+    storePlatforms.map((platform) => [
+      platform,
+      signingInForce({
+        file,
+        identityName,
+        pipelineValue: pipelineSigningValue(
+          platform,
+          signingQuery.data,
+          iosSigningQuery.data,
+        ),
+        platform,
+        settings: workflowSettings,
+      }),
+    ]),
+  )
+  const publishing = new Map(
+    storePlatforms.map((platform) => {
+      const query = platform === 'android' ? googlePlayQuery : appStoreQuery
+      const config =
+        platform === 'android'
+          ? googlePlayQuery.data?.config
+          : appStoreQuery.data?.config
+      const pipelineValue = !query.data
+        ? '…'
+        : config?.enabled
+          ? `Uploads to ${platform === 'android' && googlePlayQuery.data?.config ? playDestination(googlePlayQuery.data.config) : appStoreQuery.data ? appStoreDestination(appStoreQuery.data.config) : ''}`
+          : 'Off'
+      return [
+        platform,
+        publishingInForce({
+          file,
+          pipelineValue,
+          platform,
+          settings: workflowSettings,
+        }),
+      ]
+    }),
+  )
+  const storeNames = {
+    android: 'Google Play',
+    ios: 'App Store Connect',
+  } as const
+  const formSummaries = pipelineSectionSummaries(
+    pipelineFormValues(pipeline, undefined, undefined, manualOnlyTriggers),
+    manualOnlyTriggers,
+  )
+  const showWorkflows =
+    pipelineWorkflowsQuery.isError ||
+    !!listing?.default_workflow ||
+    fileWorkflows.length > 0 ||
+    workflowSettings.length > 0 ||
+    listing?.state === 'invalid'
+  const secretCount = secretsQuery.data?.length
+
+  const context: PipelineRowContext = {
+    pipeline,
+    projectId,
+    canWrite,
+    canChangeApproval,
+    manualOnlyTriggers,
+    file,
+    listing,
+    defaultBranch: project?.default_branch,
+    hasRepository: projectHasSource,
+    androidSigning: signingQuery.data,
+    iosSigning: iosSigningQuery.data,
   }
 
-  // Where builds go, once the settings of every store it builds for load.
-  const storeUploads =
-    (!buildsAndroid || googlePlayQuery.data) &&
-    (!buildsIos || appStoreQuery.data)
-      ? describeStoreUploads({
-          googlePlay: buildsAndroid ? googlePlayQuery.data?.config : null,
-          appStore: buildsIos ? appStoreQuery.data?.config : null,
-        })
-      : null
+  const rowSummaries = {
+    source: {
+      summary: `${pipeline.config_path} · ${values(triggers)}`,
+      sources: [
+        ...new Set([...sourceSummary([...triggers, ...approval]), 'set here']),
+      ],
+    },
+    build: file
+      ? {
+          summary: `Builds ${joinPhrases(builtPlatforms.map((platform) => BUILD_PLATFORM_LABELS[platform]))}`,
+          sources: [`from ${file.path}`],
+        }
+      : {
+          summary: `${joinPhrases(builtPlatforms.map((platform) => BUILD_PLATFORM_LABELS[platform]))}, ${formSummaries.build.charAt(0).toLowerCase()}${formSummaries.build.slice(1)}`,
+          sources: ['set here'],
+        },
+    signing: {
+      summary:
+        storePlatforms.length === 0
+          ? 'Nothing to sign'
+          : !canWrite
+            ? 'Visible to people who can edit the pipeline'
+            : storePlatforms
+                .map((platform) =>
+                  signingKnown || file
+                    ? `${BUILD_PLATFORM_LABELS[platform]}: ${values(signing.get(platform) ?? [])}`
+                    : BUILD_PLATFORM_LABELS[platform],
+                )
+                .join(' · '),
+      sources: sourceSummary(
+        storePlatforms.flatMap((platform) => signing.get(platform) ?? []),
+      ),
+    },
+    publishing: {
+      summary:
+        storePlatforms.length === 0
+          ? 'Nothing to publish'
+          : storePlatforms
+              .map(
+                (platform) =>
+                  `${storeNames[platform]}: ${values(publishing.get(platform) ?? [])}`,
+              )
+              .join(' · '),
+      sources: sourceSummary(
+        storePlatforms.flatMap((platform) => publishing.get(platform) ?? []),
+      ),
+    },
+    secrets: {
+      summary:
+        secretCount === undefined
+          ? 'Pipeline secrets'
+          : secretCount === 0
+            ? 'No pipeline secrets'
+            : `${secretCount} ${secretCount === 1 ? 'secret' : 'secrets'}`,
+      sources: ['set here'],
+    },
+  } satisfies Record<
+    PipelineRowKey,
+    { summary: ReactNode; sources: Array<string> }
+  >
 
   function handleToggleEnabled() {
     updateMutation.mutate(
@@ -609,23 +806,37 @@ function PipelineDetailPage() {
     )
   }
 
+  const renderRow = (
+    key: PipelineRowKey,
+    title: string,
+    content: () => ReactNode,
+  ) => (
+    <PipelineRow
+      key={key}
+      id={key}
+      open={isRowOpen(key)}
+      onOpenChange={(next) => toggleRow(key, next)}
+      sources={rowSummaries[key].sources}
+      summary={rowSummaries[key].summary}
+      title={title}
+    >
+      {isRowOpen(key) ? content() : null}
+    </PipelineRow>
+  )
+
   return (
     <PageLayout width="wide">
       <PageMeta title={label} noindex />
       <PageHeader
         title={pipeline.name}
-        description={
-          storeUploads
-            ? `${describePipeline(pipeline, manualOnlyTriggers)} ${storeUploads}`
-            : describePipeline(pipeline, manualOnlyTriggers)
-        }
+        description={describePipeline(pipeline, manualOnlyTriggers)}
         meta={
           <>
             <StatusBadge
               kind="enabled"
               value={enabledStatus(pipeline.enabled)}
             />
-            {pipeline.execution_config.platforms.map((p) => (
+            {builtPlatforms.map((p) => (
               <Badge key={p} variant="outline" className="text-[11px]">
                 {BUILD_PLATFORM_LABELS[p]}
               </Badge>
@@ -651,9 +862,7 @@ function PipelineDetailPage() {
                     fixedProjectId={projectId}
                     fixedPipelineId={pipeline.id}
                     fixedPipelineName={pipeline.name}
-                    defaultBranch={
-                      projectData?.project.default_branch ?? undefined
-                    }
+                    defaultBranch={project?.default_branch ?? undefined}
                     description="Run this pipeline now with a branch or pinned commit."
                     open={buildDrawerOpen}
                     onOpenChange={setBuildDrawerOpen}
@@ -687,22 +896,6 @@ function PipelineDetailPage() {
                   {pipeline.enabled ? 'Disable' : 'Enable'}
                 </Button>
               ) : null}
-              {canWrite ? (
-                <Button
-                  variant="outline"
-                  render={
-                    <Link
-                      to="/projects/$projectId/pipelines/$pipelineId/edit"
-                      params={{ projectId, pipelineId }}
-                      search={{}}
-                    />
-                  }
-                  nativeButton={false}
-                >
-                  <HugeiconsIcon icon={Edit02Icon} />
-                  Edit
-                </Button>
-              ) : null}
             </>
           ) : undefined
         }
@@ -730,9 +923,9 @@ function PipelineDetailPage() {
           editLink={
             canWrite ? (
               <Link
-                to="/projects/$projectId/pipelines/$pipelineId/edit"
+                to="/projects/$projectId/pipelines/$pipelineId"
                 params={{ projectId, pipelineId }}
-                search={{}}
+                search={{ row: 'source' }}
                 hash="basics"
               />
             ) : undefined
@@ -749,233 +942,167 @@ function PipelineDetailPage() {
         </Alert>
       ) : null}
 
-      <Tabs
-        value={tab}
-        onValueChange={(value) => {
-          const next = TAB_VALUES.find((candidate) => candidate === value)
-          if (!next) return
-          void navigate({
-            to: '/projects/$projectId/pipelines/$pipelineId',
-            params: { projectId, pipelineId },
-            search: { tab: next === 'overview' ? undefined : next },
-            replace: true,
-          })
-        }}
-      >
-        <TabsList variant="line">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          {showWorkflowsTab ? (
-            <TabsTrigger value="workflows">Workflows</TabsTrigger>
-          ) : null}
-          <TabsTrigger value="publishing">Publishing</TabsTrigger>
-          <TabsTrigger value="secrets">Secrets</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="flex flex-col gap-4 pt-2">
-          <PipelineConfigurationCard
-            androidSigning={canWrite ? signingQuery : null}
-            iosSigning={canWrite ? iosSigningQuery : null}
-            manualOnlyTriggers={manualOnlyTriggers}
-            pipeline={pipeline}
-            publishing={publishingSummary}
-          />
-          <PipelineStoreReadiness pipelineId={pipelineId} />
-          <LatestInstallLinksCard
-            pipelineId={pipelineId}
-            platforms={pipeline.execution_config.platforms.filter(
-              (platform) => platform !== 'macos',
-            )}
-            canWrite={canShareBuilds}
-          />
-          {/* Recent builds */}
-          <Card>
-            <CardContent>
-              <Row gap={3} className="justify-between pb-3">
-                <h3 className="text-sm font-medium">Recent builds</h3>
-                {fileWorkflows.length > 1 || workflowFilter ? (
-                  <WorkflowFilter
-                    workflows={fileWorkflows}
-                    value={workflowFilter}
-                    onChange={setWorkflowFilter}
-                  />
-                ) : null}
-              </Row>
-              {buildsQuery.error ? (
-                <CollectionError
-                  title="Failed to load recent builds"
-                  description={buildsQuery.error.message}
-                  onRetry={() => void buildsQuery.refetch()}
-                />
-              ) : buildsQuery.isLoading ? (
-                <Skeleton className="h-40 w-full" />
-              ) : builds.length === 0 && workflowFilter ? (
-                <Empty className="p-8">
-                  <EmptyHeader>
-                    <EmptyTitle>No {workflowFilter} builds</EmptyTitle>
-                    <EmptyDescription>
-                      This pipeline has not built the {workflowFilter} workflow
-                      yet.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  <EmptyContent>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setWorkflowFilter(undefined)}
-                    >
-                      Show all workflows
-                    </Button>
-                  </EmptyContent>
-                </Empty>
-              ) : builds.length === 0 ? (
-                <Empty className="p-8">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <HugeiconsIcon icon={PlayIcon} />
-                    </EmptyMedia>
-                    <EmptyTitle>No builds yet</EmptyTitle>
-                    <EmptyDescription>
-                      Run this pipeline to see its status, output, and artifacts
-                      here.
-                    </EmptyDescription>
-                  </EmptyHeader>
-                  {canTriggerBuild && projectHasSource ? (
-                    <EmptyContent>
-                      <Button
-                        size="sm"
-                        onClick={() => setBuildDrawerOpen(true)}
-                      >
-                        <HugeiconsIcon icon={PlayIcon} />
-                        Run first build
-                      </Button>
-                    </EmptyContent>
-                  ) : null}
-                </Empty>
-              ) : (
-                <Stack gap={3}>
-                  <RecentBuildsTable builds={builds} />
-                  {(buildsQuery.data?.total ?? builds.length) >
-                  builds.length ? (
-                    <Row
-                      gap={3}
-                      className={cn(
-                        textVariants({ variant: 'muted' }),
-                        'justify-between',
-                      )}
-                    >
-                      <span>
-                        Showing the {builds.length} most recent builds.
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        nativeButton={false}
-                        render={
-                          <Link
-                            to="/projects/$projectId"
-                            params={{ projectId }}
-                            search={{ tab: 'builds', pipeline: pipelineId }}
-                          />
-                        }
-                      >
-                        View all builds
-                      </Button>
-                    </Row>
-                  ) : null}
-                </Stack>
-              )}
-            </CardContent>
-          </Card>
-          {canDelete ? (
-            <DangerZone
-              surface="card"
-              title="Delete this pipeline"
-              description={`Permanently removes "${pipeline.name}" and its configuration from this app. This cannot be undone.`}
-              action={
-                <Button
-                  variant="destructive"
-                  onClick={() => setDeleteOpen(true)}
-                >
-                  <HugeiconsIcon icon={Delete02Icon} />
-                  Delete pipeline
-                </Button>
-              }
+      <RepositoryFileUrl.Provider value={fileUrl}>
+        <PipelineRowList>
+          {renderRow('source', 'Source and triggers', () => (
+            <SourceRowContent
+              approval={approval}
+              context={context}
+              showWorkflows={showWorkflows}
+              triggers={triggers}
             />
-          ) : null}
-        </TabsContent>
+          ))}
+          {renderRow('build', 'Build', () => (
+            <BuildRowContent context={context} />
+          ))}
+          {renderRow('signing', 'Signing', () => (
+            <SigningRowContent
+              context={context}
+              platforms={storePlatforms}
+              signing={Object.fromEntries(signing)}
+              signingError={signingQuery.error ?? iosSigningQuery.error}
+              onRetry={() => {
+                if (signingQuery.isError) void signingQuery.refetch()
+                if (iosSigningQuery.isError) void iosSigningQuery.refetch()
+              }}
+            />
+          ))}
+          {renderRow('publishing', 'Publishing', () => (
+            <PublishingRowContent
+              androidSignedElsewhere={
+                (signing.get('android') ?? []).length > 0 &&
+                !usesPipeline(signing.get('android') ?? [])
+              }
+              canReadInstanceSecrets={canReadInstanceSettings}
+              context={context}
+              overrides={storePlatforms.map((platform) => ({
+                label: storeNames[platform],
+                entries: (publishing.get(platform) ?? []).filter(
+                  (entry) => entry.source.kind === 'workflow',
+                ),
+              }))}
+              platforms={storePlatforms}
+            />
+          ))}
+          {renderRow('secrets', 'Secrets', () => (
+            <SecretsRowContent
+              canReadInstanceSecrets={canReadInstanceSettings}
+              context={context}
+            />
+          ))}
+        </PipelineRowList>
+      </RepositoryFileUrl.Provider>
 
-        <TabsContent value="workflows" className="pt-2">
-          {tab === 'workflows' ? (
-            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-              <PipelineWorkflowsPanel
-                canChangeApproval={canChangeApprovalPolicy(
-                  instanceRole,
-                  projectRole,
-                )}
-                canWrite={canWrite}
-                pipelineId={pipeline.id}
-                projectId={projectId}
+      <LatestInstallLinksCard
+        pipelineId={pipelineId}
+        platforms={builtPlatforms.filter((platform) => platform !== 'macos')}
+        canWrite={canShareBuilds}
+      />
+      {/* Recent builds */}
+      <Card>
+        <CardContent>
+          <Row gap={3} className="justify-between pb-3">
+            <h3 className="text-sm font-medium">Recent builds</h3>
+            {fileWorkflows.length > 1 || workflowFilter ? (
+              <WorkflowFilter
+                workflows={fileWorkflows}
+                value={workflowFilter}
+                onChange={setWorkflowFilter}
               />
-            </Suspense>
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="publishing" className="pt-2">
-          {tab === 'publishing' ? (
-            <Suspense fallback={<Skeleton className="h-96 w-full" />}>
-              <Stack gap={8}>
-                {buildsAndroid ? (
-                  <GooglePlayPublishSection
-                    androidCommandOverride={
-                      pipeline.execution_config.platform_commands?.android
+            ) : null}
+          </Row>
+          {buildsQuery.error ? (
+            <CollectionError
+              title="Failed to load recent builds"
+              description={buildsQuery.error.message}
+              onRetry={() => void buildsQuery.refetch()}
+            />
+          ) : buildsQuery.isLoading ? (
+            <Skeleton className="h-40 w-full" />
+          ) : builds.length === 0 && workflowFilter ? (
+            <Empty className="p-8">
+              <EmptyHeader>
+                <EmptyTitle>No {workflowFilter} builds</EmptyTitle>
+                <EmptyDescription>
+                  This pipeline has not built the {workflowFilter} workflow yet.
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setWorkflowFilter(undefined)}
+                >
+                  Show all workflows
+                </Button>
+              </EmptyContent>
+            </Empty>
+          ) : builds.length === 0 ? (
+            <Empty className="p-8">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <HugeiconsIcon icon={PlayIcon} />
+                </EmptyMedia>
+                <EmptyTitle>No builds yet</EmptyTitle>
+                <EmptyDescription>
+                  Run this pipeline to see its status, output, and artifacts
+                  here.
+                </EmptyDescription>
+              </EmptyHeader>
+              {canTriggerBuild && projectHasSource ? (
+                <EmptyContent>
+                  <Button size="sm" onClick={() => setBuildDrawerOpen(true)}>
+                    <HugeiconsIcon icon={PlayIcon} />
+                    Run first build
+                  </Button>
+                </EmptyContent>
+              ) : null}
+            </Empty>
+          ) : (
+            <Stack gap={3}>
+              <RecentBuildsTable builds={builds} />
+              {(buildsQuery.data?.total ?? builds.length) > builds.length ? (
+                <Row
+                  gap={3}
+                  className={cn(
+                    textVariants({ variant: 'muted' }),
+                    'justify-between',
+                  )}
+                >
+                  <span>Showing the {builds.length} most recent builds.</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    nativeButton={false}
+                    render={
+                      <Link
+                        to="/projects/$projectId"
+                        params={{ projectId }}
+                        search={{ tab: 'builds', pipeline: pipelineId }}
+                      />
                     }
-                    androidSigning={signingQuery.data}
-                    canReadInstanceSecrets={canReadInstanceSettings}
-                    canWrite={canWrite}
-                    pipelineId={pipeline.id}
-                    projectId={projectId}
-                  />
-                ) : null}
-                {buildsIos ? (
-                  <AppStorePublishSection
-                    canWrite={canWrite}
-                    pipelineId={pipeline.id}
-                    projectId={projectId}
-                  />
-                ) : null}
-                {!buildsAndroid && !buildsIos ? (
-                  <Alert>
-                    <HugeiconsIcon icon={InformationCircleIcon} />
-                    <AlertDescription>
-                      Publishing is available for Android and iOS builds. Add
-                      one of them to this pipeline’s platforms to upload to
-                      Google Play or App Store Connect.
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
-              </Stack>
-            </Suspense>
-          ) : null}
-        </TabsContent>
-
-        <TabsContent value="secrets" className="pt-2">
-          {tab === 'secrets' ? (
-            <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-              <SecretsPanel
-                canWrite={canWrite}
-                inheritedFrom={[
-                  { scope: 'project', projectId },
-                  ...(canReadInstanceSettings
-                    ? [{ scope: 'instance' as const }]
-                    : []),
-                ]}
-                target={{ scope: 'pipeline', pipelineId: pipeline.id }}
-                title="Pipeline secrets"
-              />
-            </Suspense>
-          ) : null}
-        </TabsContent>
-      </Tabs>
+                  >
+                    View all builds
+                  </Button>
+                </Row>
+              ) : null}
+            </Stack>
+          )}
+        </CardContent>
+      </Card>
+      {canDelete ? (
+        <DangerZone
+          surface="card"
+          title="Delete this pipeline"
+          description={`Permanently removes "${pipeline.name}" and its configuration from this app. This cannot be undone.`}
+          action={
+            <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+              <HugeiconsIcon icon={Delete02Icon} />
+              Delete pipeline
+            </Button>
+          }
+        />
+      ) : null}
 
       <ConfirmDialog
         open={disableOpen}
@@ -1000,25 +1127,5 @@ function PipelineDetailPage() {
         onConfirm={handleDelete}
       />
     </PageLayout>
-  )
-}
-
-/**
- * The pipeline's store checklist on its overview, so a missing age rating
- * or contract shows before someone starts a long release build. Hidden for
- * pipelines without store uploads.
- */
-function PipelineStoreReadiness({ pipelineId }: { pipelineId: string }) {
-  const readiness = usePipelinePublishReadiness(pipelineId)
-  if (!readiness.data?.items.length) return null
-  return (
-    <Card size="sm">
-      <CardContent>
-        <StoreReadinessChecklist
-          readiness={readiness}
-          title="Ready to submit to the stores?"
-        />
-      </CardContent>
-    </Card>
   )
 }

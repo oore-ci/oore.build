@@ -58,16 +58,16 @@ Every pipeline on this instance can now use the key without another upload.
 
 ## 4. Turn on iOS signing
 
-1. Open the `iOS` pipeline and select **Edit**.
-2. Under **Signing > iOS**, turn on **Enable iOS signing**.
+1. Open the `iOS` pipeline and its **Signing** row.
+2. Under **iOS**, turn on **Enable iOS signing**.
 3. For **Distribution**, choose **App Store**.
 4. For **Signing mode**, choose **API (App Store Connect automation)**.
 5. Enter your **Apple Team ID**. In **Bundle identifiers**, enter the app's
    bundle ID. Add one line for each app extension, after the main app.
 6. For **App Store Connect API key**, choose the key you added.
-7. Under **Build > Artifacts**, replace the pattern with
-   `build/ios/ipa/*.ipa`.
-8. Select **Save changes**.
+7. Select **Save changes**.
+8. Open the **Build** row. Under **Artifacts**, replace the pattern with
+   `build/ios/ipa/*.ipa`, then select **Save changes**.
 
 Every upload to App Store Connect needs a higher build number than the last
 one for that version. The build number comes from the number after `+` in
@@ -81,8 +81,8 @@ When the save changed the distribution, the editor already synced the
 profiles. If the save message says how many provisioning profiles were
 synced from App Store Connect, skip this step.
 
-1. Select **Edit** again.
-2. Under **Signing**, select **Sync profiles** beside the **iOS** heading.
+1. Open the **Signing** row again.
+2. Select **Sync profiles** beside the **iOS** heading.
 
 Oore asks App Store Connect for an Apple Distribution certificate and an App
 Store provisioning profile for each bundle ID. It shows

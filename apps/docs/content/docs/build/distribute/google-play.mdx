@@ -5,7 +5,7 @@ description: 'Upload a signed App Bundle to a Google Play track with a staged ro
 ---
 
 Upload a successful Android build's signed App Bundle to the Google Play
-track you choose. Set it up once in the pipeline's **Publishing** tab, as
+track you choose. Set it up once in the pipeline's **Publishing** row, as
 below, or give each `.oore.yaml` workflow its own track and service account;
 see [Publish per workflow](#publish-per-workflow). The runner that built the
 app uploads it from its own host, so the bundle never passes through the
@@ -35,7 +35,7 @@ Store the whole JSON key file as a secret named `PLAY_SERVICE_ACCOUNT`. When
 all your apps are in one Play Console developer account, store it once as an
 instance secret: open **Settings > Secrets and credentials** and, under
 **Google Play service account**, select **Add service account**. New
-pipelines then choose it on the **Publishing** tab without another upload. A
+pipelines then choose it on the **Publishing** row without another upload. A
 app or pipeline secret with the same name overrides it.
 
 From the API, any scope works. An app secret is shared by all of the
@@ -55,7 +55,7 @@ rotation.
 
 ## 2. Configure publishing
 
-1. Open the pipeline and its **Publishing** tab.
+1. Open the pipeline and its **Publishing** row.
 2. Under **Google Play**, turn on
    **Upload to Google Play after each successful build**.
 3. Under **Credentials**, choose the secret for **Service account key**.
@@ -116,7 +116,7 @@ build's list of commits and their authors never goes to Play; see
 
 ## 3. Test the credentials
 
-On the pipeline's **Publishing** tab, select **Test credentials** under
+On the pipeline's **Publishing** row, select **Test credentials** under
 **Credentials** to check the key without running a build. The daemon
 exchanges the key for a token, then opens a Play edit for the app and discards
 it, which needs the same Play Console access as an upload and changes
@@ -213,7 +213,7 @@ workflows:
   [app's signing library](/build/sign/project-library). Without it, the
   pipeline's Android signing applies.
 - To stop one workflow's uploads without a commit, open the pipeline's
-  **Workflows** tab, select **Settings** on the workflow, and turn
+  **Source and triggers** row, select **Settings** on the workflow, and turn
   **Publishing** off.
 
 `oore pipeline validate --project "$PROJECT_ID"` checks that the keystore and
