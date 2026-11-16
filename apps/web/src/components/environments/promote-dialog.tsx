@@ -9,7 +9,16 @@ import {
 } from '@/lib/environments'
 import { releaseVersionLabel } from '@/lib/releases'
 import { toast } from '@/lib/toast'
-import { usePromoteBuild } from '@/hooks/use-environments'
+import {
+  usePromoteBuild,
+  usePromotionReadiness,
+} from '@/hooks/use-environments'
+import { StoreReadinessChecklist } from '@/components/trigger-build-store-section'
+import { useReleaseNotes } from '@/hooks/use-release-notes'
+import {
+  ReleaseNotesDialog,
+  releaseNotesSourceLabel,
+} from '@/components/release-notes/release-notes-card'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 import { Button } from '@/components/ui/button'
@@ -43,6 +52,7 @@ const PROMOTION_ERRORS = {
  * The daemon reuses the version the store already has; nothing is rebuilt.
  */
 export function PromoteDialog({
+  canEditNotes = false,
   canPromoteDirectly,
   environments,
   onOpenChange,
@@ -51,6 +61,8 @@ export function PromoteDialog({
   release,
   source,
 }: {
+  /** Whether this viewer may change the version's release notes. */
+  canEditNotes?: boolean
   /** Maintainers promote straight in; others can only ask where approval is required. */
   canPromoteDirectly: boolean
   environments: ReadonlyArray<ProjectEnvironment>
@@ -73,9 +85,21 @@ export function PromoteDialog({
     targets[0]
   const [targetId, setTargetId] = useState<string | undefined>()
   const [reason, setReason] = useState('')
+  const [editingNotes, setEditingNotes] = useState(false)
+  const notes = useReleaseNotes(projectId, open ? release.version_name : null)
   const promote = usePromoteBuild(projectId)
   const target =
     targets.find((environment) => environment.id === targetId) ?? defaultTarget
+  // A TestFlight build going to the App Store gets the same checks an App
+  // Store upload runs, before anything is handed to Apple.
+  const toAppStore =
+    !!target && target.store === 'app_store' && target.track === 'app_store'
+  const readiness = usePromotionReadiness(
+    projectId,
+    target?.id,
+    release.build_id,
+    { enabled: open && toAppStore },
+  )
   const build = release.build_number
     ? `build #${release.build_number}`
     : 'this build'
@@ -157,6 +181,49 @@ export function PromoteDialog({
             ) : null}
           </Stack>
 
+          {toAppStore ? (
+            <StoreReadinessChecklist
+              readiness={readiness}
+              title="Ready for the App Store?"
+              blockingNote="You can still promote, but App Store Connect will refuse the submission until these are fixed."
+            />
+          ) : null}
+
+          {release.version_name ? (
+            <Stack gap={2}>
+              <div className="flex items-center justify-between gap-2">
+                <Label>Release notes</Label>
+                {canEditNotes && notes.data?.source !== 'repository' ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setEditingNotes(true)}
+                  >
+                    {notes.data?.text ? 'Edit' : 'Write notes'}
+                  </Button>
+                ) : null}
+              </div>
+              {notes.data?.text ? (
+                <>
+                  <p className="line-clamp-4 text-sm whitespace-pre-line">
+                    {notes.data.text}
+                  </p>
+                  <Text variant="muted" className="text-xs">
+                    {releaseNotesSourceLabel(notes.data)}. The store gets these
+                    with the promotion.
+                  </Text>
+                </>
+              ) : (
+                <Text variant="muted">
+                  {notes.isLoading
+                    ? 'Loading the notes...'
+                    : `No notes for ${release.version_name}. The store keeps what it already shows.`}
+                </Text>
+              )}
+            </Stack>
+          ) : null}
+
           <Stack gap={2}>
             <Label htmlFor="promote-reason">Reason</Label>
             <Textarea
@@ -194,6 +261,14 @@ export function PromoteDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
+      {editingNotes && release.version_name ? (
+        <ReleaseNotesDialog
+          projectId={projectId}
+          versionName={release.version_name}
+          notes={notes.data}
+          onOpenChange={setEditingNotes}
+        />
+      ) : null}
     </Dialog>
   )
 }

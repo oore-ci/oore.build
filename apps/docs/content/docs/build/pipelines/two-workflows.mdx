@@ -84,8 +84,8 @@ oore pipeline plan .oore.yaml
 
 `validate --project` checks that `upload-key`, `coin-adhoc` and
 `coin-app-store` exist in the app's library with the right kind, that
-`coin-app-store` is not ad hoc, and that `PLAY_SERVICE_ACCOUNT` is a secret
-the app can see. Fix any `error:` it prints before you commit.
+`coin-app-store` is not ad hoc, and that `PLAY_SERVICE_ACCOUNT` and every
+`${{ secrets.NAME }}` the file uses are secrets the app can see. Fix any `error:` it prints before you commit.
 
 `plan` prints, for each workflow, the steps, the identities it signs with,
 where it publishes and which credentials the upload uses.
@@ -96,9 +96,9 @@ The file names where to publish. Some credentials still come from the
 pipeline:
 
 - **Google Play**: with `service_account` in the file, the upload needs no
-  Google Play settings: it uses the build changelog as release notes and
+  Google Play settings: it sends the app version's release notes and
   uploads `mapping.txt`. Turn Google Play publishing on in the pipeline's
-  **Publishing** tab only to set an expected package, other release notes or
+  **Publishing** tab only to set an expected package, notes from files or
   an in-app update priority.
 - **App Store Connect**: turn on App Store Connect publishing in the
   **Publishing** tab, and keep the pipeline's iOS signing on with

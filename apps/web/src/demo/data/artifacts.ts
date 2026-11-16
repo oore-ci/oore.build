@@ -33,8 +33,8 @@ export const demoArtifacts: DemoArtifactData = {
         ios_app: {
           bundle_identifier: 'build.oore.fluttershop',
           display_name: 'Flutter Shop',
-          version: '1.4.1',
-          build_number: '85',
+          version: '2.4.0',
+          build_number: '141',
         },
         ios_signing: {
           bundle_ids: ['build.oore.fluttershop'],
@@ -55,7 +55,7 @@ export const demoArtifacts: DemoArtifactData = {
       metadata: {
         abi: 'armeabi-v7a',
         minSdk: 21,
-        android_app: { version_name: '1.4.1', version_code: '85' },
+        android_app: { version_name: '2.4.0', version_code: '141' },
       },
       state: 'available',
       created_at: ago(7020),
@@ -71,7 +71,7 @@ export const demoArtifacts: DemoArtifactData = {
       metadata: {
         abi: 'arm64-v8a',
         minSdk: 21,
-        android_app: { version_name: '1.4.1', version_code: '85' },
+        android_app: { version_name: '2.4.0', version_code: '141' },
       },
       state: 'available',
       created_at: ago(7020),

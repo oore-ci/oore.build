@@ -12,11 +12,13 @@ import type {
   BuildSizeReport,
   BuildTestSummary,
   Release,
+  VersionReleaseNotes,
 } from '@oore/client/models'
 
 import ChangelogMarkdown from './changelog-markdown'
 import { EventTimeline } from './event-timeline'
 import { BuildTestersSection } from './build-testers-section'
+import { ReleaseNotesCard } from '@/components/release-notes/release-notes-card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -509,11 +511,14 @@ export function BuildOverviewPanel({
   tests,
   analysis,
   retention,
+  releaseNotes,
   canShare = false,
   onOpenTab,
 }: {
   build: Build
   retention?: BuildRetention | null
+  /** The release notes of the build's app version. */
+  releaseNotes?: VersionReleaseNotes | null
   canShare?: boolean
   events: Array<BuildEvent>
   feedback: Array<BuildFeedback>
@@ -543,20 +548,21 @@ export function BuildOverviewPanel({
             onOpenRelease={() => onOpenTab('release')}
           />
         ) : null}
-        <Section title="What changed">
+        <ReleaseNotesCard
+          projectId={build.project_id}
+          versionName={build.version_name}
+          notes={releaseNotes}
+          canEdit={canShare}
+        />
+        <Section title="Changes in this build">
           {build.changelog ? (
             <ChangelogMarkdown>{build.changelog}</ChangelogMarkdown>
           ) : (
             <Text variant="muted">
-              {build.commit_title ?? 'No release notes for this build.'}
+              {build.commit_title ?? 'No commits listed for this build.'}
             </Text>
           )}
         </Section>
-        {build.store_notes ? (
-          <Section title="What's new, for the stores">
-            <p className="text-sm whitespace-pre-line">{build.store_notes}</p>
-          </Section>
-        ) : null}
         <div id="build-activity" className="scroll-mt-20">
           <EventTimeline events={events} feedback={feedback} />
         </div>

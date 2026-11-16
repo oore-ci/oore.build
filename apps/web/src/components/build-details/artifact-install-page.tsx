@@ -37,7 +37,7 @@ import { buildStepLabel } from '@/lib/build-steps'
 import { PageMeta } from '@/lib/seo'
 import { cn } from '@/lib/utils'
 import type { Project } from '@oore/client/models'
-import type { Artifact, Build } from '@oore/client/models'
+import type { Artifact, Build, VersionReleaseNotes } from '@oore/client/models'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -140,10 +140,12 @@ function QaReleaseDetail({
   historyError,
   historyLoading,
   project,
+  releaseNotes,
 }: {
   artifact?: Artifact
   artifacts: Array<Artifact>
   build: Build
+  releaseNotes?: VersionReleaseNotes | null
   historyArtifacts: Array<Artifact>
   historyError: boolean
   historyLoading: boolean
@@ -327,25 +329,32 @@ function QaReleaseDetail({
         ) : null}
 
         <div className="min-w-0 space-y-6 lg:col-start-1 lg:row-start-2">
+          <section aria-labelledby="release-notes-title">
+            <h2 id="release-notes-title" className="text-sm font-medium">
+              What&apos;s new
+              {build.version_name ? ` in ${build.version_name}` : ''}
+            </h2>
+            {releaseNotes?.text ? (
+              <p className="mt-2 text-sm whitespace-pre-line">
+                {releaseNotes.text}
+              </p>
+            ) : (
+              <Text variant="muted" className="mt-2">
+                No release notes for this version yet.
+              </Text>
+            )}
+          </section>
+
           {build.changelog ? (
-            <section aria-labelledby="release-notes-title">
-              <h2 id="release-notes-title" className="text-sm font-medium">
-                What changed
-              </h2>
+            <details className="group">
+              <summary className="cursor-pointer text-sm font-medium">
+                Changes in this build
+              </summary>
               <Suspense fallback={<Skeleton className="mt-2 h-16 w-full" />}>
                 <ChangelogMarkdown>{build.changelog}</ChangelogMarkdown>
               </Suspense>
-            </section>
-          ) : (
-            <section aria-labelledby="release-notes-title">
-              <h2 id="release-notes-title" className="text-sm font-medium">
-                What changed
-              </h2>
-              <Text variant="muted" className="mt-2">
-                No release notes were provided for this version.
-              </Text>
-            </section>
-          )}
+            </details>
+          ) : null}
 
           {!artifact ? (
             <Suspense
@@ -553,6 +562,7 @@ export function ArtifactInstallPage({
         historyError={projectArtifactsQuery.isError}
         historyLoading={projectArtifactsQuery.isLoading}
         project={projectQuery.data?.project}
+        releaseNotes={buildQuery.data.release_notes}
       />
     )
   }

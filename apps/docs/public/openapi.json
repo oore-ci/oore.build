@@ -7743,6 +7743,82 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/environments/{environment_id}/readiness": {
+      "get": {
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Check a promotion's store readiness",
+        "description": "What would stop promoting the build into the environment, blocking findings first. Only a promotion of a TestFlight build to the App Store has checks: the store readiness check an App Store upload runs (age rating questions, App Review contact details when the environment submits for review, another open submission, refusals remembered from the last submission) and whether App Store Connect has an editable App Store version for the build's version. Other environments answer with no items. Requires project read access.",
+        "operationId": "get_promotion_readiness",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environment_id",
+            "in": "path",
+            "description": "Environment ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "build_id",
+            "in": "query",
+            "description": "The build to promote",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store readiness for the promotion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreReadinessResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project, environment or build not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/projects/{project_id}/favorite": {
       "put": {
         "tags": [
@@ -8530,6 +8606,205 @@
           },
           "409": {
             "description": "Not pending",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/release-notes/{version_name}": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Get a version's release notes",
+        "description": "The release notes of one app version, such as 2.5.1. Every build of the version shows them, and its store uploads and promotions send them: TestFlight \"What to Test\", App Store \"What's New\" and Google Play.",
+        "operationId": "get_release_notes",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version_name",
+            "in": "path",
+            "description": "App version name, such as 2.5.1",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Release notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionReleaseNotes"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The version has no notes yet",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Write a version's release notes",
+        "description": "Replaces the notes and stops Oore drafting them from commits. Notes read from the repository are refused with 409 `notes_in_repository`: change the file instead.",
+        "operationId": "update_release_notes",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version_name",
+            "in": "path",
+            "description": "App version name, such as 2.5.1",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateVersionReleaseNotesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Release notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionReleaseNotes"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No build of the app is this version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The notes come from the repository",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/release-notes/{version_name}/draft": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "summary": "Draft a version's release notes from commits",
+        "description": "Commit titles, without authors, since the last version that reached a store, up to the version's newest build. Nothing is saved.",
+        "operationId": "draft_release_notes",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "Project ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version_name",
+            "in": "path",
+            "description": "App version name, such as 2.5.1",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Drafted notes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseNotesDraftResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No build of the app is this version",
             "content": {
               "application/json": {
                 "schema": {
@@ -11984,6 +12259,102 @@
           },
           "500": {
             "description": "Signing material could not be loaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight": {
+      "post": {
+        "tags": [
+          "Pipeline Publishing"
+        ],
+        "summary": "Read App Store Connect before an upload",
+        "description": "What App Store Connect already has for the signed IPA's app and version: whether the app exists, the highest build number uploaded for the version, the version's state and the live version. The runner turns them into pre-flight findings before it uploads. Uses the pipeline's App Store Connect API key.",
+        "operationId": "check_job_app_store_preflight",
+        "parameters": [
+          {
+            "name": "runner_id",
+            "in": "path",
+            "description": "Runner ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "job_id",
+            "in": "path",
+            "description": "Build/Job ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-oore-signing-token",
+            "in": "header",
+            "description": "Job-scoped signing grant",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunnerAppStorePreflightRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "What App Store Connect has",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunnerAppStorePreflightResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Runner authentication or signing grant is missing or invalid",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Runner does not match the active assignment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Job is not active",
             "content": {
               "application/json": {
                 "schema": {
@@ -17695,7 +18066,7 @@
               "string",
               "null"
             ],
-            "description": "Release notes written for this build's store uploads."
+            "description": "Release notes written when the build was started. They become the\nrelease notes of the build's app version."
           },
           "superseded_by": {
             "oneOf": [
@@ -18038,6 +18409,17 @@
               {
                 "$ref": "#/components/schemas/BuildQueueEstimate",
                 "description": "Where a queued build stands: builds ahead of it and a rough wait."
+              }
+            ]
+          },
+          "release_notes": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VersionReleaseNotes",
+                "description": "The release notes of the build's app version."
               }
             ]
           },
@@ -19304,7 +19686,7 @@
               "string",
               "null"
             ],
-            "description": "What's new in this release, as testers and store users read it. It\nreplaces the pipeline's Google Play and App Store release notes for\nthe build's uploads (Play's notes language, App Store's first\nlocale). Omitted uses the pipeline's notes."
+            "description": "What's new in this release, as testers and store users read it. Once\nthe runner reports the build's app version, this becomes that\nversion's release notes, unless the repository holds them. Omitted\nkeeps the version's notes as they are."
           },
           "trigger_ref": {
             "type": [
@@ -25137,6 +25519,51 @@
           }
         }
       },
+      "ReleaseNotesDraftResponse": {
+        "type": "object",
+        "description": "Release notes for a version that has none yet: commit titles since the\nlast released version.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "since_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The released version the draft starts after."
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ReleaseNotesLocale": {
+        "type": "object",
+        "description": "Release notes in one language.",
+        "required": [
+          "locale",
+          "text"
+        ],
+        "properties": {
+          "locale": {
+            "type": "string",
+            "description": "Such as `de-DE`."
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      },
+      "ReleaseNotesSource": {
+        "type": "string",
+        "description": "Where an app version's release notes came from.",
+        "enum": [
+          "commits",
+          "manual",
+          "repository"
+        ]
+      },
       "ReleaseOrigin": {
         "type": "string",
         "description": "Whether Oore uploaded a release or found it in the store.",
@@ -25242,6 +25669,17 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "release_notes": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RepositoryReleaseNotes",
+                "description": "The app version's release notes as the repository holds them at the\nbuild's commit, when the `.oore.yaml` names where they live."
+              }
             ]
           },
           "version_code": {
@@ -25376,6 +25814,31 @@
           "truncated": {
             "type": "boolean",
             "description": "True when the repository had more config files than Oore reads."
+          }
+        }
+      },
+      "RepositoryReleaseNotes": {
+        "type": "object",
+        "description": "Release notes a runner read from the repository.",
+        "required": [
+          "path",
+          "text"
+        ],
+        "properties": {
+          "locales": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNotesLocale"
+            },
+            "description": "Other languages, from a directory of `<locale>.txt` files."
+          },
+          "path": {
+            "type": "string",
+            "description": "The changelog file or directory, relative to the repository root."
+          },
+          "text": {
+            "type": "string",
+            "description": "The default-language text: the changelog's section for the version,\nor the directory's first locale."
           }
         }
       },
@@ -25848,6 +26311,64 @@
                 "$ref": "#/components/schemas/RunnerAndroidSigningProfile"
               }
             ]
+          }
+        }
+      },
+      "RunnerAppStorePreflightRequest": {
+        "type": "object",
+        "description": "`POST /v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight` — the\nsigned IPA's identity, so Oore can read what App Store Connect already\nhas for it before the upload.",
+        "required": [
+          "bundle_id",
+          "version"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "CFBundleShortVersionString."
+          }
+        }
+      },
+      "RunnerAppStorePreflightResponse": {
+        "type": "object",
+        "description": "What App Store Connect already has for an IPA's app and version. The\nrunner turns it into pre-flight findings with the fix for its project.",
+        "required": [
+          "app_found"
+        ],
+        "properties": {
+          "app_found": {
+            "type": "boolean",
+            "description": "Whether App Store Connect has an app record for the bundle ID."
+          },
+          "highest_build_number": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The highest CFBundleVersion App Store Connect has for this version,\nexpired builds included."
+          },
+          "live_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version that is live on the App Store now."
+          },
+          "unavailable": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why App Store Connect could not be read. The other fields are then\nempty and the checks did not run."
+          },
+          "version_state": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Apple's state for the App Store version with this version string, such\nas `PREPARE_FOR_SUBMISSION` or `READY_FOR_DISTRIBUTION`."
           }
         }
       },
@@ -29125,6 +29646,26 @@
           }
         }
       },
+      "UpdateVersionReleaseNotesRequest": {
+        "type": "object",
+        "description": "`PUT /v1/projects/{project_id}/release-notes/{version_name}`.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "locales": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNotesLocale"
+            },
+            "description": "Other languages; replaces the saved ones."
+          },
+          "text": {
+            "type": "string",
+            "description": "The default-language text, at most 4,000 characters."
+          }
+        }
+      },
       "User": {
         "type": "object",
         "required": [
@@ -29303,6 +29844,65 @@
           },
           "valid": {
             "type": "boolean"
+          }
+        }
+      },
+      "VersionReleaseNotes": {
+        "type": "object",
+        "description": "The release notes of one app version (such as 2.5.1). Every build of the\nversion shows them, and every store upload and promotion of it sends\nthem: TestFlight \"What to Test\", App Store \"What's New\" and Google Play.",
+        "required": [
+          "project_id",
+          "version_name",
+          "text",
+          "locales",
+          "source",
+          "updated_at"
+        ],
+        "properties": {
+          "drafted_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The version Oore drafted from, for `commits` notes."
+          },
+          "locales": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNotesLocale"
+            },
+            "description": "Other languages. Google Play and the App Store get each one."
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/ReleaseNotesSource"
+          },
+          "source_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The repository file or directory, for `repository` notes."
+          },
+          "text": {
+            "type": "string",
+            "description": "The default-language (en-US) text."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updated_by": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Who last edited the notes in Oore."
+          },
+          "version_name": {
+            "type": "string"
           }
         }
       },

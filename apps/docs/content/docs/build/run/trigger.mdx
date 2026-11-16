@@ -26,7 +26,9 @@ Open the app and select **Run build**.
 2. Select the platforms for this run when the pipeline supports more than one.
 3. Enter the **Branch** to build.
 4. Add **Commit SHA (optional)** only when you need one exact revision.
-5. Review **What changed? (optional)** if Oore drafted release notes.
+5. When the build uploads to a store, check **Ready to submit?**. The
+   build sends the release notes of its app version; see
+   [Release notes and changes](/concepts/release-notes).
 
 When both branch and commit SHA are present, the commit SHA wins. Without a
 commit SHA, Oore resolves the branch before it creates the queued build.

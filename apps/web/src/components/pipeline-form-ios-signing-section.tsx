@@ -140,6 +140,7 @@ export function PipelineIosSigningSection({
           ) : null}
           <SetupHint
             title="iOS app setup"
+            summary="Oore installs the profiles and a temporary keychain for each build."
             items={[
               'Manual mode uses your uploaded .p12 certificate and .mobileprovision files.',
               'API mode uses App Store Connect credentials to sync signing assets; hybrid mode combines API sync with a manually uploaded certificate.',
@@ -439,7 +440,8 @@ function IosApiKeyFields({
   const sharedKey = keys.find((key) => key.id === source)
   const manageLink = canManageKeys ? (
     <Link
-      to="/settings/store-credentials"
+      to="/settings/secrets"
+      hash="store-credentials"
       className="underline underline-offset-4"
     >
       Store credentials

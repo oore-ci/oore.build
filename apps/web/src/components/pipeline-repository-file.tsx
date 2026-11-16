@@ -292,19 +292,16 @@ export function PipelineRepositoryFile({
         </>
       )}
       <Text variant="caption">
-        Commit it as <Mono>{path}</Mono>. From the next build, every pipeline
-        that reads <Mono>{path}</Mono> builds from this file and follows its{' '}
-        <Mono>on</Mono>, and these Build settings stop applying. Env values are
-        copied as written: keep secrets in Secrets and reference them as{' '}
-        <Mono>{'${{ secrets.NAME }}'}</Mono>.
+        Commit it as <Mono>{path}</Mono>. Pipelines that read it then build from
+        the file instead of these Build settings.
       </Text>
       {sharedWith.length > 0 ? (
         <Alert>
           <HugeiconsIcon icon={Alert02Icon} size={16} />
           <AlertDescription>
             {sharedWith.length === 1 ? 'Another pipeline' : 'Other pipelines'}{' '}
-            in this project also read <Mono>{path}</Mono> and will switch to
-            this file too: {sharedWith.join(', ')}.
+            in this app also read <Mono>{path}</Mono> and will switch to this
+            file too: {sharedWith.join(', ')}.
           </AlertDescription>
         </Alert>
       ) : null}

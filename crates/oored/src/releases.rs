@@ -136,6 +136,9 @@ pub struct PromotionTarget<'a> {
     /// App Store only: submit the version for App Review once the build is
     /// attached.
     pub submit_for_review: bool,
+    /// The release notes of the build's app version, sent with the
+    /// promotion. Absent keeps the notes the store already has.
+    pub release_notes: Option<&'a oore_contract::VersionReleaseNotes>,
 }
 
 /// What the store did for a promotion.

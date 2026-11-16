@@ -37,6 +37,8 @@ interface NavItem {
 interface NavGroup {
   title: string
   items: Array<NavItem>
+  /** Small labelled runs of items inside the group, in order. */
+  sections?: Array<{ title: string | null; items: Array<NavItem> }>
   /** The group's heading toggles it open and closed in place. */
   collapsible?: boolean
 }
@@ -58,17 +60,23 @@ export function sidebarGroupsForRole(
 ): Array<NavGroup> {
   if (!role || role === 'qa_viewer') return []
 
-  const settingsItems = settingsGroupsForRole(role).flatMap((group) =>
-    group.items.map((item) => ({
+  const sections = settingsGroupsForRole(role).map((group) => ({
+    title: group.title,
+    items: group.items.map((item) => ({
       title: item.title,
       to: item.to,
       icon: item.icon,
     })),
-  )
+  }))
 
   return [
     { title: 'Workspace', items: WORKSPACE_ITEMS },
-    { title: 'Settings', items: settingsItems, collapsible: true },
+    {
+      title: 'Settings',
+      items: sections.flatMap((section) => section.items),
+      sections,
+      collapsible: true,
+    },
   ]
 }
 
@@ -176,7 +184,18 @@ function CollapsibleNavGroup({
       </SidebarGroupLabel>
       <CollapsibleContent>
         <SidebarGroupContent>
-          <NavGroupItems items={group.items} pathname={pathname} />
+          {(group.sections ?? [{ title: null, items: group.items }]).map(
+            (section) => (
+              <div key={section.title ?? 'top'}>
+                {section.title ? (
+                  <p className="px-2 pt-3 pb-1 text-[11px] text-sidebar-foreground/60 group-data-[collapsible=icon]:hidden">
+                    {section.title}
+                  </p>
+                ) : null}
+                <NavGroupItems items={section.items} pathname={pathname} />
+              </div>
+            ),
+          )}
         </SidebarGroupContent>
       </CollapsibleContent>
     </Collapsible>

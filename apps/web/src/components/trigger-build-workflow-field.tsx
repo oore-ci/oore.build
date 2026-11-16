@@ -144,6 +144,17 @@ export function TriggerBuildWorkflowField({
     status = unavailableReason(data, refLabel)
   }
 
+  // Nothing to pick and nothing wrong: a file without named workflows,
+  // or no file at all, builds as the pipeline says.
+  if (
+    data &&
+    !data.default_workflow &&
+    (data.state === 'missing' ||
+      (data.state === 'valid' && data.workflows.length === 0))
+  ) {
+    return null
+  }
+
   if (status || !data) {
     return (
       <div className="space-y-1">

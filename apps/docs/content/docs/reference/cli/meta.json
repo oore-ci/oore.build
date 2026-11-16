@@ -21,6 +21,8 @@
     "oore-pipeline-workflows",
     "oore-pipeline-readiness",
     "oore-build-run",
+    "oore-build-watch",
+    "oore-notes",
     "oore-version"
   ],
   "pagesIndex": "index"

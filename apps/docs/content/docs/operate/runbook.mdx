@@ -62,7 +62,7 @@ during a sale or while nobody is around to watch a rollout. **Halt** and
 | ---------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Google Play is holding the changes until someone sends them for review | Send the changes for review in Play Console, then **Mark sent for review** |
 | Oore's service account is not allowed to release this app              | Give it release access in Play Console under Users and permissions         |
-| No "What's New" text or release notes                                  | Write notes when you start the build, or add them in the store             |
+| No "What's New" text or release notes                                  | Write the version's notes on the build page, then retry the upload         |
 | Age rating or content rating questions are unanswered                  | Answer them in App Store Connect or Play Console                           |
 | App Review needs contact details or a demo account                     | Add them to the version in App Store Connect                               |
 | Apple needs to know whether the build uses encryption                  | Answer export compliance in TestFlight                                     |
@@ -73,14 +73,14 @@ during a sale or while nobody is around to watch a rollout. **Halt** and
 
 ## Warnings on Home
 
-| Warning                               | What to do                                                                                                                  |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| A runner is offline                   | Check the Mac is on and awake, then restart the runner (see [the server](#the-server))                                      |
-| A runner is low on disk space         | **Purge cache** on the runner in **Settings > Runners**, or lower how long build files are kept in **Settings > Retention** |
-| A certificate or profile expires soon | Replace it in the pipeline's iOS signing or the app's **Signing** library before release builds fail                        |
-| A TestFlight build expires soon       | Release a newer build to testers                                                                                            |
-| A build waits with **No runner**      | No online runner has the labels the pipeline asks for. Start that runner, or change the pipeline's labels                   |
-| Needs attention: tester feedback      | Read it on the build's **Summary** tab                                                                                      |
+| Warning                               | What to do                                                                                                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| A runner is offline                   | Check the Mac is on and awake, then restart the runner (see [the server](#the-server))                                                |
+| A runner is low on disk space         | **Purge cache** on the runner in **Settings > Runners**, or lower how long build files are kept in **Settings > Storage** (Retention) |
+| A certificate or profile expires soon | Replace it in the pipeline's iOS signing or the app's **Signing** library before release builds fail                                  |
+| A TestFlight build expires soon       | Release a newer build to testers                                                                                                      |
+| A build waits with **No runner**      | No online runner has the labels the pipeline asks for. Start that runner, or change the pipeline's labels                             |
+| Needs attention: tester feedback      | Read it on the build's **Summary** tab                                                                                                |
 
 To get these in Slack or email as well, add a channel in **Settings >
 Notifications** with at least **Build failed**, **Release failed**, **Blocked**,
@@ -146,14 +146,14 @@ features. See [Choose a release channel](/operate/releases).
 
 ## Credentials
 
-| Credential                                | Where it lives in Oore                                           | How to replace it                                                                                           |
-| ----------------------------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| App Store Connect API key                 | **Settings > Store credentials**                                 | Create a key in App Store Connect under Users and Access > Integrations, upload it, then remove the old one |
-| Google Play service account               | **Settings > Store credentials**                                 | Create a JSON key in Google Cloud, upload it, then delete the old key in Google Cloud                       |
-| iOS distribution certificate and profiles | The pipeline's iOS signing, or the app's **Signing** library     | Upload the new `.p12` and profiles before the old ones expire. Oore reminds 30 and 7 days ahead             |
-| Android keystore                          | The pipeline's Android signing, or the app's **Signing** library | Never replace an upload key you released with, unless Play Console has reset it                             |
-| Git access (GitHub app, GitLab token)     | **Settings > Sources**                                           | Reconnect, or paste a new token. GitLab warns before a token expires                                        |
-| Build secrets                             | **Settings > Secrets**, or the pipeline's secrets                | Edit the value. The next build uses it                                                                      |
+| Credential                                | Where it lives in Oore                                            | How to replace it                                                                                           |
+| ----------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| App Store Connect API key                 | **Settings > Secrets and credentials**                            | Create a key in App Store Connect under Users and Access > Integrations, upload it, then remove the old one |
+| Google Play service account               | **Settings > Secrets and credentials**                            | Create a JSON key in Google Cloud, upload it, then delete the old key in Google Cloud                       |
+| iOS distribution certificate and profiles | The pipeline's iOS signing, or the app's **Signing** library      | Upload the new `.p12` and profiles before the old ones expire. Oore reminds 30 and 7 days ahead             |
+| Android keystore                          | The pipeline's Android signing, or the app's **Signing** library  | Never replace an upload key you released with, unless Play Console has reset it                             |
+| Git access (GitHub app, GitLab token)     | **Settings > Sources**                                            | Reconnect, or paste a new token. GitLab warns before a token expires                                        |
+| Build secrets                             | **Settings > Secrets and credentials**, or the pipeline's secrets | Edit the value. The next build uses it                                                                      |
 
 Oore never shows a stored key again. Keep the originals in the team's
 password manager.

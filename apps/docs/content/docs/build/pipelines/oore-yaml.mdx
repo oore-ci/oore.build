@@ -81,7 +81,7 @@ runs, in order and by step name.
 Commit `.oore.yaml` to the branch Oore builds and push it. For an app that
 points at a repository on the Oore Mac, commit it in that repository.
 
-With the default **Config source**, a pipeline checks `.oore.yaml`, then
+With the default **Pipeline file** setting, a pipeline checks `.oore.yaml`, then
 `.oore.yml`, at the commit it builds. From the next build on, every pipeline
 in the app that reads that path builds from the file, and its form
 settings for the build stop applying. The pipeline editor names those
@@ -131,7 +131,7 @@ named `.oore.<name>.yaml` in the repository root, such as
 4. Enter a **Pipeline name** and select **Create pipeline**.
 
 For a file anywhere else, such as `ci/oore.yaml`, select **Set up manually**,
-choose **Choose a config file** under **Config source**, and enter its path.
+choose **Use a file at another path** under **Pipeline file**, and enter its path.
 Oore reads the file from the default branch as you type, shows what it
 builds, and offers **Use this file's settings**.
 
@@ -167,8 +167,8 @@ never falls back to the form settings when the file exists but is invalid.
 **The build still logs `ui_fallback`**
 
 The file is not at the commit Oore built, or the pipeline reads another path.
-Check the branch, and the pipeline's **Config source**. To read a file outside
-the repository root, choose **Choose a config file** and enter its path.
+Check the branch, and the pipeline's **Pipeline file** setting. To read a file outside
+the repository root, choose **Use a file at another path** and enter its path.
 
 **A Google Play pipeline stops uploading after the move**
 

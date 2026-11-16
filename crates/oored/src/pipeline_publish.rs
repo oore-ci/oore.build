@@ -483,13 +483,11 @@ pub async fn get_job_publish_plan(
         require_active_job_signing_grant(&state.db, &job_id, &runner_id, &headers).await?;
     let disabled = crate::signing_identities::job_publish_disabled(&state.db, &job_id).await?;
 
-    let (changelog, store_notes): (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT changelog, store_notes FROM builds WHERE id = ?1")
-            .bind(&job_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(|e| store_error("Failed to load publish settings", e))?
-            .unwrap_or_default();
+    // The version's release notes go to Google Play; the build's commit
+    // list (with authors) never does.
+    let version_notes = crate::version_notes::sendable_for_build(&state.db, &job_id)
+        .await
+        .map_err(|e| store_error("Failed to load the release notes", e))?;
     let google_play = load_google_play(&state.db, &pipeline_id)
         .await
         .map_err(|e| store_error("Failed to load publish settings", e))?
@@ -507,15 +505,22 @@ pub async fn get_job_publish_plan(
             crate::store_readiness::resolve_preflight(&state.db, &pipeline_id, config.preflight)
                 .await;
     }
-    // Notes written when the build was started replace the pipeline's.
-    let store_notes = store_notes.filter(|notes| !notes.trim().is_empty());
-    let changelog = match (google_play.as_mut(), store_notes) {
+    // A pipeline that reads Play notes from repository files keeps them;
+    // otherwise Play gets the version's notes in its notes language.
+    let changelog = match (google_play.as_mut(), version_notes) {
+        (Some(config), _) if config.release_notes == GooglePlayReleaseNotesSource::RepoFiles => {
+            None
+        }
         (Some(config), Some(notes)) => {
             config.release_notes = GooglePlayReleaseNotesSource::Changelog;
             config.release_notes_dir = None;
-            Some(notes)
+            Some(notes.text)
         }
-        _ => changelog,
+        (Some(config), None) => {
+            config.release_notes = GooglePlayReleaseNotesSource::None;
+            None
+        }
+        (None, notes) => notes.map(|notes| notes.text),
     };
     let workflow_groups = crate::signing_identities::job_testflight_groups(&state.db, &job_id)
         .await

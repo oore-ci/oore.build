@@ -1,13 +1,14 @@
-//! `oore build run`, `oore pipeline workflows` and `oore pipeline
-//! readiness`: start a build of a pipeline, naming its workflow, list the
+//! `oore build run`, `oore build watch`, `oore pipeline workflows` and
+//! `oore pipeline readiness`: start a build of a pipeline, naming its
+//! workflow, follow it to its result and the store's answer, list the
 //! workflows it can name, and check what would stop its next store upload.
 
 use anyhow::Context;
 use clap::Args;
 use oore_contract::{
-    BuildPlatform, CreateBuildRequest, CreateBuildResponse, PipelineDetailResponse,
-    PipelineFileState, PipelineWorkflowSummary, PipelineWorkflowsResponse, ReadinessLevel,
-    ReleaseStore, StoreReadinessResponse,
+    Build, BuildDetailResponse, BuildPlatform, BuildReleaseOutcome, CreateBuildRequest,
+    CreateBuildResponse, PipelineDetailResponse, PipelineFileState, PipelineWorkflowSummary,
+    PipelineWorkflowsResponse, ReadinessLevel, ReleaseStore, StoreReadinessResponse,
 };
 
 use crate::{
@@ -15,7 +16,7 @@ use crate::{
 };
 
 /// Where to reach the daemon and how to sign in, shared by these commands.
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub(crate) struct ApiConnectionArgs {
     #[arg(long, env = "OORE_DAEMON_URL")]
     daemon_url: Option<String>,
@@ -49,8 +50,10 @@ pub(crate) struct BuildRunArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     platforms: Vec<String>,
 
-    /// What's new in this release, sent to Google Play and the App Store
-    /// instead of the pipeline's release notes.
+    /// Release notes for the app version this build makes. They become the
+    /// version's notes, shared by its other builds and sent to testers,
+    /// Google Play and the App Store, unless the repository's CHANGELOG.md
+    /// already has them. `oore notes set` changes them later.
     #[arg(long, value_name = "TEXT")]
     notes: Option<String>,
 
@@ -63,6 +66,28 @@ pub(crate) struct BuildRunArgs {
     connection: ApiConnectionArgs,
 
     /// Print the queued build as JSON.
+    #[arg(long, default_value = "false")]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+pub(crate) struct BuildWatchArgs {
+    /// Build to follow.
+    build_id: String,
+
+    /// Keep watching after the build succeeds until the store is done with
+    /// its release: live, rejected, failed, or blocked until someone acts.
+    #[arg(long, default_value = "false")]
+    store: bool,
+
+    /// Seconds between checks.
+    #[arg(long, default_value = "10", value_parser = clap::value_parser!(u64).range(2..=3600))]
+    interval: u64,
+
+    #[command(flatten)]
+    connection: ApiConnectionArgs,
+
+    /// Print the build as JSON once it settles.
     #[arg(long, default_value = "false")]
     json: bool,
 }
@@ -256,6 +281,85 @@ pub(crate) async fn handle_build_run(args: BuildRunArgs) -> anyhow::Result<()> {
         println!("Nothing is submitted. See what the stores said on the build page.");
     }
     Ok(())
+}
+
+const FINISHED_BUILD_STATUSES: [&str; 5] =
+    ["succeeded", "failed", "canceled", "timed_out", "expired"];
+
+/// One line for where a build stands, such as "Build #12 succeeded, in
+/// store review".
+fn watch_line(build: &Build) -> String {
+    let mut line = format!(
+        "Build #{} {}",
+        build.build_number,
+        build.status.replace('_', " ")
+    );
+    if let Some(outcome) = build.release_outcome {
+        line.push_str(&format!(", {}", outcome.phrase()));
+    }
+    line
+}
+
+/// Whether there is nothing more to wait for: the build has finished and,
+/// when the store's answer was asked for, the store is done with it too.
+fn watch_done(build: &Build, store: bool) -> bool {
+    if !FINISHED_BUILD_STATUSES.contains(&build.status.as_str()) {
+        return false;
+    }
+    !store
+        || build.status != "succeeded"
+        || build
+            .release_outcome
+            .is_none_or(BuildReleaseOutcome::is_settled)
+}
+
+/// The exit code a finished watch reports: 0 for a good result, 1 for a
+/// build that did not succeed, 3 for a release the store did not take.
+fn watch_exit_code(build: &Build, store: bool) -> i32 {
+    if build.status != "succeeded" {
+        return 1;
+    }
+    match build.release_outcome {
+        Some(
+            BuildReleaseOutcome::Blocked
+            | BuildReleaseOutcome::Rejected
+            | BuildReleaseOutcome::Failed,
+        ) if store => 3,
+        _ => 0,
+    }
+}
+
+pub(crate) async fn handle_build_watch(args: BuildWatchArgs) -> anyhow::Result<()> {
+    let api = Api::connect(&args.connection)?;
+    let url = format!("{}/v1/builds/{}", api.daemon_url, args.build_id.trim());
+    let mut last_line = String::new();
+    let build = loop {
+        let detail: BuildDetailResponse = api.send(api.client.get(&url), "build lookup").await?;
+        let build = detail.build;
+        let line = watch_line(&build);
+        if !args.json && line != last_line {
+            println!("{line}");
+            last_line = line;
+        }
+        if watch_done(&build, args.store) {
+            break build;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(args.interval)).await;
+    };
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&build)?);
+    } else if !args.store
+        && build.status == "succeeded"
+        && build
+            .release_outcome
+            .is_some_and(|outcome| !outcome.is_settled())
+    {
+        println!("Add --store to wait for the store too.");
+    }
+    match watch_exit_code(&build, args.store) {
+        0 => Ok(()),
+        code => std::process::exit(code),
+    }
 }
 
 fn platform_label(platform: &BuildPlatform) -> &'static str {
@@ -531,6 +635,58 @@ mod tests {
         let ok = text.find("✓ App Store: API key works").unwrap();
         assert!(blocking < ok);
         assert!(text.contains("Fix it: https://appstoreconnect.apple.com/apps/1"));
+    }
+
+    fn watched(status: &str, outcome: Option<BuildReleaseOutcome>) -> Build {
+        let mut build: Build = serde_json::from_value(serde_json::json!({
+            "id": "b1",
+            "project_id": "p1",
+            "pipeline_id": "pl1",
+            "build_number": 12,
+            "status": status,
+            "trigger_type": "manual",
+            "queued_at": 0,
+            "created_at": 0,
+            "updated_at": 0,
+            "config_snapshot": {},
+        }))
+        .unwrap();
+        build.release_outcome = outcome;
+        build
+    }
+
+    #[test]
+    fn watch_follows_the_build_then_the_store_when_asked() {
+        use BuildReleaseOutcome::*;
+        let running = watched("running", None);
+        assert_eq!(watch_line(&running), "Build #12 running");
+        assert!(!watch_done(&running, false));
+
+        let in_review = watched("succeeded", Some(InReview));
+        assert_eq!(
+            watch_line(&in_review),
+            "Build #12 succeeded, in store review"
+        );
+        assert!(watch_done(&in_review, false));
+        assert!(!watch_done(&in_review, true));
+        assert_eq!(watch_exit_code(&in_review, false), 0);
+
+        let live = watched("succeeded", Some(Live));
+        assert!(watch_done(&live, true));
+        assert_eq!(watch_exit_code(&live, true), 0);
+
+        let rejected = watched("succeeded", Some(Rejected));
+        assert!(watch_done(&rejected, true));
+        assert_eq!(watch_exit_code(&rejected, true), 3);
+        assert_eq!(watch_exit_code(&rejected, false), 0);
+
+        let timed_out = watched("timed_out", None);
+        assert_eq!(watch_line(&timed_out), "Build #12 timed out");
+        assert!(watch_done(&timed_out, true));
+        assert_eq!(watch_exit_code(&timed_out, true), 1);
+
+        // A build with no store release has nothing to wait for.
+        assert!(watch_done(&watched("succeeded", None), true));
     }
 
     fn run_args(argv: &[&str]) -> BuildRunArgs {

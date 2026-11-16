@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
@@ -12,9 +13,11 @@ import {
   ENVIRONMENT_NAME_MAX_LENGTH,
   formatRolloutSteps,
   parseRolloutSteps,
+  playTrackStagesRollouts,
 } from '@/lib/environments'
 import { stackVariants } from '@/lib/recipes'
 import { RELEASE_STORE_LABEL } from '@/lib/releases'
+import { isPlayTrack, PLAY_TRACKS } from '@/lib/store-destination'
 import { toast } from '@/lib/toast'
 import {
   useCreateEnvironment,
@@ -65,6 +68,48 @@ const DEFAULT_STEPS = [0.01, 0.05, 0.2, 0.5, 1]
 const APPLE_PHASED_STEPS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1]
 const APP_STORE_TRACK = 'app_store'
 
+/** The same track list as the pipeline's Google Play settings. */
+const PLAY_TRACK_CHOICES = {
+  ...Object.fromEntries(
+    Object.entries(PLAY_TRACKS).map(([value, track]) => [value, track.label]),
+  ),
+  custom: 'Custom track',
+}
+
+const APP_STORE_TRACK_CHOICES = {
+  [APP_STORE_TRACK]: 'App Store version',
+  testflight: 'TestFlight group',
+}
+
+/** Which list entry a stored track is: a named track, or the free-text one. */
+function trackChoice(store: string, track: string, typing: boolean) {
+  const value = track.trim()
+  if (store === 'google_play') {
+    if (typing) return 'custom'
+    if (!value) return null
+    return isPlayTrack(value) ? value : 'custom'
+  }
+  if (typing) return 'testflight'
+  if (!value) return null
+  return value === APP_STORE_TRACK ? APP_STORE_TRACK : 'testflight'
+}
+
+function trackHelp(store: string, track: string) {
+  const value = track.trim()
+  if (store === 'google_play') {
+    if (!value) return 'Where on Google Play this environment releases to.'
+    return isPlayTrack(value)
+      ? PLAY_TRACKS[value].effect
+      : 'A custom closed testing track you created in Play Console, by its exact name.'
+  }
+  if (value === APP_STORE_TRACK) {
+    return 'The App Store version people download once Apple approves it.'
+  }
+  return value
+    ? 'A TestFlight group, by its name in App Store Connect.'
+    : 'The App Store version, or a TestFlight group.'
+}
+
 const APPROVER_MODE_LABEL = {
   maintainer: 'Maintainers',
   developer: 'Developers and maintainers',
@@ -94,7 +139,7 @@ const environmentFormSchema = z
         `Names can be at most ${ENVIRONMENT_NAME_MAX_LENGTH} characters.`,
       ),
     store: z.enum(['google_play', 'app_store']),
-    track: z.string().trim().min(1, 'Enter a track.'),
+    track: z.string().trim().min(1, 'Choose a track.'),
     approval_required: z.boolean(),
     approver_mode: z.enum(['maintainer', 'developer', 'named']),
     approver_user_ids: z.array(z.string()),
@@ -185,6 +230,8 @@ export function EnvironmentDialog({
     resolver: zodResolver(environmentFormSchema),
     values: defaultValues(environment),
   })
+  // Picking "Custom track" or "TestFlight group" shows a text field.
+  const [typingTrack, setTypingTrack] = useState(false)
   const [store, track, approvalRequired, approverModeValue] = useWatch({
     control: form.control,
     name: ['store', 'track', 'approval_required', 'approver_mode'],
@@ -194,7 +241,8 @@ export function EnvironmentDialog({
   const approverCandidates = (membersQuery.data?.members ?? []).filter(
     (member) => member.role !== 'viewer',
   )
-  const staged = store === 'google_play' && track.trim() !== 'internal'
+  const playTrack = store === 'google_play' && track.trim() !== ''
+  const staged = playTrack && playTrackStagesRollouts(track)
   const appStoreVersion =
     store === 'app_store' && track.trim() === APP_STORE_TRACK
 
@@ -212,6 +260,7 @@ export function EnvironmentDialog({
     if (!next) {
       form.reset()
       mutation.reset()
+      setTypingTrack(false)
     }
     onOpenChange(next)
   }
@@ -222,10 +271,13 @@ export function EnvironmentDialog({
     const versionTrack =
       values.store === 'app_store' && values.track.trim() === APP_STORE_TRACK
     // App Store releases follow Apple's schedule: phased, or all at once.
-    // TestFlight has no staged rollout.
+    // TestFlight, and Play tracks other than production and open testing,
+    // have no staged rollout.
     const steps =
       values.store === 'google_play'
-        ? parsed.steps
+        ? playTrackStagesRollouts(values.track)
+          ? parsed.steps
+          : [1]
         : versionTrack && values.phased_release
           ? APPLE_PHASED_STEPS
           : [1]
@@ -365,7 +417,9 @@ export function EnvironmentDialog({
                       onValueChange={(next) => {
                         if (next === 'google_play' || next === 'app_store') {
                           field.onChange(next)
-                          clearSubmitUnlessAppStoreVersion(next, track)
+                          setTypingTrack(false)
+                          form.setValue('track', '', { shouldDirty: true })
+                          clearSubmitUnlessAppStoreVersion(next, '')
                         }
                       }}
                       items={RELEASE_STORE_LABEL}
@@ -393,39 +447,85 @@ export function EnvironmentDialog({
               <FormField
                 control={form.control}
                 name="track"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Track</FormLabel>
-                    <FormControl>
-                      <Input
-                        autoComplete="off"
-                        spellCheck={false}
-                        className="font-mono"
-                        placeholder={
-                          store === 'google_play' ? 'production' : 'app_store'
-                        }
+                render={({ field }) => {
+                  const choice = trackChoice(store, field.value, typingTrack)
+                  const choices =
+                    store === 'google_play'
+                      ? PLAY_TRACK_CHOICES
+                      : APP_STORE_TRACK_CHOICES
+                  const freeText =
+                    choice === 'custom' || choice === 'testflight'
+                  return (
+                    <FormItem>
+                      <FormLabel>Track</FormLabel>
+                      <Select
+                        value={choice}
+                        items={choices}
                         disabled={trackLocked}
-                        {...field}
-                        onChange={(event) => {
-                          field.onChange(event)
-                          clearSubmitUnlessAppStoreVersion(
-                            store,
-                            event.target.value,
-                          )
+                        onValueChange={(next) => {
+                          if (!next) return
+                          const typing =
+                            next === 'custom' || next === 'testflight'
+                          setTypingTrack(typing)
+                          const value = typing ? '' : next
+                          form.setValue('track', value, {
+                            shouldDirty: true,
+                            shouldValidate: form.formState.isSubmitted,
+                          })
+                          clearSubmitUnlessAppStoreVersion(store, value)
                         }}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder="Choose a track" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.entries(choices).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {freeText ? (
+                        <FormControl>
+                          <Input
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="font-mono"
+                            aria-label={
+                              store === 'google_play'
+                                ? 'Custom track name'
+                                : 'TestFlight group name'
+                            }
+                            placeholder={
+                              store === 'google_play'
+                                ? 'qa-team'
+                                : 'Internal QA'
+                            }
+                            disabled={trackLocked}
+                            {...field}
+                            onChange={(event) => {
+                              field.onChange(event)
+                              clearSubmitUnlessAppStoreVersion(
+                                store,
+                                event.target.value,
+                              )
+                            }}
+                          />
+                        </FormControl>
+                      ) : null}
+                      <FormMessage />
+                    </FormItem>
+                  )
+                }}
               />
             </div>
             <Text className="-mt-2">
               {trackLocked
                 ? 'This environment has releases, so its track is fixed. Add a new environment for another track.'
-                : store === 'google_play'
-                  ? 'internal, closed, open, production, or a custom track name.'
-                  : 'app_store for the App Store version, or a TestFlight group name.'}
+                : trackHelp(store, track)}
             </Text>
 
             <FormField
@@ -606,6 +706,13 @@ export function EnvironmentDialog({
                   )}
                 />
               </>
+            ) : null}
+
+            {playTrack && !staged ? (
+              <Text>
+                Google Play releases to everyone at once on this track. Staged
+                rollouts run only on production and open testing.
+              </Text>
             ) : null}
 
             {staged ? (

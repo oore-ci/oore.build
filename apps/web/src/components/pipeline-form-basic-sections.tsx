@@ -32,8 +32,8 @@ import {
 } from '@/components/ui/select'
 
 const CONFIG_SOURCES = {
-  auto: 'Use repo config if found (.oore.yaml, .oore.yml)',
-  explicit: 'Choose a config file',
+  auto: 'Use .oore.yaml (or .oore.yml) if the repository has one',
+  explicit: 'Use a file at another path',
 } satisfies Record<string, string>
 
 const PLATFORM_FIELDS = [
@@ -116,13 +116,13 @@ export function PipelineBasicsSection({
 
           <SettingsSurfaceSeparator />
 
-          <PipelineFormSubsection title="Configuration">
+          <PipelineFormSubsection title="Pipeline file">
             <FormField
               control={form.control}
               name="config_mode"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Config source</FormLabel>
+                  <FormLabel>File</FormLabel>
                   <Select
                     value={field.value}
                     onValueChange={field.onChange}
@@ -131,9 +131,9 @@ export function PipelineBasicsSection({
                     <FormControl>
                       <SelectTrigger
                         className="w-full"
-                        aria-label="Config source"
+                        aria-label="Pipeline file"
                       >
-                        <SelectValue placeholder="Choose source" />
+                        <SelectValue placeholder="Choose a file" />
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
@@ -157,7 +157,7 @@ export function PipelineBasicsSection({
                 name="config_path"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Config path</FormLabel>
+                    <FormLabel>File path</FormLabel>
                     <FormControl>
                       <Input
                         placeholder="e.g. ci/oore.yaml"
@@ -216,14 +216,17 @@ export function PipelineBasicsSection({
                     />
                   </FormControl>
                   <FormDescription>
-                    Added to the build number to form{' '}
-                    <span className="font-mono">OORE_VERSION_CODE</span>. Set it
-                    above the version code your app already has in the store,
-                    then pass{' '}
+                    Only for a new store number on every build. By default the
+                    store number is the <span className="font-mono">+N</span> in{' '}
+                    <span className="font-mono">pubspec.yaml</span>, bumped for
+                    each release. To number every build instead, pass{' '}
                     <span className="font-mono">
                       --build-number=$OORE_VERSION_CODE
                     </span>{' '}
-                    to <span className="font-mono">flutter build</span>.
+                    to <span className="font-mono">flutter build</span> and set
+                    this above the store&apos;s highest number;{' '}
+                    <span className="font-mono">OORE_VERSION_CODE</span> is the
+                    build number plus this offset.
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

@@ -194,6 +194,9 @@ use utoipa::{
         operations::get_build_trends,
         operations::get_build_failure_hint,
         operations::get_build_rehearsal,
+        operations::get_release_notes,
+        operations::update_release_notes,
+        operations::draft_release_notes,
         operations::list_release_freezes,
         operations::set_release_freeze,
         operations::delete_release_freeze,
@@ -252,6 +255,7 @@ use utoipa::{
         operations::create_project_environment,
         operations::update_project_environment,
         operations::delete_project_environment,
+        operations::get_promotion_readiness,
         operations::promote_build,
         operations::approve_promotion,
         operations::reject_promotion,
@@ -282,6 +286,7 @@ use utoipa::{
         operations::get_job_retry_artifacts,
         operations::report_job_publish_result,
         operations::report_job_rehearsal,
+        operations::check_job_app_store_preflight,
         operations::report_job_test_results,
         operations::report_job_analysis,
         // ── Build Logs ──
@@ -518,6 +523,8 @@ use utoipa::{
         oore_contract::RehearsalCheck,
         oore_contract::RunnerRehearsalReport,
         oore_contract::RunnerRehearsalReportResponse,
+        oore_contract::RunnerAppStorePreflightRequest,
+        oore_contract::RunnerAppStorePreflightResponse,
         oore_contract::RunnerRetryArtifact,
         oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
@@ -683,6 +690,12 @@ use utoipa::{
         oore_contract::ClaimedJob,
         oore_contract::UpdateJobStatusRequest,
         oore_contract::ReportBuildIdentityRequest,
+        oore_contract::RepositoryReleaseNotes,
+        oore_contract::ReleaseNotesLocale,
+        oore_contract::ReleaseNotesSource,
+        oore_contract::VersionReleaseNotes,
+        oore_contract::UpdateVersionReleaseNotesRequest,
+        oore_contract::ReleaseNotesDraftResponse,
         oore_contract::BuildReference,
         oore_contract::ListRunnersResponse,
         oore_contract::JobStatusResponse,
@@ -3599,6 +3612,57 @@ mod operations {
     )]
     pub(super) fn list_release_events() {}
 
+    /// Get a version's release notes
+    ///
+    /// The release notes of one app version, such as 2.5.1. Every build of the version shows them, and its store uploads and promotions send them: TestFlight "What to Test", App Store "What's New" and Google Play.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/release-notes/{version_name}", tag = "Releases",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("version_name" = String, Path, description = "App version name, such as 2.5.1"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release notes", body = VersionReleaseNotes),
+            (status = 404, description = "The version has no notes yet", body = ApiError),
+        )
+    )]
+    pub(super) fn get_release_notes() {}
+
+    /// Write a version's release notes
+    ///
+    /// Replaces the notes and stops Oore drafting them from commits. Notes read from the repository are refused with 409 `notes_in_repository`: change the file instead.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/release-notes/{version_name}", tag = "Releases",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("version_name" = String, Path, description = "App version name, such as 2.5.1"),
+        ),
+        request_body = UpdateVersionReleaseNotesRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Release notes", body = VersionReleaseNotes),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 404, description = "No build of the app is this version", body = ApiError),
+            (status = 409, description = "The notes come from the repository", body = ApiError),
+        )
+    )]
+    pub(super) fn update_release_notes() {}
+
+    /// Draft a version's release notes from commits
+    ///
+    /// Commit titles, without authors, since the last version that reached a store, up to the version's newest build. Nothing is saved.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/release-notes/{version_name}/draft", tag = "Releases",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("version_name" = String, Path, description = "App version name, such as 2.5.1"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Drafted notes", body = ReleaseNotesDraftResponse),
+            (status = 404, description = "No build of the app is this version", body = ApiError),
+        )
+    )]
+    pub(super) fn draft_release_notes() {}
+
     /// List release freezes
     ///
     /// The instance-wide freeze and the freezes of apps the caller can read. While a freeze holds an app, store uploads are skipped, promotions and rollout changes that reach more users are refused, and scheduled rollout steps wait.
@@ -3705,6 +3769,24 @@ mod operations {
         )
     )]
     pub(super) fn delete_project_environment() {}
+
+    /// Check a promotion's store readiness
+    ///
+    /// What would stop promoting the build into the environment, blocking findings first. Only a promotion of a TestFlight build to the App Store has checks: the store readiness check an App Store upload runs (age rating questions, App Review contact details when the environment submits for review, another open submission, refusals remembered from the last submission) and whether App Store Connect has an editable App Store version for the build's version. Other environments answer with no items. Requires project read access.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/environments/{environment_id}/readiness", tag = "Environments",
+        params(
+            ("project_id" = String, Path, description = "Project ID"),
+            ("environment_id" = String, Path, description = "Environment ID"),
+            ("build_id" = String, Query, description = "The build to promote"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store readiness for the promotion", body = StoreReadinessResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "Project, environment or build not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_promotion_readiness() {}
 
     /// Promote build
     ///
@@ -4176,6 +4258,26 @@ mod operations {
         )
     )]
     pub(super) fn report_job_rehearsal() {}
+
+    /// Read App Store Connect before an upload
+    ///
+    /// What App Store Connect already has for the signed IPA's app and version: whether the app exists, the highest build number uploaded for the version, the version's state and the live version. The runner turns them into pre-flight findings before it uploads. Uses the pipeline's App Store Connect API key.
+    #[utoipa::path(post, path = "/v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight", tag = "Pipeline Publishing",
+        params(
+            ("runner_id" = String, Path, description = "Runner ID"),
+            ("job_id" = String, Path, description = "Build/Job ID"),
+            ("x-oore-signing-token" = String, Header, description = "Job-scoped signing grant"),
+        ),
+        request_body = RunnerAppStorePreflightRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "What App Store Connect has", body = RunnerAppStorePreflightResponse),
+            (status = 401, description = "Runner authentication or signing grant is missing or invalid", body = ApiError),
+            (status = 403, description = "Runner does not match the active assignment", body = ApiError),
+            (status = 409, description = "Job is not active", body = ApiError),
+        )
+    )]
+    pub(super) fn check_job_app_store_preflight() {}
 
     /// Get job-scoped iOS signing material
     ///

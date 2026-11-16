@@ -37,10 +37,12 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt};
 use zeroize::Zeroize;
 
 mod analyzer;
+mod app_store_preflight;
 mod app_store_upload;
 mod caches;
 mod metrics;
 mod publish;
+mod repository_notes;
 mod tart;
 mod test_reports;
 mod toolchain;
@@ -2738,7 +2740,11 @@ fn read_ios_app_metadata(bundle_path: &Path) -> anyhow::Result<IosAppMetadata> {
     let version = read_apple_bundle_value(bundle_path, "CFBundleShortVersionString")
         .ok_or_else(|| anyhow::anyhow!("app bundle is missing CFBundleShortVersionString"))?;
     let build_number = read_apple_bundle_value(bundle_path, "CFBundleVersion")
-        .ok_or_else(|| anyhow::anyhow!("app bundle is missing CFBundleVersion"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "The app has no build number (CFBundleVersion is missing from its Info.plist). In a Flutter app, set version: {version}+N in pubspec.yaml with N a whole number such as 12; in a native app, set Current Project Version in Xcode."
+            )
+        })?;
 
     Ok(IosAppMetadata {
         bundle_identifier,
@@ -4338,6 +4344,8 @@ struct ResolvedExecutionPlan {
     /// The platforms this run builds, after any per-run selection. A store
     /// upload for a platform not in this list is skipped.
     platforms: Vec<BuildPlatform>,
+    /// Where a v2 file keeps the release notes.
+    release_notes: Option<oore_contract::pipeline_config::ReleaseNotesSpec>,
 }
 
 fn secret_env_var(name: &str) -> String {
@@ -4804,6 +4812,7 @@ fn resolve_execution_plan(
             source: format!("file:{}", full_path.display()),
             publish: plan.publish,
             size_budgets: plan.size_budgets,
+            release_notes: plan.release_notes,
         });
     }
 
@@ -4829,6 +4838,7 @@ fn resolve_execution_plan(
         source: "ui_fallback".to_string(),
         publish: PlanPublish::default(),
         size_budgets: Vec::new(),
+        release_notes: None,
     })
 }
 
@@ -5795,6 +5805,37 @@ async fn execute_build_steps(
             }
         };
     let version_name = read_pubspec_version_name(&workspace);
+    // The number the app will carry: OORE_VERSION_CODE only when a build
+    // command passes it, else pubspec's `+N`. The built app's own numbers
+    // replace this once the artifacts exist.
+    let uses_oore_version_code = execution_plan
+        .steps
+        .iter()
+        .filter(|step| step.phase == StepPhase::Build)
+        .any(|step| step.run.contains("OORE_VERSION_CODE"));
+    let expected_version_code = if uses_oore_version_code {
+        Some(version_code)
+    } else {
+        store_version::read_pubspec_build_number(&workspace)
+    };
+    let release_notes = match (&execution_plan.release_notes, &version_name) {
+        (Some(spec), Some(version)) => match repository_notes::read(&workspace, spec, version) {
+            Ok(Some(notes)) => {
+                println!("Release notes for {version} read from {}", notes.path);
+                Some(notes)
+            }
+            Ok(None) => {
+                println!("No release notes for {version} in the repository");
+                None
+            }
+            Err(error) => {
+                // Notes never stop a build; the version keeps the notes it has.
+                println!("Could not read the release notes from the repository: {error}");
+                None
+            }
+        },
+        _ => None,
+    };
     report_build_identity(
         client,
         daemon_url,
@@ -5802,7 +5843,8 @@ async fn execute_build_steps(
         &job.build_id,
         &oore_contract::ReportBuildIdentityRequest {
             version_name: version_name.clone(),
-            version_code: Some(version_code),
+            version_code: expected_version_code,
+            release_notes,
             ..read_head_commit_identity(&workspace).await
         },
     )
@@ -6821,6 +6863,20 @@ Install the required tooling on the runner, set isolation: vm, or override build
     if let Err(error) = artifact_result {
         return (steps, Err(error));
     }
+    if let Some((name, code)) = built_app_version(&workspace, ios_artifact_metadata.as_ref()) {
+        report_build_identity(
+            client,
+            daemon_url,
+            config,
+            &job.build_id,
+            &oore_contract::ReportBuildIdentityRequest {
+                version_name: name,
+                version_code: Some(code),
+                ..Default::default()
+            },
+        )
+        .await;
+    }
 
     // Publishing runs only after every build, signing and artifact step
     // succeeded; any earlier failure has already returned.
@@ -6936,6 +6992,7 @@ struct RehearsalInputs<'a> {
     signing_workspace: &'a Path,
     secrets: &'a std::collections::BTreeMap<String, String>,
     signed_ipa_path: Option<&'a Path>,
+    ios_artifact_metadata: Option<&'a serde_json::Value>,
     builds_android: bool,
     builds_ios: bool,
     plan: oore_contract::pipeline_config::EffectivePublish,
@@ -7081,6 +7138,7 @@ async fn run_rehearsal_steps(
         signing_workspace,
         secrets,
         signed_ipa_path,
+        ios_artifact_metadata,
         builds_android,
         builds_ios,
         plan,
@@ -7161,8 +7219,44 @@ async fn run_rehearsal_steps(
             },
             PublishStore::AppStore => match &plan.app_store {
                 Ok(Some(app_store)) => {
-                    rehearse_app_store(workspace, signing_workspace, signed_ipa_path, app_store)
-                        .await
+                    let mut number_checks = Vec::new();
+                    if let Some(metadata) = ios_artifact_metadata
+                        && signed_ipa_path.is_some()
+                    {
+                        let (findings, skipped) = app_store_number_preflight(
+                            client,
+                            daemon_url,
+                            config,
+                            (&job.build_id, &job.signing_token),
+                            workspace,
+                            metadata,
+                        )
+                        .await;
+                        number_checks.extend(findings.into_iter().map(|finding| RehearsalCheck {
+                            code: finding.code.to_string(),
+                            level: ReadinessLevel::Block,
+                            title: finding.title,
+                            detail: Some(finding.detail),
+                        }));
+                        if let Some(skipped) = skipped {
+                            number_checks.push(RehearsalCheck {
+                                code: "asc_build_number_unchecked".to_string(),
+                                level: ReadinessLevel::Warn,
+                                title: "The build number was not checked against App Store Connect"
+                                    .to_string(),
+                                detail: Some(skipped),
+                            });
+                        }
+                    }
+                    let mut checks = rehearse_app_store(
+                        workspace,
+                        signing_workspace,
+                        signed_ipa_path,
+                        app_store,
+                    )
+                    .await;
+                    checks.splice(0..0, number_checks);
+                    checks
                 }
                 Err(error) => vec![rehearsal_block(
                     "publish_settings",
@@ -7321,6 +7415,7 @@ async fn run_publish_steps(
                 signing_workspace,
                 secrets,
                 signed_ipa_path,
+                ios_artifact_metadata,
                 builds_android: built(BuildPlatform::Android),
                 builds_ios: built(BuildPlatform::Ios),
                 plan: publish_plan,
@@ -7549,10 +7644,36 @@ async fn run_publish_steps(
         let result = match (signed_ipa_path, ios_artifact_metadata) {
             (Some(ipa), Some(metadata)) => 'upload: {
                 let key_dir = signing_workspace.join(".oore").join("asc-keys");
-                let preflight = app_store_upload::apply_preflight(
-                    app_store.config.preflight,
-                    app_store_upload::preflight_findings(workspace),
-                );
+                let mut findings = app_store_upload::preflight_findings(workspace);
+                let (number_findings, skipped) =
+                    if app_store.config.preflight == oore_contract::PublishPreflight::Off {
+                        (Vec::new(), None)
+                    } else {
+                        app_store_number_preflight(
+                            client,
+                            daemon_url,
+                            config,
+                            (&job.build_id, &job.signing_token),
+                            workspace,
+                            metadata,
+                        )
+                        .await
+                    };
+                findings.extend(number_findings.into_iter().map(|finding| finding.detail));
+                if let Some(skipped) = skipped {
+                    let _ = append_runner_log_line(
+                        client,
+                        daemon_url,
+                        config,
+                        &job.build_id,
+                        log_seq,
+                        "stdout",
+                        &format!("[oore-publish] Pre-flight: {skipped}; the upload goes ahead"),
+                    )
+                    .await;
+                }
+                let preflight =
+                    app_store_upload::apply_preflight(app_store.config.preflight, findings);
                 let warnings = match preflight {
                     Ok(warnings) => warnings,
                     Err(error) => break 'upload Err(error),
@@ -8326,6 +8447,82 @@ async fn fetch_job_publish_plan(
         anyhow::bail!("publish settings lookup failed: {}", resp.status());
     }
     Ok(resp.json().await?)
+}
+
+/// The App Store pre-flight for the version and build number of the signed
+/// IPA described by `metadata` (`ios_app` in the artifact metadata): the
+/// IPA's own number, then what App Store Connect already has, read through
+/// the daemon with the pipeline's key. Returns the findings and, when App
+/// Store Connect could not be read, a note saying those checks were skipped.
+async fn app_store_number_preflight(
+    client: &reqwest::Client,
+    daemon_url: &str,
+    config: &RunnerConfig,
+    (build_id, signing_token): (&str, &str),
+    workspace: &Path,
+    metadata: &serde_json::Value,
+) -> (Vec<app_store_preflight::NumberFinding>, Option<String>) {
+    let app = &metadata["ios_app"];
+    let field = |key: &str| app[key].as_str().unwrap_or_default().trim().to_string();
+    let (bundle_id, version, build_number) = (
+        field("bundle_identifier"),
+        field("version"),
+        field("build_number"),
+    );
+    let source = app_store_preflight::build_number_source(workspace, &build_number);
+    let mut findings = app_store_preflight::local_findings(source, &version, &build_number);
+    if bundle_id.is_empty() || version.is_empty() || !findings.is_empty() {
+        return (findings, None);
+    }
+    let read = async {
+        let resp = client
+            .post(format!(
+                "{}/v1/runners/{}/jobs/{}/app-store-preflight",
+                daemon_url, config.runner_id, build_id
+            ))
+            .bearer_auth(&config.runner_token)
+            .header("x-oore-signing-token", signing_token)
+            .timeout(Duration::from_secs(90))
+            .json(&oore_contract::RunnerAppStorePreflightRequest {
+                bundle_id: bundle_id.clone(),
+                version: version.clone(),
+            })
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            anyhow::bail!("the daemon answered {}", resp.status());
+        }
+        anyhow::Ok(
+            resp.json::<oore_contract::RunnerAppStorePreflightResponse>()
+                .await?,
+        )
+    };
+    let store = match read.await {
+        Ok(store) => store,
+        Err(error) => {
+            return (
+                findings,
+                Some(format!(
+                    "Could not check App Store Connect for {version} ({build_number}): {error:#}"
+                )),
+            );
+        }
+    };
+    if let Some(reason) = &store.unavailable {
+        return (
+            findings,
+            Some(format!(
+                "Could not check App Store Connect for {version} ({build_number}): {reason}"
+            )),
+        );
+    }
+    findings.extend(app_store_preflight::store_findings(
+        source,
+        &version,
+        &build_number,
+        &store,
+    ));
+    (findings, None)
 }
 
 /// Waits between attempts to record a store upload: about two minutes in all,
@@ -9334,6 +9531,33 @@ fn parse_head_commit_identity(raw: &str) -> oore_contract::ReportBuildIdentityRe
     }
 }
 
+/// The version name and number the built app carries: the release App
+/// Bundle's manifest, else the signed IPA's Info.plist.
+fn built_app_version(
+    workspace: &Path,
+    ios_artifact_metadata: Option<&serde_json::Value>,
+) -> Option<(Option<String>, i64)> {
+    if let Ok(manifest) = publish::find_bundle(workspace)
+        .and_then(|bundle| oore_google_play::read_aab_manifest(&bundle))
+        && manifest.version_code > 0
+    {
+        return Some((manifest.version_name, manifest.version_code));
+    }
+    let app = ios_artifact_metadata?.get("ios_app")?;
+    let code = app
+        .get("build_number")?
+        .as_str()?
+        .trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|code| *code > 0)?;
+    let name = app
+        .get("version")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
+    Some((name, code))
+}
+
 /// Tells the backend what the build is. Best effort: an older backend
 /// without the endpoint, or a failed request, only leaves the build
 /// without a title and version.
@@ -10231,6 +10455,7 @@ mod secret_tests {
             publish: PlanPublish::default(),
             size_budgets: Vec::new(),
             platforms: Vec::new(),
+            release_notes: None,
         }
     }
 
@@ -11573,5 +11798,25 @@ mod gradle_signing_tests {
                 .log_line()
                 .contains("re-signed and verified 1 it did not")
         );
+    }
+}
+
+#[cfg(test)]
+mod built_app_version_tests {
+    use super::built_app_version;
+
+    #[test]
+    fn reads_the_signed_ipa_numbers_when_there_is_no_bundle() {
+        let workspace = std::env::temp_dir().join("oore-built-app-version-none");
+        let metadata = serde_json::json!({
+            "ios_app": {"version": "2.5.1", "build_number": "12"}
+        });
+        assert_eq!(
+            built_app_version(&workspace, Some(&metadata)),
+            Some((Some("2.5.1".to_string()), 12))
+        );
+        assert_eq!(built_app_version(&workspace, None), None);
+        let unnumbered = serde_json::json!({"ios_app": {"version": "2.5.1", "build_number": "x"}});
+        assert_eq!(built_app_version(&workspace, Some(&unnumbered)), None);
     }
 }

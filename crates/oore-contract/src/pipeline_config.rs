@@ -93,6 +93,47 @@ pub struct PipelinePlan {
     /// check enforces its target's budget on top of the pipeline's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub size_budgets: Vec<TargetSizeBudget>,
+    /// Where a v2 file keeps the app version's release notes. Absent: the
+    /// notes are written in Oore or drafted from commits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub release_notes: Option<ReleaseNotesSpec>,
+}
+
+/// Where the release notes live in the repository: one changelog file whose
+/// section headed with the app version (`## 2.5.1`) holds them, or a
+/// directory with one `<locale>.txt` per language.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseNotesSpec {
+    /// A Markdown changelog such as `CHANGELOG.md`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changelog: Option<String>,
+    /// A directory of `<locale>.txt` files such as `release-notes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dir: Option<String>,
+}
+
+impl ReleaseNotesSpec {
+    fn check(&self, errors: &mut Vec<String>) {
+        match (&self.changelog, &self.dir) {
+            (Some(_), Some(_)) => {
+                errors.push("release_notes takes changelog or dir, not both".to_string())
+            }
+            (None, None) => {
+                errors.push("release_notes needs changelog or dir".to_string());
+            }
+            (Some(path), None) | (None, Some(path)) => {
+                let key = if self.changelog.is_some() {
+                    "changelog"
+                } else {
+                    "dir"
+                };
+                if let Err(error) = crate::validate_repository_config_path(path) {
+                    errors.push(format!("release_notes.{key} {error}"));
+                }
+            }
+        }
+    }
 }
 
 /// A store upload from a v2 file, with the field it came from. Values are
@@ -811,6 +852,7 @@ pub fn plan_execution_config(
         publish: PlanPublish::default(),
         signing: SigningSpec::default(),
         size_budgets: Vec::new(),
+        release_notes: None,
     }
 }
 
@@ -935,6 +977,9 @@ pub struct ConfigV2 {
     pub isolation: BuildIsolation,
     #[serde(default)]
     pub build_number_offset: i64,
+    /// Where the release notes live in the repository.
+    #[serde(default)]
+    pub release_notes: Option<ReleaseNotesSpec>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -2718,6 +2763,9 @@ impl ConfigV2 {
             }
         }
 
+        if let Some(notes) = &self.release_notes {
+            notes.check(&mut errors);
+        }
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -2749,6 +2797,7 @@ impl ConfigV2 {
                     })
                 })
                 .collect(),
+            release_notes: self.release_notes.clone(),
         })
     }
 }
@@ -3333,6 +3382,37 @@ mod tests {
             ),
             "{error}"
         );
+    }
+
+    #[test]
+    fn release_notes_name_a_changelog_or_a_directory() {
+        let planned = plan(
+            &format!("{BASE}release_notes:\n  changelog: CHANGELOG.md\n"),
+            None,
+        );
+        assert_eq!(
+            planned.release_notes,
+            Some(ReleaseNotesSpec {
+                changelog: Some("CHANGELOG.md".into()),
+                dir: None,
+            })
+        );
+        assert!(plan(BASE, None).release_notes.is_none());
+
+        for (yaml, expected) in [
+            (
+                "release_notes:\n  changelog: a.md\n  dir: notes\n",
+                "not both",
+            ),
+            ("release_notes: {}\n", "needs changelog or dir"),
+            (
+                "release_notes:\n  changelog: ../outside.md\n",
+                "release_notes.changelog",
+            ),
+        ] {
+            let error = errors(&format!("{BASE}{yaml}"));
+            assert!(error.contains(expected), "{yaml}: {error}");
+        }
     }
 
     #[test]

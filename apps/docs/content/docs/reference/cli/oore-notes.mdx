@@ -1,0 +1,43 @@
+---
+title: '`oore notes`'
+status: implemented
+description: 'Read, write and draft the release notes of an app version.'
+---
+
+```text
+oore notes show  --project <ID> --version <VERSION> [--json]
+oore notes set   --project <ID> --version <VERSION> (--text TEXT | --file PATH)
+                 [--locale LOCALE=PATH]... [--json]
+oore notes draft --project <ID> --version <VERSION> [--json]
+```
+
+Release notes belong to an app version, such as `2.5.1` from `pubspec.yaml`,
+and every build of that version shares them. See
+[Release notes and changes](/concepts/release-notes). Each subcommand takes
+`--daemon-url` and `--token` like [`oore build run`](/reference/cli/oore-build-run)
+and needs a signed-in session.
+
+| Subcommand | Effect                                                                                                                               |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `show`     | Print the notes, where they came from, and each other language. Fails with HTTP 404 when the version has none yet.                   |
+| `set`      | Save the notes. Needs upload access to the project. Refused with `notes_in_repository` when they come from a file in the repository. |
+| `draft`    | Print notes drafted from the commit titles since the last released version. Nothing is saved.                                        |
+
+| Option                 | Effect                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------- |
+| `--project ID`         | The project the app belongs to. Required.                                                       |
+| `--version VERSION`    | The app version without the `+build` number. Required.                                          |
+| `--text TEXT`          | `set`: the notes in the default language.                                                       |
+| `--file PATH`          | `set`: read the notes from a file, or from standard input with `-`.                             |
+| `--locale LOCALE=PATH` | `set`: notes in another language from a file. Repeat for several; replaces the saved languages. |
+| `--json`               | Print the daemon's response as JSON.                                                            |
+
+```bash
+oore notes draft --project proj_123 --version 2.5.1 > notes.txt
+# edit notes.txt
+oore notes set --project proj_123 --version 2.5.1 --file notes.txt
+```
+
+```text
+Saved the release notes for 2.5.1. Every build of it, and its next store upload or promotion, uses them.
+```

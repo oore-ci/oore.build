@@ -48,6 +48,7 @@ export function PromoteReleaseButton({
         <PromoteDialog
           open
           onOpenChange={setOpen}
+          canEditNotes={canManage}
           canPromoteDirectly={canManage}
           environments={environments}
           projectId={release.project_id}

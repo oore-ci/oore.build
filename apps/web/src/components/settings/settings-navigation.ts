@@ -2,13 +2,11 @@ import {
   Archive02Icon,
   Audit01Icon,
   CpuIcon,
-  Delete02Icon,
   Key01Icon,
   Link04Icon,
   LockPasswordIcon,
   Notification03Icon,
   Settings01Icon,
-  Store01Icon,
   UserGroupIcon,
   UserMultiple02Icon,
 } from '@hugeicons/core-free-icons'
@@ -18,9 +16,13 @@ import type { UserRole } from '@oore/client/models'
 const ADMIN_ROLES: ReadonlyArray<UserRole> = ['owner', 'admin']
 const OPERATOR_ROLES: ReadonlyArray<UserRole> = ['owner', 'admin', 'developer']
 
+/**
+ * Settings pages in four small groups. The first has no label: General sits
+ * on top on its own. Every page stays one click away; there is no hub.
+ */
 const SETTINGS_GROUPS = [
   {
-    title: 'Instance',
+    title: null,
     items: [
       {
         title: 'General',
@@ -29,6 +31,11 @@ const SETTINGS_GROUPS = [
         icon: Settings01Icon,
         roles: ADMIN_ROLES,
       },
+    ],
+  },
+  {
+    title: 'Build',
+    items: [
       {
         title: 'Runners',
         description: 'Runner health, metadata, and Direct runner policy.',
@@ -44,17 +51,38 @@ const SETTINGS_GROUPS = [
         roles: OPERATOR_ROLES,
       },
       {
-        title: 'Artifact storage',
-        description: 'Local or S3-compatible artifact persistence.',
+        title: 'Storage',
+        description:
+          'Artifact storage and retention: where builds are kept and when they are cleaned up.',
         to: '/settings/artifacts',
         icon: Archive02Icon,
         roles: ADMIN_ROLES,
       },
+    ],
+  },
+  {
+    title: 'Release',
+    items: [
       {
-        title: 'Retention',
-        description: 'Cleanup policy for builds, logs, and artifacts.',
-        to: '/settings/retention',
-        icon: Delete02Icon,
+        title: 'Secrets and credentials',
+        description:
+          'Secrets and store credentials (App Store Connect, Google Play keys) every build can use.',
+        to: '/settings/secrets',
+        icon: LockPasswordIcon,
+        roles: ADMIN_ROLES,
+      },
+      {
+        title: 'Notifications',
+        description: 'Build and system notification channels.',
+        to: '/settings/notifications',
+        icon: Notification03Icon,
+        roles: ADMIN_ROLES,
+      },
+      {
+        title: 'Tester groups',
+        description: 'People a build can be sent to in one step.',
+        to: '/settings/testers',
+        icon: UserGroupIcon,
         roles: ADMIN_ROLES,
       },
     ],
@@ -76,44 +104,6 @@ const SETTINGS_GROUPS = [
         icon: Key01Icon,
         roles: OPERATOR_ROLES,
       },
-      {
-        title: 'Secrets',
-        description: 'Encrypted values every build can reference.',
-        to: '/settings/secrets',
-        icon: LockPasswordIcon,
-        roles: ADMIN_ROLES,
-      },
-      {
-        title: 'Store credentials',
-        description: 'App Store Connect and Google Play keys for every app.',
-        to: '/settings/store-credentials',
-        icon: Store01Icon,
-        roles: ADMIN_ROLES,
-      },
-    ],
-  },
-  {
-    title: 'Delivery',
-    items: [
-      {
-        title: 'Notifications',
-        description: 'Build and system notification channels.',
-        to: '/settings/notifications',
-        icon: Notification03Icon,
-        roles: ADMIN_ROLES,
-      },
-      {
-        title: 'Tester groups',
-        description: 'People a build can be sent to in one step.',
-        to: '/settings/testers',
-        icon: UserGroupIcon,
-        roles: ADMIN_ROLES,
-      },
-    ],
-  },
-  {
-    title: 'History',
-    items: [
       {
         title: 'Audit log',
         description: 'Security and administrative activity.',

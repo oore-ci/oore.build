@@ -11,7 +11,9 @@ use ipnet::IpNet;
 use lettre::message::{Mailbox, header::ContentType};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use oore_contract::{NotificationChannelType, SlackMention, SmtpConfig, SmtpTlsMode};
+use oore_contract::{
+    BuildReleaseOutcome, NotificationChannelType, SlackMention, SmtpConfig, SmtpTlsMode,
+};
 use ring::hmac;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -595,7 +597,8 @@ async fn build_notification(
     event_type: &str,
 ) -> anyhow::Result<Option<Notification>> {
     let build_row = sqlx::query(
-        "SELECT b.*, p.name as project_name, pl.name as pipeline_name \
+        "SELECT b.*, p.name as project_name, pl.name as pipeline_name, \
+         (SELECT GROUP_CONCAT(r.state) FROM releases r WHERE r.build_id = b.id) AS release_states \
          FROM builds b \
          LEFT JOIN projects p ON b.project_id = p.id \
          LEFT JOIN pipelines pl ON b.pipeline_id = pl.id \
@@ -1048,6 +1051,13 @@ fn build_notification_payload(
             }
         });
 
+    // A Succeeded build the store has not taken yet says so.
+    let release_outcome = row
+        .try_get::<Option<String>, _>("release_states")
+        .ok()
+        .flatten()
+        .and_then(|states| BuildReleaseOutcome::from_state_list(&states));
+
     serde_json::json!({
         "event": format!("build.{}", event.to_status),
         "build": {
@@ -1063,11 +1073,19 @@ fn build_notification_payload(
             "started_at": row.try_get::<Option<i64>, _>("started_at").ok().flatten(),
             "finished_at": row.try_get::<Option<i64>, _>("finished_at").ok().flatten(),
             "rehearsal": rehearsal,
+            "release_outcome": release_outcome,
         },
         "project_name": project_name,
         "pipeline_name": pipeline_name,
         "timestamp": event.timestamp,
     })
+}
+
+/// Where the build's store release stands, in words, when it has one.
+fn build_release_phrase(payload: &serde_json::Value) -> Option<&'static str> {
+    serde_json::from_value::<BuildReleaseOutcome>(payload["build"]["release_outcome"].clone())
+        .ok()
+        .map(BuildReleaseOutcome::phrase)
 }
 
 /// Human wording for a build status in messages.
@@ -1105,9 +1123,12 @@ fn build_mattermost_payload(payload: &serde_json::Value) -> serde_json::Value {
     let emoji = build_status_emoji(status);
     let status = build_status_label(status);
 
-    let text = format!(
+    let mut text = format!(
         "{emoji} **{project_name}** / {pipeline_name} — Build #{build_number} **{status}**\nBranch: `{branch}`"
     );
+    if let Some(release) = build_release_phrase(payload) {
+        text.push_str(&format!("\nRelease: {release}"));
+    }
 
     serde_json::json!({
         "text": text,
@@ -1411,6 +1432,9 @@ fn slack_message(
             if let Some(sha) = build["commit_sha"].as_str() {
                 let short: String = sha.chars().take(7).collect();
                 context.push(format!("Commit `{}`", slack_escape(&short)));
+            }
+            if let Some(release) = build_release_phrase(payload) {
+                context.push(format!("Release: {release}"));
             }
             let button = match status {
                 "succeeded" => "View build",
@@ -2162,6 +2186,12 @@ fn build_email_html(payload: &serde_json::Value) -> (String, String) {
 
     let status_raw = build_status_label(status_raw);
     let status = html_escape(status_raw);
+    let release_row = build_release_phrase(payload).map_or_default(|release| {
+        format!(
+            r#"
+    <tr><td style="padding: 8px 0; color: #6b7280;">Release</td><td style="padding: 8px 0;">{release}</td></tr>"#
+        )
+    });
     let project_name_raw = payload["project_name"]
         .as_str()
         .unwrap_or("Unknown Project");
@@ -2185,7 +2215,7 @@ fn build_email_html(payload: &serde_json::Value) -> (String, String) {
     <tr><td style="padding: 8px 0; color: #6b7280;">Project</td><td style="padding: 8px 0; font-weight: 600;">{project_name}</td></tr>
     <tr><td style="padding: 8px 0; color: #6b7280;">Pipeline</td><td style="padding: 8px 0; font-weight: 600;">{pipeline_name}</td></tr>
     <tr><td style="padding: 8px 0; color: #6b7280;">Branch</td><td style="padding: 8px 0;"><code>{branch}</code></td></tr>
-    <tr><td style="padding: 8px 0; color: #6b7280;">Status</td><td style="padding: 8px 0; font-weight: 600; color: {color};">{status}</td></tr>
+    <tr><td style="padding: 8px 0; color: #6b7280;">Status</td><td style="padding: 8px 0; font-weight: 600; color: {color};">{status}</td></tr>{release_row}
   </table>
 </div>
 <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">Sent by Oore CI</p>
@@ -2410,6 +2440,40 @@ mod tests {
             "https://oore.example.com/builds/b1"
         );
         assert!(message["text"].as_str().unwrap().contains("<@U123>"));
+    }
+
+    #[test]
+    fn succeeded_build_says_where_its_release_stands() {
+        let mut payload = failed_build_payload();
+        payload["build"]["status"] = "succeeded".into();
+        payload["build"]["release_outcome"] = "in_review".into();
+
+        let slack = slack_message("build", &payload, None, None);
+        assert!(
+            slack["blocks"][1]["elements"][0]["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("Release: in store review")
+        );
+        let mattermost = build_mattermost_payload(&payload);
+        assert!(
+            mattermost["text"]
+                .as_str()
+                .unwrap()
+                .ends_with("\nRelease: in store review")
+        );
+        let (_, html) = build_email_html(&payload);
+        assert!(html.contains(">in store review</td>"));
+
+        // A build with no store release says nothing about one.
+        let (_, html) = build_email_html(&failed_build_payload());
+        assert!(!html.contains(">Release</td>"));
+        assert!(
+            !build_mattermost_payload(&failed_build_payload())["text"]
+                .as_str()
+                .unwrap()
+                .contains("Release:")
+        );
     }
 
     #[test]

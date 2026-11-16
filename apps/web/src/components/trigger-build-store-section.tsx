@@ -3,52 +3,23 @@ import {
   AlertCircleIcon,
   CheckmarkCircle02Icon,
 } from '@hugeicons/core-free-icons'
-import type { UseFormReturn } from 'react-hook-form'
-import type { StoreReadinessItem } from '@oore/client/models'
+import type {
+  StoreReadinessItem,
+  StoreReadinessResponse,
+} from '@oore/client/models'
 import { Button } from '@/components/ui/button'
-import {
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Textarea } from '@/components/ui/textarea'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
-import { useBuilds } from '@/hooks/use-builds'
-import { usePipelinePublishReadiness } from '@/hooks/use-pipeline-publish'
+import {
+  usePipelineAppStorePublish,
+  usePipelineGooglePlayPublish,
+  usePipelinePublishReadiness,
+} from '@/hooks/use-pipeline-publish'
+import { describeStoreUploads } from '@/lib/store-destination'
+import type { BuildPlatform } from '@oore/client/models'
 import { cn } from '@/lib/utils'
-import type { TriggerBuildForm } from '@/components/trigger-build-form'
-
-/** Longest release notes Google Play takes per language. */
-const PLAY_NOTES_LIMIT = 500
-
-/**
- * Drafted changelog markdown ("- Fix login — Mina") as notes people read
- * in a store: one line per change, without authors or markdown.
- */
-export function storeNotesFromChangelog(markdown: string | undefined) {
-  if (!markdown) return ''
-  return markdown
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('- ') && !line.startsWith('- …'))
-    .map((line) =>
-      line
-        .slice(2)
-        .replace(/ — [^—]*$/, '')
-        .replace(/\\(.)/g, '$1')
-        // "feat(login): faster sign in" reads as "Faster sign in".
-        .replace(/^[a-z]+(\([^)]*\))?!?:\s*/, ''),
-    )
-    .filter(Boolean)
-    .map((title) => `• ${title.charAt(0).toUpperCase()}${title.slice(1)}`)
-    .join('\n')
-}
 
 const STORE_NAME = {
   app_store: 'App Store',
@@ -56,20 +27,63 @@ const STORE_NAME = {
 } satisfies Record<StoreReadinessItem['store'], string>
 
 /**
+ * Where this build goes, in one sentence at the top of Run build: the
+ * picked workflow's uploads when its file names some, otherwise the
+ * pipeline's publishing settings.
+ */
+export function TriggerBuildDestination({
+  enabled,
+  filePublishes,
+  pipelineId,
+  platforms,
+}: {
+  enabled: boolean
+  filePublishes: Array<string>
+  pipelineId: string
+  platforms: ReadonlyArray<BuildPlatform>
+}) {
+  const android = platforms.includes('android')
+  const ios = platforms.includes('ios')
+  const playQuery = usePipelineGooglePlayPublish(pipelineId, {
+    enabled: enabled && android && filePublishes.length === 0,
+  })
+  const appStoreQuery = usePipelineAppStorePublish(pipelineId, {
+    enabled: enabled && ios && filePublishes.length === 0,
+  })
+  let sentence: string | null
+  if (filePublishes.length > 0) {
+    // "android publishes to … (workflows.release…)" as a sentence.
+    sentence = filePublishes
+      .map((line) => line.replace(/\s*\([^)]*\)$/, ''))
+      .map((line) => `${line.charAt(0).toUpperCase()}${line.slice(1)}.`)
+      .join(' ')
+  } else if ((android && !playQuery.data) || (ios && !appStoreQuery.data)) {
+    sentence = null
+  } else {
+    sentence = describeStoreUploads({
+      googlePlay: android ? playQuery.data?.config : null,
+      appStore: ios ? appStoreQuery.data?.config : null,
+    })
+  }
+  if (!sentence) return <Skeleton className="h-5 w-64" />
+  return (
+    <p className="text-sm" aria-live="polite">
+      {sentence}
+    </p>
+  )
+}
+
+/**
  * For a build that uploads to a store: what would stop the submission, so
  * it shows before a long build rather than after, and the release notes
  * for this release.
  */
 export function TriggerBuildStoreSection({
-  form,
   pipelineId,
-  changelogMarkdown,
   enabled,
   filePublishes,
 }: {
-  form: UseFormReturn<TriggerBuildForm>
   pipelineId: string
-  changelogMarkdown: string | undefined
   enabled: boolean
   /** Store uploads the chosen workflow's file names. */
   filePublishes: Array<string>
@@ -77,80 +91,22 @@ export function TriggerBuildStoreSection({
   const readiness = usePipelinePublishReadiness(pipelineId, {
     enabled: enabled && !!pipelineId,
   })
-  // The last notes someone wrote for this pipeline, to start from.
-  const lastNotesQuery = useBuilds(
-    { pipeline_id: pipelineId, limit: 20 },
-    {
-      enabled: enabled && !!pipelineId,
-      select: (data) =>
-        data.builds.find((build) => build.store_notes?.trim()) ?? null,
-    },
-  )
   const items = readiness.data?.items ?? []
   const uploads = items.length > 0 || filePublishes.length > 0
   if (!pipelineId || (!uploads && !readiness.isPending)) return null
   if (readiness.isPending && filePublishes.length === 0) return null
 
-  const lastNotes = lastNotesQuery.data
-  const drafted = storeNotesFromChangelog(changelogMarkdown)
-
   return (
     <Stack gap={4} className="rounded-lg border p-4">
       <StoreReadinessChecklist readiness={readiness} />
-
-      <FormField
-        control={form.control}
-        name="store_notes"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>What's new in this release</FormLabel>
-            <FormControl>
-              <Textarea
-                {...field}
-                value={field.value ?? ''}
-                rows={4}
-                placeholder="Leave empty to use the release notes in the pipeline's publish settings."
-              />
-            </FormControl>
-            <Row gap={1} className="flex-wrap">
-              {drafted ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() =>
-                    form.setValue('store_notes', drafted, {
-                      shouldDirty: true,
-                    })
-                  }
-                >
-                  Draft from commits
-                </Button>
-              ) : null}
-              {lastNotes?.store_notes ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  onClick={() =>
-                    form.setValue('store_notes', lastNotes.store_notes ?? '', {
-                      shouldDirty: true,
-                    })
-                  }
-                >
-                  Same as #{lastNotes.build_number}
-                </Button>
-              ) : null}
-            </Row>
-            <FormDescription>
-              Testers and store users read this. It replaces the pipeline's
-              notes for this build: Google Play shows the first{' '}
-              {PLAY_NOTES_LIMIT} characters.
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+      <Stack gap={1}>
+        <Text className="font-medium">Release notes</Text>
+        <Text variant="muted">
+          The stores get the release notes of the app version this build makes.
+          Oore drafts them from commits, and you can edit them on the build page
+          once the build starts.
+        </Text>
+      </Stack>
     </Stack>
   )
 }
@@ -162,14 +118,21 @@ export function TriggerBuildStoreSection({
 export function StoreReadinessChecklist({
   readiness,
   title = 'Ready to submit?',
+  blockingNote,
 }: {
-  readiness: ReturnType<typeof usePipelinePublishReadiness>
+  readiness: {
+    data?: StoreReadinessResponse
+    isPending: boolean
+    error: unknown
+  }
   title?: string
+  /** Replaces the note under blocking findings. */
+  blockingNote?: string
 }) {
   const items = readiness.data?.items ?? []
   const problems = items.filter((item) => item.level !== 'ok')
   return (
-    <Stack gap={2} role="group" aria-label="Ready to submit?">
+    <Stack gap={2} role="group" aria-label={title}>
       <p className="text-sm font-medium">{title}</p>
       {readiness.isPending ? (
         <Skeleton className="h-10 w-full" />
@@ -236,9 +199,10 @@ export function StoreReadinessChecklist({
       )}
       {problems.some((item) => item.level === 'block') ? (
         <Text variant="caption">
-          {readiness.data?.preflight === 'warn'
-            ? 'The upload goes ahead, but the store will refuse it until these are fixed.'
-            : 'Fix these first, or the publish step stops before the upload.'}
+          {blockingNote ??
+            (readiness.data?.preflight === 'warn'
+              ? 'The upload goes ahead, but the store will refuse it until these are fixed.'
+              : 'Fix these first, or the publish step stops before the upload.')}
         </Text>
       ) : null}
     </Stack>

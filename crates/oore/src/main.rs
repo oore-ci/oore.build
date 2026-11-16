@@ -41,6 +41,7 @@ mod install_lock;
 mod install_manifest;
 mod installer;
 mod managed_services;
+mod notes_commands;
 mod pipeline_credentials;
 mod setup_journey;
 mod uninstaller;
@@ -150,6 +151,8 @@ enum Commands {
     Pipeline(PipelineArgs),
     /// Start a build of a pipeline
     Build(BuildArgs),
+    /// Read and write the release notes of an app version
+    Notes(notes_commands::NotesArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
@@ -885,6 +888,10 @@ struct BuildArgs {
 enum BuildSubcommand {
     /// Queue a build of a pipeline, optionally naming its workflow.
     Run(build_commands::BuildRunArgs),
+    /// Follow a build to its result, and with --store to the store's answer.
+    /// Exits 1 when the build does not succeed, and 3 with --store when the
+    /// store blocks, rejects or fails its release.
+    Watch(build_commands::BuildWatchArgs),
 }
 
 #[derive(Debug, Args)]
@@ -892,8 +899,9 @@ struct PipelineValidateArgs {
     /// Repository pipeline file to validate.
     #[arg(default_value = ".oore.yaml")]
     path: PathBuf,
-    /// Also check the signing identities and secrets the file names against
-    /// this project, with the stored session.
+    /// Also check the signing identities and secrets the file names,
+    /// including `${{ secrets.NAME }}` references, against this project, with
+    /// the stored session.
     #[arg(long, value_name = "PROJECT_ID")]
     project: Option<String>,
     /// With --project, also look for secrets in this pipeline's scope.
@@ -13427,11 +13435,21 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(build_commands::handle_pipeline_readiness(args))?;
             }
         },
+        Commands::Notes(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(notes_commands::handle_notes(args))?;
+        }
         Commands::Build(build) => match build.command {
             BuildSubcommand::Run(args) => {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(build_commands::handle_build_run(args))?;
+            }
+            BuildSubcommand::Watch(args) => {
+                let runtime =
+                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+                runtime.block_on(build_commands::handle_build_watch(args))?;
             }
         },
         Commands::Version => {

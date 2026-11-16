@@ -71,6 +71,7 @@ pub mod testers;
 pub mod token;
 pub mod users;
 pub mod util;
+pub mod version_notes;
 pub mod web_push;
 
 use std::net::{IpAddr, SocketAddr};
@@ -3039,6 +3040,14 @@ pub async fn build_router_with_recovery(
         )
         .route("/v1/release-events", get(releases::list_release_activity))
         .route(
+            "/v1/projects/{project_id}/release-notes/{version_name}",
+            get(version_notes::get_release_notes).put(version_notes::update_release_notes),
+        )
+        .route(
+            "/v1/projects/{project_id}/release-notes/{version_name}/draft",
+            get(version_notes::draft_release_notes),
+        )
+        .route(
             "/v1/release-freezes",
             get(release_freezes::list_release_freezes).put(release_freezes::set_release_freeze),
         )
@@ -3055,6 +3064,10 @@ pub async fn build_router_with_recovery(
             "/v1/projects/{project_id}/environments/{environment_id}",
             axum::routing::patch(environments::update_project_environment)
                 .delete(environments::delete_project_environment),
+        )
+        .route(
+            "/v1/projects/{project_id}/environments/{environment_id}/readiness",
+            get(environments::get_promotion_readiness),
         )
         .route(
             "/v1/projects/{project_id}/promotions",
@@ -3138,6 +3151,10 @@ pub async fn build_router_with_recovery(
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/rehearsal",
             post(rehearsals::report_job_rehearsal),
+        )
+        .route(
+            "/v1/runners/{runner_id}/jobs/{job_id}/app-store-preflight",
+            post(store_readiness::check_job_app_store_preflight),
         )
         .route(
             "/v1/runners/{runner_id}/jobs/{job_id}/test-results",

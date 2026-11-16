@@ -42,7 +42,7 @@ export function BuildsEmptyState({
           <EmptyDescription>
             {runtimeMode === 'local'
               ? 'Builds run from app pipelines. Create an app from a Git repository on this Mac, add a pipeline, and your builds will show up here.'
-              : 'Builds run from project pipelines. Create a project from a GitHub or GitLab repository, add a pipeline, and your builds will show up here.'}
+              : 'Builds run from app pipelines. Add your app from a GitHub or GitLab repository, add a pipeline, and your builds will show up here.'}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>

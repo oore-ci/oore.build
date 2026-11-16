@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
   useForm,
@@ -20,6 +20,7 @@ import type { PipelineAndroidSigningResponse } from '@oore/client/models'
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { relativeTime } from '@/lib/format-utils'
 import { buildsAppBundle } from '@/lib/pipeline-form-utils'
+import { PLAY_TRACKS } from '@/lib/store-destination'
 import { toast } from '@/lib/toast'
 import {
   usePipelineGooglePlayPublish,
@@ -37,6 +38,7 @@ import {
 import { useHasPermissions } from '@/hooks/use-permissions'
 import { CollectionError } from '@/components/collection'
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard'
+import { AdvancedOptions } from '@/components/publish/advanced-options'
 import {
   PublishReadiness,
   type ReadinessCheck,
@@ -77,25 +79,7 @@ import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
 
 const TRACKS = {
-  internal: {
-    label: 'Internal testing',
-    effect:
-      'Up to 100 testers you list in Play Console get it within minutes. Staged rollouts are not available.',
-  },
-  closed: {
-    label: 'Closed testing',
-    effect:
-      'Testers you invite by email or Google Group get it (Play’s alpha track).',
-  },
-  open: {
-    label: 'Open testing',
-    effect:
-      'Anyone can join the test from your Play Store listing (Play’s beta track).',
-  },
-  production: {
-    label: 'Production',
-    effect: 'Everyone on Google Play gets it once Google approves the release.',
-  },
+  ...PLAY_TRACKS,
   custom: {
     label: 'Custom track',
     effect: 'A custom closed testing track you created in Play Console.',
@@ -113,9 +97,9 @@ const RELEASE_TYPES = {
   draft: 'Draft',
 } as const
 
+// "none" is no longer offered: a version without notes sends none anyway.
 const RELEASE_NOTES = {
-  none: 'None',
-  changelog: 'Build changelog',
+  changelog: 'The version’s release notes',
   repo_files: 'Files in the repository',
 } as const
 
@@ -133,7 +117,7 @@ const PRIORITY_VALUES = z.enum(['none', '0', '1', '2', '3', '4', '5'])
 
 const SCOPE_LABEL = {
   instance: 'instance',
-  project: 'project',
+  project: 'app',
   pipeline: 'pipeline',
 } as const satisfies Record<SecretScope, string>
 
@@ -228,6 +212,8 @@ interface CredentialsCheckState {
   error: Error | null
   pending: boolean
   onTest: (secret: string, packageName: string | null) => void
+  /** The secret whose check the readiness list already shows. */
+  shownSecret: string
 }
 
 function isTrackChoice(track: string): track is Exclude<TrackChoice, 'custom'> {
@@ -255,7 +241,8 @@ function toFormValues(
         ? 'staged'
         : 'full',
     rollout_percent: percent != null && percent < 100 ? String(percent) : '5',
-    release_notes: config?.release_notes ?? 'changelog',
+    release_notes:
+      config?.release_notes === 'repo_files' ? 'repo_files' : 'changelog',
     release_notes_locale: config?.release_notes_locale ?? 'en-US',
     release_notes_dir: config?.release_notes_dir ?? '',
     listing_dir: config?.listing_dir ?? '',
@@ -328,7 +315,7 @@ function describeEffect(values: EffectValues) {
         : 'and released to everyone on that track'
   const notes =
     values.release_notes === 'changelog'
-      ? ` The build changelog becomes the ${values.release_notes_locale || 'en-US'} release notes.`
+      ? ` The version’s release notes go with it in ${values.release_notes_locale || 'en-US'}.`
       : values.release_notes === 'repo_files'
         ? ` Release notes come from ${values.release_notes_dir || 'a repository directory'}.`
         : ''
@@ -451,7 +438,7 @@ function ServiceAccountField({
             {!value
               ? 'Store the whole service account JSON key file as a secret, then choose it here.'
               : scope
-                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}. A pipeline secret overrides an app secret, which overrides an instance secret. Uploads read it on the runner that builds the app.`
+                ? `Uses the ${SCOPE_LABEL[scope]} secret ${value}.`
                 : savedPresent
                   ? `Uses ${value} from a scope you can’t list.`
                   : `No secret named ${value} is visible to this pipeline. The upload step will fail until you add it.`}
@@ -478,7 +465,11 @@ function CredentialsCheck({
     control: form.control,
     name: ['service_account_secret', 'package_name'],
   })
-  const result = credentials.results.get(secret)
+  // The readiness list above already shows the saved key's result.
+  const result =
+    secret === credentials.shownSecret
+      ? undefined
+      : credentials.results.get(secret)
 
   return (
     <Stack gap={3}>
@@ -683,11 +674,9 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
                 </SelectContent>
               </Select>
               <FormDescription>
-                {field.value === 'none'
-                  ? 'Users see no “What’s new” text for this release.'
-                  : field.value === 'changelog'
-                    ? 'The build changelog, shortened to Play’s 500-character limit.'
-                    : 'One <locale>.txt file per language, such as en-US.txt.'}
+                {field.value === 'repo_files'
+                  ? 'One <locale>.txt file per language, such as en-US.txt.'
+                  : 'Written once per app version on the build page, or read from a changelog in .oore.yaml. Play shows the first 500 characters; a version without notes sends none.'}
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -699,7 +688,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
             name="release_notes_locale"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Language</FormLabel>
+                <FormLabel>Language of the notes</FormLabel>
                 <FormControl>
                   <Input className="font-mono" placeholder="en-US" {...field} />
                 </FormControl>
@@ -731,9 +720,30 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
   )
 }
 
+const ADVANCED_FIELDS = [
+  'listing_dir',
+  'package_name',
+  'in_app_update_priority',
+  'upload_mapping',
+  'preflight',
+] as const
+
 function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
+  const [listingDir, packageName, priority, uploadMapping, preflight] =
+    useWatch({ control: form.control, name: ADVANCED_FIELDS })
+  const { errors } = useFormState({ control: form.control })
+  const changed =
+    !!listingDir ||
+    !!packageName ||
+    priority !== 'none' ||
+    !uploadMapping ||
+    preflight !== 'auto'
   return (
-    <Stack gap={4}>
+    <AdvancedOptions
+      changed={changed}
+      hasError={ADVANCED_FIELDS.some((name) => !!errors[name])}
+      summary="Store listing, expected package, update priority, mapping.txt, pre-flight checks"
+    >
       <FormField
         control={form.control}
         name="listing_dir"
@@ -866,7 +876,7 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
           </FormItem>
         )}
       />
-    </Stack>
+    </AdvancedOptions>
   )
 }
 
@@ -874,6 +884,7 @@ function GooglePlayPublishForm({
   canShareSecrets,
   canWrite,
   credentials,
+  onEnabledChange,
   pipelineId,
   projectId,
   saved,
@@ -882,6 +893,7 @@ function GooglePlayPublishForm({
   canShareSecrets: boolean
   canWrite: boolean
   credentials: CredentialsCheckState
+  onEnabledChange: (enabled: boolean) => void
   pipelineId: string
   projectId: string
   saved: GooglePlayPublishResponse
@@ -903,6 +915,7 @@ function GooglePlayPublishForm({
   // One rule for both stores: Save needs a change, except that a first
   // setup with uploads on can be saved as it stands.
   const canSave = isDirty || (isNew && enabled)
+  useEffect(() => onEnabledChange(enabled), [enabled, onEnabledChange])
 
   function onSubmit(next: FormValues) {
     updateMutation.mutate(toConfig(next), {
@@ -923,29 +936,28 @@ function GooglePlayPublishForm({
           <SettingsSurface className="flex flex-col gap-6">
             <UploadToggle form={form} />
 
-            <SettingsSurfaceSeparator />
+            {enabled ? (
+              <>
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Credentials">
-              <ServiceAccountField
-                form={form}
-                saved={saved}
-                secretScopes={secretScopes}
-                onAddSecret={() => setAddSecretOpen(true)}
-              />
-              <CredentialsCheck form={form} credentials={credentials} />
-            </SettingsSection>
+                <SettingsSection title="Credentials">
+                  <ServiceAccountField
+                    form={form}
+                    saved={saved}
+                    secretScopes={secretScopes}
+                    onAddSecret={() => setAddSecretOpen(true)}
+                  />
+                  <CredentialsCheck form={form} credentials={credentials} />
+                </SettingsSection>
 
-            <SettingsSurfaceSeparator />
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Release">
-              <ReleaseFields form={form} />
-            </SettingsSection>
-
-            <SettingsSurfaceSeparator />
-
-            <SettingsSection title="Advanced">
-              <AdvancedFields form={form} />
-            </SettingsSection>
+                <SettingsSection title="Release">
+                  <ReleaseFields form={form} />
+                  <AdvancedFields form={form} />
+                </SettingsSection>
+              </>
+            ) : null}
 
             {updateMutation.error ? (
               <Alert variant="destructive">
@@ -957,7 +969,7 @@ function GooglePlayPublishForm({
               </Alert>
             ) : null}
 
-            {canWrite ? (
+            {canWrite && (enabled || isDirty) ? (
               <>
                 <SettingsSurfaceSeparator />
                 <div className="flex justify-end gap-2">
@@ -1026,6 +1038,10 @@ export function GooglePlayPublishSection({
     ReadonlyMap<string, GooglePlayCredentialsTest>
   >(new Map())
   const saved = publishQuery.data
+  // Follows the switch in the form, so the checks go away as soon as
+  // uploads are switched off, before the change is saved.
+  const [formEnabled, setFormEnabled] = useState<boolean | null>(null)
+  const uploadsOn = formEnabled ?? saved?.config?.enabled ?? true
   // The daemon keeps the latest check, so it survives a reload. A check run
   // on this page replaces it.
   const results = new Map(checkResults)
@@ -1034,6 +1050,7 @@ export function GooglePlayPublishSection({
     results.set(lastCheck.service_account_secret, lastCheck)
   }
   const credentials: CredentialsCheckState = {
+    shownSecret: '',
     results,
     error: testMutation.error,
     pending: testMutation.isPending,
@@ -1066,6 +1083,7 @@ export function GooglePlayPublishSection({
     (secretScopes.has(PLAY_SERVICE_ACCOUNT_SECRET)
       ? PLAY_SERVICE_ACCOUNT_SECRET
       : '')
+  credentials.shownSecret = saved ? secretName : ''
   const secretScope = secretScopes.get(secretName)
   const secretReady =
     !!secretScope ||
@@ -1114,7 +1132,7 @@ export function GooglePlayPublishSection({
       ready: secretReady,
       detail: secretReady
         ? `Uses ${secretName}${secretScope ? ` from the ${SCOPE_LABEL[secretScope]} secrets` : ''}.`
-        : 'Store the service account JSON key as a secret and choose it under Credentials below.',
+        : 'Store the service account JSON key as a secret and choose it under Credentials.',
     })
   }
   if (saved && secretReady) {
@@ -1162,7 +1180,16 @@ export function GooglePlayPublishSection({
       title="Google Play"
       hint="The runner that built the app uploads the signed App Bundle with your service account key."
     >
-      <PublishReadiness checks={checks} />
+      {uploadsOn ? (
+        <PublishReadiness
+          checks={checks}
+          checkedAt={
+            secretReady && results.get(secretName)?.ok
+              ? relativeTime(results.get(secretName)!.checked_at)
+              : undefined
+          }
+        />
+      ) : null}
 
       {publishQuery.error ? (
         <CollectionError
@@ -1175,6 +1202,7 @@ export function GooglePlayPublishSection({
           canShareSecrets={canShareSecrets}
           canWrite={canWrite}
           credentials={credentials}
+          onEnabledChange={setFormEnabled}
           pipelineId={pipelineId}
           projectId={projectId}
           saved={saved}

@@ -65,7 +65,10 @@ import { isNearScrollEnd } from '@/lib/scroll'
 import { Stack } from '@/components/layout/stack'
 import { Row } from '@/components/layout/row'
 import { Text } from '@/components/layout/text'
-import { TriggerBuildStoreSection } from '@/components/trigger-build-store-section'
+import {
+  TriggerBuildDestination,
+  TriggerBuildStoreSection,
+} from '@/components/trigger-build-store-section'
 import { TriggerBuildWorkflowField } from '@/components/trigger-build-workflow-field'
 import {
   choosableWorkflows,
@@ -243,7 +246,7 @@ function TriggerBuildBlockingAlerts({
       {issues.noPipelines ? (
         <Alert variant="destructive">
           <AlertDescription>
-            This project has no pipelines.{' '}
+            This app has no pipelines.{' '}
             {canConfigure && projectId ? (
               <Link
                 to="/projects/$projectId/pipelines/new"
@@ -419,7 +422,6 @@ function defaults(
     commit_sha: '',
     workflow: '',
     changelog: undefined,
-    store_notes: '',
   }
 }
 
@@ -740,7 +742,6 @@ export default function TriggerBuildDrawer({
           commit_sha: commitSha,
           trigger_ref: branch,
           changelog,
-          store_notes: data.store_notes?.trim() || undefined,
           workflow,
           platforms: buildPlatforms(availablePlatforms, data.platforms),
           rehearsal: rehearsal || undefined,
@@ -845,6 +846,14 @@ export default function TriggerBuildDrawer({
                     submitted, released or sent to testers.
                   </AlertDescription>
                 </Alert>
+              ) : null}
+              {selectedPipelineId && !rehearsal ? (
+                <TriggerBuildDestination
+                  enabled={open}
+                  pipelineId={selectedPipelineId}
+                  platforms={availablePlatforms}
+                  filePublishes={chosenWorkflow?.publishes ?? []}
+                />
               ) : null}
               <RecentRunChips
                 runs={recentRuns.filter(
@@ -1207,9 +1216,7 @@ export default function TriggerBuildDrawer({
               />
               {selectedPipelineId ? (
                 <TriggerBuildStoreSection
-                  form={form}
                   pipelineId={selectedPipelineId}
-                  changelogMarkdown={changelogPreviewQuery.data?.markdown}
                   enabled={open}
                   filePublishes={chosenWorkflow?.publishes ?? []}
                 />

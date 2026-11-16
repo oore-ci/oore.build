@@ -1,6 +1,6 @@
+import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import {
-  useFieldArray,
   useForm,
   useFormState,
   useWatch,
@@ -9,11 +9,7 @@ import {
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  Add01Icon,
-  Delete02Icon,
-  InformationCircleIcon,
-} from '@hugeicons/core-free-icons'
+import { InformationCircleIcon } from '@hugeicons/core-free-icons'
 
 import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { toast } from '@/lib/toast'
@@ -26,6 +22,7 @@ import {
 } from '@/hooks/use-pipeline-publish'
 import { CollectionError } from '@/components/collection'
 import { UnsavedChangesGuard } from '@/components/unsaved-changes-guard'
+import { AdvancedOptions } from '@/components/publish/advanced-options'
 import {
   PublishReadiness,
   type ReadinessCheck,
@@ -53,14 +50,10 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Stack } from '@/components/layout/stack'
-import { Text } from '@/components/layout/text'
 
 // Limits match the daemon's validation in app_store_publish.rs.
 const MAX_GROUPS = 20
 const MAX_GROUP_NAME_LENGTH = 128
-const MAX_NOTES = 40
-const MAX_NOTE_LENGTH = 4000
-const LOCALE_PATTERN = /^[A-Za-z0-9]+(-[A-Za-z0-9]+)*$/
 
 const DESTINATIONS = {
   testflight: 'TestFlight',
@@ -72,18 +65,6 @@ const formSchema = z
     enabled: z.boolean(),
     destination: z.enum(['testflight', 'app_store']),
     testflight_groups: z.string(),
-    release_notes: z.array(
-      z.object({
-        locale: z.string().trim(),
-        whats_new: z
-          .string()
-          .trim()
-          .max(
-            MAX_NOTE_LENGTH,
-            `App Store Connect allows at most ${MAX_NOTE_LENGTH} characters.`,
-          ),
-      }),
-    ),
     uses_non_exempt_encryption: z.boolean(),
     submit_for_review: z.boolean(),
     phased_release: z.boolean(),
@@ -150,24 +131,6 @@ const formSchema = z
         message: 'Name at least one TestFlight group.',
       })
     }
-    const seen = new Set<string>()
-    values.release_notes.forEach((note, index) => {
-      if (!note.locale && !note.whats_new) return
-      if (!LOCALE_PATTERN.test(note.locale) || note.locale.length > 16) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['release_notes', index, 'locale'],
-          message: 'Enter an App Store Connect locale such as en-US.',
-        })
-      } else if (seen.has(note.locale)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['release_notes', index, 'locale'],
-          message: 'This locale is already listed.',
-        })
-      }
-      seen.add(note.locale)
-    })
   })
 
 type FormValues = z.infer<typeof formSchema>
@@ -188,10 +151,6 @@ function toFormValues(config: AppStorePublishConfig): FormValues {
     enabled: config.enabled,
     destination: config.destination ?? 'testflight',
     testflight_groups: config.testflight_groups.join('\n'),
-    release_notes:
-      config.release_notes.length > 0
-        ? config.release_notes
-        : [{ locale: 'en-US', whats_new: '' }],
     uses_non_exempt_encryption: config.uses_non_exempt_encryption ?? false,
     submit_for_review: config.submit_for_review ?? false,
     phased_release: config.phased_release ?? false,
@@ -222,15 +181,21 @@ function fromLocalDateTime(value: string): string | null {
     : date.toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-function toConfig(values: FormValues): AppStorePublishConfig {
+/**
+ * The form's values as a config. Release notes now belong to each app
+ * version, so notes saved here by older versions of Oore are kept as they
+ * are: the daemon only reads them to seed a project's first version.
+ */
+function toConfig(
+  values: FormValues,
+  saved: AppStorePublishConfig,
+): AppStorePublishConfig {
   const appStore = values.destination === 'app_store'
   return {
     enabled: values.enabled,
     destination: values.destination,
     testflight_groups: parseGroups(values.testflight_groups),
-    release_notes: values.release_notes.filter(
-      (note) => note.locale && note.whats_new,
-    ),
+    release_notes: saved.release_notes,
     uses_non_exempt_encryption: values.uses_non_exempt_encryption,
     submit_for_review: appStore && values.submit_for_review,
     phased_release: appStore && values.phased_release,
@@ -517,81 +482,31 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
   )
 }
 
-function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
-  const destination = useWatch({ control: form.control, name: 'destination' })
-  const { fields, append, remove } = useFieldArray({
-    control: form.control,
-    name: 'release_notes',
-  })
-  const label = destination === 'testflight' ? 'What to Test' : 'What’s New'
+const ADVANCED_FIELDS = [
+  'release_notes_dir',
+  'listing_dir',
+  'preflight',
+  'uses_non_exempt_encryption',
+] as const
 
+function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
+  const [notesDir, listingDir, preflight, encryption] = useWatch({
+    control: form.control,
+    name: ADVANCED_FIELDS,
+  })
+  const { errors } = useFormState({ control: form.control })
   return (
-    <Stack gap={4}>
-      <Text variant="muted">
-        {destination === 'testflight'
-          ? 'Testers see this in TestFlight. Locales without text are left as they are in App Store Connect.'
-          : 'Users see this on the App Store. Locales without text are left as they are in App Store Connect.'}
-      </Text>
-      {fields.map((item, index) => (
-        <div
-          key={item.id}
-          className="grid gap-3 sm:grid-cols-[8rem_1fr_auto] sm:items-start"
-        >
-          <FormField
-            control={form.control}
-            name={`release_notes.${index}.locale`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="sm:sr-only">Locale</FormLabel>
-                <FormControl>
-                  <Input
-                    className="font-mono"
-                    placeholder="en-US"
-                    aria-label={`Locale ${index + 1}`}
-                    {...field}
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name={`release_notes.${index}.whats_new`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="sm:sr-only">{label}</FormLabel>
-                <FormControl>
-                  <Textarea
-                    rows={3}
-                    aria-label={`${label} ${index + 1}`}
-                    {...field}
-                  />
-                </FormControl>
-                <FormDescription>
-                  {field.value.length} / {MAX_NOTE_LENGTH}
-                </FormDescription>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => remove(index)}
-            aria-label={`Remove locale ${index + 1}`}
-          >
-            <HugeiconsIcon icon={Delete02Icon} />
-          </Button>
-        </div>
-      ))}
+    <AdvancedOptions
+      changed={!!notesDir || !!listingDir || preflight !== 'auto' || encryption}
+      hasError={ADVANCED_FIELDS.some((name) => !!errors[name])}
+      summary="Notes and store listing from the repository, pre-flight checks, export compliance"
+    >
       <FormField
         control={form.control}
         name="release_notes_dir"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Notes from the repository</FormLabel>
+            <FormLabel>Release notes from the repository</FormLabel>
             <FormControl>
               <Input
                 className="font-mono"
@@ -601,9 +516,11 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
               />
             </FormControl>
             <FormDescription>
-              Optional. A directory with one file per locale, such as en-US.txt,
-              or fastlane’s en-US/release_notes.txt. When a build has it, its
-              notes replace the ones above.
+              Optional. Release notes belong to each app version: Oore drafts
+              them from commits and you edit them on the build page. To keep
+              them in the repository instead, name a directory with one file per
+              locale, such as en-US.txt, or fastlane’s en-US/release_notes.txt.
+              A release_notes entry in .oore.yaml does the same for every store.
             </FormDescription>
             <FormMessage />
           </FormItem>
@@ -633,29 +550,56 @@ function ReleaseNotesFields({ form }: { form: UseFormReturn<FormValues> }) {
           </FormItem>
         )}
       />
-      {fields.length < MAX_NOTES ? (
-        <div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => append({ locale: '', whats_new: '' })}
-          >
-            <HugeiconsIcon icon={Add01Icon} />
-            Add locale
-          </Button>
-        </div>
-      ) : null}
-    </Stack>
+      <FormField
+        control={form.control}
+        name="preflight"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>Pre-flight checks</FormLabel>
+            <FormControl>
+              <RadioGroup
+                value={field.value}
+                onValueChange={field.onChange}
+                className="flex flex-wrap gap-x-6 gap-y-2"
+              >
+                {Object.entries(PREFLIGHT_LEVELS).map(([value, label]) => (
+                  <label
+                    key={value}
+                    className="flex items-center gap-2 text-sm"
+                  >
+                    <RadioGroupItem value={value} />
+                    {label}
+                  </label>
+                ))}
+              </RadioGroup>
+            </FormControl>
+            <FormDescription>
+              Before uploading, the runner checks for what Apple refuses after
+              the upload, such as an app icon with transparency. Automatic warns
+              until a release from this pipeline has been accepted, then stops
+              the upload.
+            </FormDescription>
+          </FormItem>
+        )}
+      />
+      <SwitchField
+        form={form}
+        name="uses_non_exempt_encryption"
+        label="Uses non-exempt encryption"
+        description="Oore answers Apple’s export compliance question with this on every build. Leave it off if the app only uses encryption built into iOS, such as HTTPS."
+      />
+    </AdvancedOptions>
   )
 }
 
 function AppStorePublishForm({
   canWrite,
+  onEnabledChange,
   pipelineId,
   saved,
 }: {
   canWrite: boolean
+  onEnabledChange: (enabled: boolean) => void
   pipelineId: string
   saved: AppStorePublishResponse
 }) {
@@ -671,9 +615,10 @@ function AppStorePublishForm({
   // Same rule as Google Play: Save needs a change, except that a first
   // setup with uploads on can be saved as it stands.
   const canSave = isDirty || (isNew && enabled)
+  useEffect(() => onEnabledChange(enabled), [enabled, onEnabledChange])
 
   function onSubmit(next: FormValues) {
-    updateMutation.mutate(toConfig(next), {
+    updateMutation.mutate(toConfig(next, saved.config), {
       onSuccess: (response) => {
         form.reset(toFormValues(response.config))
         toast.success('App Store settings saved')
@@ -691,67 +636,19 @@ function AppStorePublishForm({
           <SettingsSurface className="flex flex-col gap-6">
             <UploadToggle form={form} />
 
-            <SettingsSurfaceSeparator />
+            {enabled ? (
+              <>
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Destination">
-              <DestinationFields form={form} />
-            </SettingsSection>
+                <SettingsSection title="Destination">
+                  <DestinationFields form={form} />
+                </SettingsSection>
 
-            <SettingsSurfaceSeparator />
+                <SettingsSurfaceSeparator />
 
-            <SettingsSection title="Release notes">
-              <ReleaseNotesFields form={form} />
-            </SettingsSection>
-
-            <SettingsSurfaceSeparator />
-
-            <SettingsSection title="Pre-flight checks">
-              <FormField
-                control={form.control}
-                name="preflight"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel className="sr-only">Pre-flight checks</FormLabel>
-                    <FormControl>
-                      <RadioGroup
-                        value={field.value}
-                        onValueChange={field.onChange}
-                        className="flex flex-wrap gap-x-6 gap-y-2"
-                      >
-                        {Object.entries(PREFLIGHT_LEVELS).map(
-                          ([value, label]) => (
-                            <label
-                              key={value}
-                              className="flex items-center gap-2 text-sm"
-                            >
-                              <RadioGroupItem value={value} />
-                              {label}
-                            </label>
-                          ),
-                        )}
-                      </RadioGroup>
-                    </FormControl>
-                    <FormDescription>
-                      Before uploading, the runner checks for what Apple refuses
-                      after the upload, such as an app icon with transparency.
-                      Automatic warns until a release from this pipeline has
-                      been accepted, then stops the upload.
-                    </FormDescription>
-                  </FormItem>
-                )}
-              />
-            </SettingsSection>
-
-            <SettingsSurfaceSeparator />
-
-            <SettingsSection title="Export compliance">
-              <SwitchField
-                form={form}
-                name="uses_non_exempt_encryption"
-                label="Uses non-exempt encryption"
-                description="Oore answers Apple’s export compliance question with this on every build. Leave it off if the app only uses encryption built into iOS, such as HTTPS."
-              />
-            </SettingsSection>
+                <AdvancedFields form={form} />
+              </>
+            ) : null}
 
             {updateMutation.error ? (
               <Alert variant="destructive">
@@ -763,7 +660,7 @@ function AppStorePublishForm({
               </Alert>
             ) : null}
 
-            {canWrite ? (
+            {canWrite && (enabled || isDirty) ? (
               <>
                 <SettingsSurfaceSeparator />
                 <div className="flex justify-end gap-2">
@@ -813,6 +710,10 @@ export function AppStorePublishSection({
 }) {
   const publishQuery = usePipelineAppStorePublish(pipelineId)
   const data = publishQuery.data
+  // Follows the switch in the form, so the checks go away as soon as
+  // uploads are switched off, before the change is saved.
+  const [formEnabled, setFormEnabled] = useState<boolean | null>(null)
+  const uploadsOn = formEnabled ?? data?.config.enabled ?? false
   const storeReadiness = usePipelinePublishReadiness(pipelineId, {
     enabled: !!data?.config.enabled,
   })
@@ -893,7 +794,7 @@ export function AppStorePublishSection({
       title="App Store Connect"
       hint="The Mac that built the app uploads the signed IPA with the API key from iOS signing."
     >
-      {checks.length > 0 ? (
+      {uploadsOn && checks.length > 0 ? (
         <PublishReadiness
           checks={checks}
           footnote={
@@ -913,6 +814,7 @@ export function AppStorePublishSection({
       ) : data ? (
         <AppStorePublishForm
           canWrite={canWrite}
+          onEnabledChange={setFormEnabled}
           pipelineId={pipelineId}
           saved={data}
         />

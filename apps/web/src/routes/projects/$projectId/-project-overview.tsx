@@ -9,7 +9,6 @@ import { ReleaseActivity } from '@/components/releases/release-activity'
 import { ReleaseBoard } from '@/components/releases/release-board'
 import { StatusBadge } from '@/components/status-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Item,
@@ -163,10 +162,7 @@ function LatestApps({
       {apps.map(({ artifact, label }) => (
         <Item key={artifact.id} variant="outline" size="sm">
           <ItemContent className="min-w-0">
-            <ItemTitle>
-              {projectName}
-              <Badge variant="secondary">{label}</Badge>
-            </ItemTitle>
+            <ItemTitle>{label}</ItemTitle>
             <ItemDescription className="truncate">
               {artifact.name}
               {artifact.file_size != null
@@ -260,7 +256,10 @@ export default function ProjectOverview({
           )}
         </OverviewSection>
       ) : null}
-      <ReleaseBoard projectId={projectId} />
+      <ReleaseBoard
+        projectId={projectId}
+        empty={<ReleaseActivity projectId={projectId} title="Releases" />}
+      />
       {showRecent ? (
         <OverviewSection
           title="Recent activity"
@@ -284,7 +283,7 @@ export default function ProjectOverview({
           ) : builds.length ? (
             <Stack role="list" gap={2}>
               {builds.slice(0, 5).map((build) => (
-                <BuildItem key={build.id} build={build} />
+                <BuildItem key={build.id} build={build} showProject={false} />
               ))}
             </Stack>
           ) : (
@@ -294,25 +293,22 @@ export default function ProjectOverview({
           )}
         </OverviewSection>
       ) : null}
-      <div className="grid items-start gap-8 lg:grid-cols-2">
-        {pipelines.length > 0 ? (
-          <OverviewSection
-            title="Pipelines"
-            action={
-              pipelines.length > OVERVIEW_PIPELINE_LIMIT ? (
-                <ViewAllLink projectId={projectId} tab="pipelines" />
-              ) : undefined
-            }
-          >
-            <PipelineSummary
-              lastBuildByPipeline={lastBuildByPipeline}
-              pipelines={pipelines}
-              projectId={projectId}
-            />
-          </OverviewSection>
-        ) : null}
-        <ReleaseActivity projectId={projectId} />
-      </div>
+      {pipelines.length > 0 ? (
+        <OverviewSection
+          title="Pipelines"
+          action={
+            pipelines.length > OVERVIEW_PIPELINE_LIMIT ? (
+              <ViewAllLink projectId={projectId} tab="pipelines" />
+            ) : undefined
+          }
+        >
+          <PipelineSummary
+            lastBuildByPipeline={lastBuildByPipeline}
+            pipelines={pipelines}
+            projectId={projectId}
+          />
+        </OverviewSection>
+      ) : null}
     </Stack>
   )
 }

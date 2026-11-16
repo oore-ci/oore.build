@@ -81,6 +81,8 @@ import { PageMeta } from '@/lib/seo'
 import { TRIGGER_TYPE_LABELS } from '@/lib/status-variants'
 import { formatEnumLabel, relativeTime } from '@/lib/format-utils'
 import { StatusBadge } from '@/components/status-badge'
+import { ReleaseOutcomeBadge } from '@/components/release-outcome-badge'
+import { isWaitingOnStore } from '@/lib/releases'
 import {
   BuildRehearsalCard,
   RehearsalBadge,
@@ -387,7 +389,6 @@ export function BuildDetailPage({
             branch: buildToRerun.branch ?? '',
             workflow: buildToRerun.workflow ?? '',
             changelog: buildToRerun.changelog ?? undefined,
-            store_notes: buildToRerun.store_notes ?? '',
           }
         : undefined,
     [buildToRerun],
@@ -703,6 +704,13 @@ export function BuildDetailPage({
                 releases={releases}
                 onOpenRelease={() => setActiveTab('release')}
               />
+              {/* Once no release waits on a store, say how they ended. */}
+              {releasesQuery.isSuccess && !releases.some(isWaitingOnStore) ? (
+                <ReleaseOutcomeBadge
+                  build={build}
+                  className="h-6 px-2.5 text-[13px]"
+                />
+              ) : null}
               {build.superseded_by ? (
                 <Link
                   to="/builds/$buildId"
@@ -1112,6 +1120,7 @@ export function BuildDetailPage({
             tests={testSummary ?? undefined}
             analysis={analysisCounts ?? undefined}
             retention={data?.retention}
+            releaseNotes={data?.release_notes}
             canShare={canManageShareLinks}
             onOpenTab={setActiveTab}
           />

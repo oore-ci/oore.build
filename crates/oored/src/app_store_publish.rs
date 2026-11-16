@@ -589,15 +589,20 @@ pub(crate) async fn record_upload(
         .await?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store publish settings"))?;
     let config = uploaded_config(config, reported);
-    let store_notes: Option<String> =
-        sqlx::query_scalar("SELECT store_notes FROM builds WHERE id = ?1")
-            .bind(build_id)
-            .fetch_optional(deps.pool)
-            .await?
-            .flatten();
+    // Notes the runner read from `release_notes_dir` win; otherwise the
+    // version's release notes replace the pipeline's saved ones.
+    let version_notes = if reported
+        .release_notes
+        .as_ref()
+        .is_some_and(|n| !n.is_empty())
+    {
+        None
+    } else {
+        crate::version_notes::sendable_for_build(deps.pool, build_id).await?
+    };
     let workflow_groups =
         crate::signing_identities::job_testflight_groups(deps.pool, build_id).await?;
-    let config = build_overrides(config, store_notes.as_deref(), workflow_groups);
+    let config = build_overrides(config, version_notes.as_ref(), workflow_groups);
     let ipa = load_uploaded_ipa(deps.pool, build_id).await?;
     let track = settings_track(&config);
     let config_json = serde_json::to_string(&config)?;
@@ -708,23 +713,18 @@ fn uploaded_config(
     config
 }
 
-/// What the build itself asked for: release notes written when it was
-/// started replace the first locale's notes (or add `en-US`), and the
-/// workflow settings' TestFlight groups replace the groups of a TestFlight
-/// upload.
+/// What the build itself carries: its version's release notes replace the
+/// pipeline's saved notes, and the workflow settings' TestFlight groups
+/// replace the groups of a TestFlight upload.
 fn build_overrides(
     mut config: AppStorePublishConfig,
-    store_notes: Option<&str>,
+    version_notes: Option<&oore_contract::VersionReleaseNotes>,
     workflow_groups: Option<Vec<String>>,
 ) -> AppStorePublishConfig {
-    if let Some(notes) = store_notes.map(str::trim).filter(|notes| !notes.is_empty()) {
-        let whats_new: String = notes.chars().take(MAX_WHATS_NEW_CHARS).collect();
-        match config.release_notes.first_mut() {
-            Some(first) => first.whats_new = whats_new,
-            None => config.release_notes.push(AppStoreReleaseNote {
-                locale: "en-US".to_string(),
-                whats_new,
-            }),
+    if let Some(notes) = version_notes {
+        let notes = crate::version_notes::app_store_notes(notes);
+        if !notes.is_empty() {
+            config.release_notes = notes;
         }
     }
     if let Some(groups) = workflow_groups
@@ -2041,6 +2041,23 @@ async fn promotion_version(
     }
 }
 
+/// Why promotion could not attach a build of `version` to an App Store
+/// version, in words, or `None` when it can. For the readiness check shown
+/// before a promotion.
+pub(crate) async fn promotion_version_problem(
+    asc: &impl AscApi,
+    app_id: &str,
+    version: &str,
+) -> Result<Option<String>, AscError> {
+    match promotion_version(asc, app_id, version).await {
+        Ok(_) => Ok(None),
+        Err(error) => match error.downcast::<PromotionRefused>() {
+            Ok(refusal) => Ok(Some(refusal.message)),
+            Err(error) => Err(AscError::new(format!("{error:#}"))),
+        },
+    }
+}
+
 /// Refuse to attach a build to a version another build is already attached
 /// to while Oore follows its review or phased release, so one promotion never
 /// replaces another build or submits the wrong one.
@@ -2174,15 +2191,21 @@ pub(crate) async fn promote_with(
         .await?;
         new_link.asc_version_id = Some(version_id);
         config.destination = AppStoreDestination::AppStore;
-        // No release notes: "What's New" is prepared in App Store Connect,
-        // and the upload's notes were written for TestFlight testers.
+        // "What's New" is the version's release notes; without them it is
+        // left as prepared in App Store Connect.
+        if let Some(notes) = target.release_notes {
+            config.release_notes = crate::version_notes::app_store_notes(notes);
+        }
         config.submit_for_review = target.submit_for_review;
         config.phased_release = target.phased_release;
         distribute_app_store(asc, &app_id, &build_id, &new_link, &config, Step::wait(0)).await
     } else {
         config.destination = AppStoreDestination::Testflight;
         config.testflight_groups = track_groups(target.track);
-        // The build keeps the "What to Test" notes its upload set.
+        // "What to Test" follows the version's notes as they are now.
+        if let Some(notes) = target.release_notes {
+            config.release_notes = crate::version_notes::app_store_notes(notes);
+        }
         distribute_testflight(asc, &app_id, &build_id, &beta, &config, Step::wait(0)).await
     }
     .map_err(asc_failed)?;
@@ -2318,41 +2341,53 @@ mod tests {
 
     use super::*;
 
+    fn version_notes(text: &str) -> oore_contract::VersionReleaseNotes {
+        oore_contract::VersionReleaseNotes {
+            project_id: "p".into(),
+            version_name: "2.5.1".into(),
+            text: text.into(),
+            locales: vec![oore_contract::ReleaseNotesLocale {
+                locale: "de-DE".into(),
+                text: "Schneller".into(),
+            }],
+            source: oore_contract::ReleaseNotesSource::Manual,
+            source_path: None,
+            drafted_since: None,
+            updated_at: 0,
+            updated_by: None,
+        }
+    }
+
     #[test]
-    fn notes_and_groups_chosen_for_the_build_win() {
+    fn version_notes_and_workflow_groups_win() {
         let saved = AppStorePublishConfig {
             destination: AppStoreDestination::Testflight,
             testflight_groups: vec!["Everyone".into()],
-            release_notes: vec![
-                AppStoreReleaseNote {
-                    locale: "en-GB".into(),
-                    whats_new: "Saved".into(),
-                },
-                AppStoreReleaseNote {
-                    locale: "de-DE".into(),
-                    whats_new: "Gespeichert".into(),
-                },
-            ],
+            release_notes: vec![AppStoreReleaseNote {
+                locale: "en-GB".into(),
+                whats_new: "Saved".into(),
+            }],
             ..AppStorePublishConfig::default()
         };
         let config = build_overrides(
             saved.clone(),
-            Some("  Faster sync  "),
+            Some(&version_notes("  Faster sync  ")),
             Some(vec!["QA".into()]),
         );
+        assert_eq!(config.release_notes.len(), 2);
+        assert_eq!(config.release_notes[0].locale, "en-US");
         assert_eq!(config.release_notes[0].whats_new, "Faster sync");
-        assert_eq!(config.release_notes[1].whats_new, "Gespeichert");
+        assert_eq!(config.release_notes[1].whats_new, "Schneller");
         assert_eq!(config.testflight_groups, vec!["QA"]);
 
-        let untouched = build_overrides(saved.clone(), Some("  "), None);
+        let untouched = build_overrides(saved.clone(), None, None);
         assert_eq!(untouched, saved);
 
         let store = AppStorePublishConfig {
             destination: AppStoreDestination::AppStore,
             ..AppStorePublishConfig::default()
         };
-        let config = build_overrides(store, Some("New"), Some(vec!["QA".into()]));
-        assert_eq!(config.release_notes[0].locale, "en-US");
+        let config = build_overrides(store, None, Some(vec!["QA".into()]));
         assert!(config.testflight_groups.is_empty());
     }
     use crate::app_store_connect_keys::tests::{insert_shared_key, insert_signing, signing_pool};

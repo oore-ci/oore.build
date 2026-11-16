@@ -190,7 +190,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
     if (!memberToRemove) return
     removeMutation.mutate(memberToRemove.user_id, {
       onSuccess: () => {
-        toast.success(`${memberToRemove.user_email} removed from this project`)
+        toast.success(`${memberToRemove.user_email} removed from this app`)
         setMemberToRemove(null)
       },
       onError: (error) => toast.error(error.message),
@@ -215,13 +215,13 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
           ) : error ? (
             <Alert variant="destructive" className="m-4 w-auto sm:m-5">
               <AlertDescription>
-                Failed to load project access: {error.message}
+                Failed to load app access: {error.message}
               </AlertDescription>
             </Alert>
           ) : members.length === 0 ? (
             <Text variant="muted" className="p-4 sm:p-5">
               No explicit app members yet. Owners and admins can always open
-              this project.
+              this app.
             </Text>
           ) : (
             <ItemGroup className="gap-0" role="list">
@@ -290,8 +290,8 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove app access?</AlertDialogTitle>
             <AlertDialogDescription>
-              {memberToRemove?.user_email} will no longer see this project’s
-              builds, logs, or artifacts.
+              {memberToRemove?.user_email} will no longer see this app’s builds,
+              logs, or artifacts.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

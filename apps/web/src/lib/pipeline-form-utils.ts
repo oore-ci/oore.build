@@ -528,3 +528,99 @@ export function moreSettingsSummary(
   }
   return `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}.`
 }
+
+const TRIGGER_EVENT_NAMES = new Map([
+  ['push', 'push'],
+  ['pull_request', 'pull request'],
+  ['tag_push', 'tag'],
+  ['merge_request', 'merge request'],
+])
+
+/**
+ * One line per closed section of the pipeline editor, saying what is set
+ * inside so the page reads without opening anything.
+ */
+export function pipelineSectionSummaries(
+  values: Pick<
+    PipelineFormValues,
+    | 'platform_android'
+    | 'platform_ios'
+    | 'android_signing_release_enabled'
+    | 'ios_signing_enabled'
+    | 'ios_signing_export_method'
+    | 'trigger_events'
+    | 'branches'
+    | 'schedules'
+    | 'approval_required'
+    | 'size_budget_rules'
+    | 'pre_build_commands'
+    | 'build_commands'
+    | 'post_build_commands'
+    | 'env_vars'
+  >,
+  manualOnlyTriggers = false,
+) {
+  const commands = [
+    values.pre_build_commands,
+    values.build_commands,
+    values.post_build_commands,
+  ].reduce((count, raw) => count + parseMultiline(raw).length, 0)
+  const envVars = parseMultiline(values.env_vars).filter((line) =>
+    line.includes('='),
+  ).length
+  const build = [
+    commands > 0
+      ? `Default commands plus ${commands} custom`
+      : 'Default commands',
+    ...(envVars > 0
+      ? [`${envVars} environment ${envVars === 1 ? 'variable' : 'variables'}`]
+      : []),
+  ].join(', ')
+
+  const signing = [
+    ...(values.platform_android
+      ? [
+          values.android_signing_release_enabled
+            ? 'Android release signed'
+            : 'Android release unsigned',
+        ]
+      : []),
+    ...(values.platform_ios
+      ? [
+          values.ios_signing_enabled
+            ? values.ios_signing_export_method === 'app_store'
+              ? 'iOS App Store signing'
+              : 'iOS ad hoc signing'
+            : 'iOS unsigned',
+        ]
+      : []),
+  ].join(', ')
+
+  const events = (values.trigger_events ?? []).map(
+    (event) => TRIGGER_EVENT_NAMES.get(event) ?? event.replaceAll('_', ' '),
+  )
+  const branches = parseCsv(values.branches)
+  const schedules = (values.schedules ?? []).length
+  let triggers: string
+  if (manualOnlyTriggers) {
+    triggers = 'Only when you start it'
+  } else {
+    const on =
+      events.length > 0
+        ? events.join(', ').replace(/, ([^,]*)$/, ' and $1')
+        : 'Every push, pull request and tag'
+    triggers = `${on.charAt(0).toUpperCase()}${on.slice(1)}${branches.length > 0 ? ` on ${branches.join(', ')}` : ''}`
+  }
+  if (schedules > 0) {
+    triggers += `, ${schedules} ${schedules === 1 ? 'schedule' : 'schedules'}`
+  }
+  if (values.approval_required) triggers += ', waits for approval'
+
+  const rules = (values.size_budget_rules ?? []).length
+  const sizeBudget =
+    rules === 0
+      ? 'No size rules'
+      : `${rules} size ${rules === 1 ? 'rule' : 'rules'}`
+
+  return { build, signing, triggers, sizeBudget }
+}
