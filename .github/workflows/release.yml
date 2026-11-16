@@ -139,8 +139,11 @@ jobs:
         with:
           bun-version: 1.4.4
 
+      # Self-hosted Macs share one user's ~/.cargo, and this cache's cleanup
+      # deletes registry sources another job is compiling from. Validate skips
+      # it on self-hosted runners for the same reason.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        if: env.SKIP_RUST_ACCEPTANCE != 'true'
+        if: env.SKIP_RUST_ACCEPTANCE != 'true' && runner.environment == 'github-hosted'
         with:
           cache-bin: false
           cache-on-failure: true
@@ -315,7 +318,9 @@ jobs:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           targets: ${{ matrix.target }}
 
+      # See the acceptance job: never on self-hosted runners.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: runner.environment == 'github-hosted'
         with:
           cache-bin: false
           cache-on-failure: true
