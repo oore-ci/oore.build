@@ -888,6 +888,7 @@ function PipelineDetailPage() {
           </Card>
           {canDelete ? (
             <DangerZone
+              surface="card"
               title="Delete this pipeline"
               description={`Permanently removes "${pipeline.name}" and its configuration from this app. This cannot be undone.`}
               action={
