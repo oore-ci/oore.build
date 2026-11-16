@@ -353,19 +353,16 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.commit }}
 
-      - name: Install Rust
-        run: |
-          set -euo pipefail
-          if ! command -v rustup > /dev/null 2>&1 && [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
-            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
-              | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
-          fi
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if [[ -f rust-toolchain.toml ]]; then
-            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-          fi
-          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # Same as the macOS builds: the self-hosted runner has no preinstalled
+      # rustup guarantee.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
 
       - name: Install Zig and cargo-zigbuild
         run: |
