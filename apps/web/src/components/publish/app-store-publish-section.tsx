@@ -37,7 +37,6 @@ import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -320,8 +319,7 @@ function SwitchField({
       render={({ field }) => (
         <FormItem className="flex flex-row items-start justify-between gap-4">
           <Stack gap={1}>
-            <FormLabel>{label}</FormLabel>
-            <FormDescription>{description}</FormDescription>
+            <FormLabel hint={description}>{label}</FormLabel>
           </Stack>
           <FormControl>
             <Switch
@@ -350,7 +348,16 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="destination"
         render={({ field }) => (
           <FormItem>
-            <FormLabel className="sr-only">Destination</FormLabel>
+            <FormLabel
+              hint={
+                field.value === 'testflight'
+                  ? 'Internal groups get the build as soon as it is processed. External groups wait for TestFlight beta review first.'
+                  : 'Apple creates the version if it does not exist yet. Nothing reaches users until the version is approved and released.'
+              }
+              className="sr-only"
+            >
+              Destination
+            </FormLabel>
             <FormControl>
               <RadioGroup
                 value={field.value}
@@ -368,11 +375,6 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
                 ))}
               </RadioGroup>
             </FormControl>
-            <FormDescription>
-              {field.value === 'testflight'
-                ? 'Internal groups get the build as soon as it is processed. External groups wait for TestFlight beta review first.'
-                : 'Apple creates the version if it does not exist yet. Nothing reaches users until the version is approved and released.'}
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -384,7 +386,13 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
           name="testflight_groups"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>TestFlight groups</FormLabel>
+              <FormLabel
+                hint={
+                  'One group name per line, as it appears in App Store Connect. A name that doesn’t exist fails the release.'
+                }
+              >
+                TestFlight groups
+              </FormLabel>
               <FormControl>
                 <Textarea
                   rows={3}
@@ -393,10 +401,6 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                One group name per line, as it appears in App Store Connect. A
-                name that doesn’t exist fails the release.
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -432,7 +436,17 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
             name="release_type"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Release after approval</FormLabel>
+                <FormLabel
+                  hint={
+                    field.value === 'manual'
+                      ? 'Approved versions wait for you. Release them from the release board with Release now.'
+                      : field.value === 'scheduled'
+                        ? 'Apple releases the approved version at this time, or on approval if the time has passed.'
+                        : 'Apple puts the version on the App Store as soon as App Review approves it.'
+                  }
+                >
+                  Release after approval
+                </FormLabel>
                 <FormControl>
                   <RadioGroup
                     value={field.value}
@@ -450,13 +464,6 @@ function DestinationFields({ form }: { form: UseFormReturn<FormValues> }) {
                     ))}
                   </RadioGroup>
                 </FormControl>
-                <FormDescription>
-                  {field.value === 'manual'
-                    ? 'Approved versions wait for you. Release them from the release board with Release now.'
-                    : field.value === 'scheduled'
-                      ? 'Apple releases the approved version at this time, or on approval if the time has passed.'
-                      : 'Apple puts the version on the App Store as soon as App Review approves it.'}
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -506,7 +513,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="release_notes_dir"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Release notes from the repository</FormLabel>
+            <FormLabel
+              hint={
+                'Release notes belong to each app version: Oore drafts them from commits and you edit them on the build page. To keep them in the repository instead, name a directory with one file per locale, such as en-US.txt, or fastlane’s en-US/release_notes.txt. A release_notes entry in .oore.yaml does the same for every store.'
+              }
+            >
+              Release notes from the repository
+            </FormLabel>
             <FormControl>
               <Input
                 className="font-mono"
@@ -515,13 +528,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 {...field}
               />
             </FormControl>
-            <FormDescription>
-              Optional. Release notes belong to each app version: Oore drafts
-              them from commits and you edit them on the build page. To keep
-              them in the repository instead, name a directory with one file per
-              locale, such as en-US.txt, or fastlane’s en-US/release_notes.txt.
-              A release_notes entry in .oore.yaml does the same for every store.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -531,7 +537,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="listing_dir"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Store listing from the repository</FormLabel>
+            <FormLabel
+              hint={
+                'fastlane’s layout: en-US/description.txt, keywords.txt, promotional_text.txt, marketing_url.txt and support_url.txt. Each version Oore submits gets them; files you leave out stay as they are in App Store Connect. Screenshots are not uploaded.'
+              }
+            >
+              Store listing from the repository
+            </FormLabel>
             <FormControl>
               <Input
                 className="font-mono"
@@ -540,12 +552,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 {...field}
               />
             </FormControl>
-            <FormDescription>
-              Optional. fastlane’s layout: en-US/description.txt, keywords.txt,
-              promotional_text.txt, marketing_url.txt and support_url.txt. Each
-              version Oore submits gets them; files you leave out stay as they
-              are in App Store Connect. Screenshots are not uploaded.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -555,7 +561,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="preflight"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Pre-flight checks</FormLabel>
+            <FormLabel
+              hint={
+                'Before uploading, the runner checks for what Apple refuses after the upload, such as an app icon with transparency. Automatic warns until a release from this pipeline has been accepted, then stops the upload.'
+              }
+            >
+              Pre-flight checks
+            </FormLabel>
             <FormControl>
               <RadioGroup
                 value={field.value}
@@ -573,12 +585,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 ))}
               </RadioGroup>
             </FormControl>
-            <FormDescription>
-              Before uploading, the runner checks for what Apple refuses after
-              the upload, such as an app icon with transparency. Automatic warns
-              until a release from this pipeline has been accepted, then stops
-              the upload.
-            </FormDescription>
           </FormItem>
         )}
       />

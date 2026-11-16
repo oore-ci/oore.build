@@ -250,7 +250,7 @@ export function ProjectAccessCard({ projectId }: { projectId: string }) {
                           ? `${member.user_email} · `
                           : ''}
                         {implicit
-                          ? `Implicit ${projectRole.toLowerCase()} access from their instance role`
+                          ? `${projectRole} through instance role`
                           : `${projectRole} on this app`}
                       </ItemDescription>
                     </ItemContent>

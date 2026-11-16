@@ -71,10 +71,6 @@ export function ArtifactObjectStorageFields({
                 <SelectItem value="custom">Custom S3-compatible</SelectItem>
               </SelectContent>
             </Select>
-            <FormDescription>
-              Presets apply sane defaults (R2 uses region `auto` and requires an
-              endpoint).
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -119,11 +115,6 @@ export function ArtifactObjectStorageFields({
                 }
               />
             </FormControl>
-            <FormDescription>
-              {objectService === 'cloudflare_r2'
-                ? 'Cloudflare R2 uses region `auto` for signing.'
-                : 'AWS region used for request signing.'}
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -134,7 +125,13 @@ export function ArtifactObjectStorageFields({
         name="s3_endpoint"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>
+            <FormLabel
+              hint={
+                objectService === 'aws_s3'
+                  ? 'Leave empty to use AWS defaults for the selected region.'
+                  : 'Base URL for the S3-compatible API endpoint.'
+              }
+            >
               {objectService === 'aws_s3'
                 ? 'Endpoint (optional)'
                 : 'Endpoint (required)'}
@@ -154,11 +151,6 @@ export function ArtifactObjectStorageFields({
                 disabled={!canWrite || isSaving}
               />
             </FormControl>
-            <FormDescription>
-              {objectService === 'aws_s3'
-                ? 'Leave empty to use AWS defaults for the selected region.'
-                : 'Base URL for the S3-compatible API endpoint.'}
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -169,7 +161,9 @@ export function ArtifactObjectStorageFields({
         name="access_key_id"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Access key ID</FormLabel>
+            <FormLabel hint={'Leave empty to keep the current stored value.'}>
+              Access key ID
+            </FormLabel>
             <FormControl>
               <Input
                 autoComplete="off"
@@ -182,9 +176,6 @@ export function ArtifactObjectStorageFields({
                 disabled={!canWrite || isSaving}
               />
             </FormControl>
-            <FormDescription>
-              Leave empty to keep the current stored value.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -209,9 +200,6 @@ export function ArtifactObjectStorageFields({
                 disabled={!canWrite || isSaving}
               />
             </FormControl>
-            <FormDescription>
-              Stored encrypted at rest using the daemon encryption key.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

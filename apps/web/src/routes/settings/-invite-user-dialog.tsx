@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -96,10 +95,6 @@ export default function InviteUserDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Invite a user</DialogTitle>
-          <DialogDescription>
-            Choose their instance role. App access can be assigned from a
-            project’s Settings tab.
-          </DialogDescription>
         </DialogHeader>
         <Form {...form}>
           <form className="space-y-4" onSubmit={form.handleSubmit(submit)}>

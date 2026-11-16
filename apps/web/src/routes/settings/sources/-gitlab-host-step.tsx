@@ -3,7 +3,6 @@ import type { UseFormReturn } from 'react-hook-form'
 import type { GitLabHostKind, GitLabSetupForm } from './-gitlab-setup'
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -37,9 +36,6 @@ export function GitLabHostStep({
     <section className="space-y-4">
       <div>
         <p className="text-sm font-medium">1. Choose GitLab host</p>
-        <Text variant="muted" className="mt-1">
-          GitLab.com and self-managed GitLab use the same connection flow.
-        </Text>
       </div>
       <div className="space-y-2">
         <Label htmlFor="gitlab-host">GitLab host</Label>
@@ -69,7 +65,16 @@ export function GitLabHostStep({
           name="host_url"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Self-managed host URL</FormLabel>
+              <FormLabel
+                hint={
+                  <>
+                    Host origin only. Oore normalizes a trailing slash; do not
+                    include <code>/api/v4</code> or a group path.
+                  </>
+                }
+              >
+                Self-managed host URL
+              </FormLabel>
               <FormControl>
                 <Input
                   {...field}
@@ -80,10 +85,6 @@ export function GitLabHostStep({
                   }}
                 />
               </FormControl>
-              <FormDescription>
-                Host origin only. Oore normalizes a trailing slash; do not
-                include <code>/api/v4</code> or a group path.
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

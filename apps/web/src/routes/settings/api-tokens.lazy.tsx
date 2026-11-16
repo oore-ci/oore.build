@@ -36,7 +36,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -178,9 +177,6 @@ function CreateTokenDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Create API token</DialogTitle>
-          <DialogDescription>
-            Create a new API token for programmatic access to this instance.
-          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -201,9 +197,6 @@ function CreateTokenDialog({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    A descriptive name to identify this token.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

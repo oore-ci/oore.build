@@ -39,7 +39,6 @@ import {
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Row } from '@/components/layout/row'
-import { Text } from '@/components/layout/text'
 import { focusRingVariants, rowVariants, splitRowVariants } from '@/lib/recipes'
 import { cn } from '@/lib/utils'
 
@@ -282,11 +281,6 @@ export function IntegrationRepositoryInventory({
 
   return (
     <section aria-label="Repositories" className="min-w-0 space-y-4">
-      <Text variant="muted">
-        Repositories discovered from this source are available when an owner or
-        admin creates an app.
-      </Text>
-
       {error ? (
         <Alert variant="destructive">
           <HugeiconsIcon icon={InformationCircleIcon} size={16} />

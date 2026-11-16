@@ -10,7 +10,6 @@ import { Label } from '@/components/ui/label'
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -309,10 +308,6 @@ function OidcConfigStep() {
           <h2 className="text-lg font-medium">
             Connect your identity provider
           </h2>
-          <Text variant="muted">
-            Enter the issuer URL and client credentials from your OIDC
-            application.
-          </Text>
         </div>
 
         {/* Redirect URI guidance */}
@@ -410,7 +405,17 @@ function OidcConfigStep() {
           name="clientSecret"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Client secret</FormLabel>
+              <FormLabel
+                hint={
+                  summary?.has_client_secret
+                    ? 'A client secret is saved. Leave this blank to keep it, or enter a new secret to replace it.'
+                    : selectedProvider === 'auth0'
+                      ? 'Required for the recommended Auth0 Regular Web Application. Oore encrypts it at rest.'
+                      : 'Leave this blank only when the provider uses a public client. Oore encrypts it at rest.'
+                }
+              >
+                Client secret
+              </FormLabel>
               <FormControl>
                 <Input
                   type="password"
@@ -431,13 +436,6 @@ function OidcConfigStep() {
                   }}
                 />
               </FormControl>
-              <FormDescription>
-                {summary?.has_client_secret
-                  ? 'A client secret is saved. Leave this blank to keep it, or enter a new secret to replace it.'
-                  : selectedProvider === 'auth0'
-                    ? 'Required for the recommended Auth0 Regular Web Application. Oore encrypts it at rest.'
-                    : 'Leave this blank only when the provider uses a public client. Oore encrypts it at rest.'}
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

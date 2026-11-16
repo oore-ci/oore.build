@@ -38,8 +38,6 @@ import {
 import type { BuildSort } from './-build-sort'
 import { useListNavigation } from '@/hooks/use-list-navigation'
 import { splitRowVariants } from '@/lib/recipes'
-import { useBuildScope } from '@/stores/build-scope-store'
-import { BuildScopeToggle } from '@/components/build-scope-toggle'
 
 const TriggerBuildDrawer = lazy(
   () => import('@/components/trigger-build-drawer'),
@@ -131,27 +129,21 @@ function OperationsBuildsPage() {
   const sort = search.sort ?? 'created_at'
   const direction = search.direction ?? 'desc'
   const createdBounds = searchDateRangeBounds(search.from, search.to)
-  const buildScope = useBuildScope()
-  const mine = buildScope.scope === 'mine'
-  const buildsQuery = useBuilds(
-    {
-      q: search.q,
-      project_id: search.project,
-      pipeline_id: search.pipeline,
-      status: search.status,
-      trigger: search.trigger,
-      branch: search.branch,
-      actor: search.actor,
-      mine: mine || undefined,
-      created_after: createdBounds.after,
-      created_before: createdBounds.before,
-      sort,
-      direction,
-      limit: pageSize,
-      offset: (page - 1) * pageSize,
-    },
-    { enabled: buildScope.resolved },
-  )
+  const buildsQuery = useBuilds({
+    q: search.q,
+    project_id: search.project,
+    pipeline_id: search.pipeline,
+    status: search.status,
+    trigger: search.trigger,
+    branch: search.branch,
+    actor: search.actor,
+    created_after: createdBounds.after,
+    created_before: createdBounds.before,
+    sort,
+    direction,
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  })
   const projectsQuery = useProjects({ limit: 1 })
   const setupStatusQuery = useSetupStatus()
   const [canTriggerBuildGlobally, canWriteProjects] = useHasPermissions([
@@ -174,7 +166,7 @@ function OperationsBuildsPage() {
     search.actor,
     search.from || search.to,
   ].filter(Boolean).length
-  const hasFilters = !!search.q || activeFilterCount > 0 || mine
+  const hasFilters = !!search.q || activeFilterCount > 0
   const branchSuggestions = [
     ...new Set(builds.flatMap((build) => (build.branch ? [build.branch] : []))),
   ]
@@ -205,13 +197,6 @@ function OperationsBuildsPage() {
         title="Builds"
         actions={
           <>
-            <BuildScopeToggle
-              scope={buildScope.scope}
-              onChange={(next) => {
-                buildScope.setScope(next)
-                updateSearch({ page: undefined })
-              }}
-            />
             {canTriggerBuild ? (
               <Suspense fallback={null}>
                 <TriggerBuildDrawer
@@ -286,7 +271,6 @@ function OperationsBuildsPage() {
           isLoading={buildsQuery.isLoading}
           isRefreshing={buildsQuery.isFetching && !buildsQuery.isLoading}
           onClearFilters={() => {
-            if (mine) buildScope.setScope('all')
             updateSearch({
               q: undefined,
               project: undefined,

@@ -154,10 +154,6 @@ function PlatformSelectionField({
               </Item>
             ))}
           </div>
-          <FormDescription>
-            Applies to this build only. Automatic builds still run every
-            configured platform.
-          </FormDescription>
           <FormMessage />
         </FormItem>
       )}
@@ -1153,10 +1149,6 @@ export default function TriggerBuildDrawer({
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>
-                        The runner checks out this exact commit instead of the
-                        branch head.
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

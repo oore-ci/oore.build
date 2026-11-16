@@ -101,11 +101,12 @@ function DirectRunnerPolicyControl() {
       <Item>
         <ItemContent>
           <ItemTitle>Accept builds from approved repositories</ItemTitle>
-          <ItemDescription>
-            {enabled
-              ? 'Connected runners claim new builds from approved repositories.'
-              : 'Paused. Builds in progress finish; new builds wait until you resume.'}
-          </ItemDescription>
+          {enabled ? null : (
+            <ItemDescription>
+              Paused. Builds in progress finish; new builds wait until you
+              resume.
+            </ItemDescription>
+          )}
           {!canWrite ? (
             <ItemDescription>
               Only an owner or admin can change this.

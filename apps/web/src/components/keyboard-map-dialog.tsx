@@ -8,7 +8,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -78,9 +77,6 @@ export default function KeyboardMapDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader className="pr-10">
           <DialogTitle>Keyboard shortcuts</DialogTitle>
-          <DialogDescription>
-            Shortcuts for this page. They never fire while you type.
-          </DialogDescription>
         </DialogHeader>
         <Stack gap={5}>
           {sections.map((section) => (

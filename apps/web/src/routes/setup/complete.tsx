@@ -20,7 +20,6 @@ import {
 } from '@/lib/instance-context'
 import { SetupStepError } from '@/components/setup-route-components'
 import { Row } from '@/components/layout/row'
-import { Text } from '@/components/layout/text'
 
 export const Route = createFileRoute('/setup/complete')({
   beforeLoad: () => {
@@ -77,9 +76,6 @@ function CompleteStep() {
       <PageMeta title="Setup Complete" />
       <div className="space-y-1">
         <h2 className="text-lg font-medium">Complete setup</h2>
-        <Text variant="muted">
-          Review your configuration and finalize the instance.
-        </Text>
       </div>
 
       <div className="grid [&>[data-slot=collapsible]]:col-start-1 [&>[data-slot=collapsible]]:row-start-1">

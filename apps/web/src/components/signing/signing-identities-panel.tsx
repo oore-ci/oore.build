@@ -67,7 +67,6 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { Text } from '@/components/layout/text'
 import { SigningIdentityDialog } from './signing-identity-dialog'
 
 const SIGNING_DOCS_URL =
@@ -330,20 +329,6 @@ export function SigningIdentitiesPanel({
           </ItemGroup>
         </SettingsSurface>
       )}
-      {identities.length > 0 ? (
-        <Text variant="caption">
-          A pipeline’s Workflows settings can pick a different identity for a
-          workflow than its file names.{' '}
-          <a
-            href={SIGNING_DOCS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline underline-offset-4"
-          >
-            Learn more
-          </a>
-        </Text>
-      ) : null}
 
       <SigningIdentityDialog
         open={createOpen}

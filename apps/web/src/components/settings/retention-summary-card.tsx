@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { plural } from '@/lib/project-access'
 import type { RetentionCleanupSummary } from '@oore/client/models'
 
 function formatBytes(bytes: number): string {
@@ -57,8 +58,9 @@ export function RetentionSummaryCard({
       <span>Last cleanup {formatRelativeTime(lastCleanup.ran_at)}</span>
       <span aria-hidden>·</span>
       <span>
-        {lastCleanup.builds_expired} builds · {lastCleanup.artifacts_deleted}{' '}
-        artifacts · {formatBytes(lastCleanup.bytes_reclaimed)} reclaimed
+        {plural(lastCleanup.builds_expired, 'build')} ·{' '}
+        {plural(lastCleanup.artifacts_deleted, 'artifact')} ·{' '}
+        {formatBytes(lastCleanup.bytes_reclaimed)} reclaimed
       </span>
       {lastCleanup.dry_run ? <Badge variant="outline">Dry run</Badge> : null}
     </>

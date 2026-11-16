@@ -324,10 +324,6 @@ export function PipelineWorkflowsPanel({
             <WorkflowsUnavailable listing={listing} />
           ) : null}
           <DataTable table={table} />
-          <Text variant="caption">
-            Unset choices follow the file’s signing and publish settings, then
-            the pipeline’s.
-          </Text>
         </Stack>
       )}
 
