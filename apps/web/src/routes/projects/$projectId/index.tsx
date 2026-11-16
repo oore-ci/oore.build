@@ -79,6 +79,11 @@ const ProjectReleasesTab = lazy(() =>
     default: module.ProjectReleasesTab,
   })),
 )
+const ProjectStoresTab = lazy(() =>
+  import('./-project-stores-tab').then((module) => ({
+    default: module.ProjectStoresTab,
+  })),
+)
 const ProjectEnvironmentsTab = lazy(() =>
   import('./-project-environments-tab').then((module) => ({
     default: module.ProjectEnvironmentsTab,
@@ -112,6 +117,7 @@ const TAB_VALUES = [
   'pipelines',
   'builds',
   'releases',
+  'stores',
   'environments',
   'settings',
 ] as const
@@ -575,7 +581,7 @@ function ProjectDetailPage() {
         }}
         className="min-h-0 flex-1"
       >
-        {/* Six tabs outgrow a phone; the row scrolls instead of the page. */}
+        {/* Seven tabs outgrow a phone; the row scrolls instead of the page. */}
         <div className="-mb-2 max-w-full shrink-0 overflow-x-auto pb-2">
           <TabsList variant="line">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -587,6 +593,7 @@ function ProjectDetailPage() {
               Builds{buildCount > 0 ? ` (${buildCount})` : ''}
             </TabsTrigger>
             <TabsTrigger value="releases">Releases</TabsTrigger>
+            <TabsTrigger value="stores">Stores</TabsTrigger>
             <TabsTrigger value="environments">Environments</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
@@ -682,6 +689,16 @@ function ProjectDetailPage() {
               projectId={projectId}
               canManage={canManageReleases || isInstanceAdmin}
               canRehearse={canRunBuild}
+            />
+          </Suspense>
+        ) : null}
+
+        {activeTab === 'stores' ? (
+          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
+            <ProjectStoresTab
+              canReadInstanceSecrets={canReadInstanceSettings}
+              canWrite={canWritePipelines}
+              projectId={projectId}
             />
           </Suspense>
         ) : null}

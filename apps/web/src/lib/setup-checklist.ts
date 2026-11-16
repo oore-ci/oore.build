@@ -120,7 +120,7 @@ export function nextSteps(progress: {
         id: 'signing',
         title: 'Sign a release',
         detail:
-          'Add your keystore or certificate once, and release builds sign themselves.',
+          'Add your keystore or certificate to the signing library once, and release builds sign themselves.',
         action: 'Set up signing',
       },
       done: progress.release_signing,

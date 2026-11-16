@@ -17,7 +17,10 @@ export const EMPTY_PIPELINE_VALUES: PipelineFormValues = {
   android_signing_debug_store_password: '',
   android_signing_debug_key_alias: '',
   android_signing_debug_key_password: '',
+  android_signing_release_identity_id: '',
+  android_signing_debug_identity_id: '',
   ios_signing_enabled: false,
+  ios_signing_identity_id: '',
   ios_signing_mode: 'manual',
   ios_signing_export_method: 'ad_hoc',
   ios_signing_team_id: '',
@@ -77,14 +80,13 @@ export const PIPELINE_TEMPLATES = [
   {
     key: 'release-android',
     label: 'Release Android',
-    description: 'Android release build with signing enabled.',
+    description: 'Android release build, signed with a keystore you pick.',
     values: {
       ...EMPTY_PIPELINE_VALUES,
       name: 'Release Android',
       platform_android: true,
       platform_ios: false,
       platform_macos: false,
-      android_signing_release_enabled: true,
       artifact_patterns:
         'build/app/outputs/flutter-apk/*.apk\nbuild/app/outputs/bundle/release/*.aab',
     } satisfies PipelineFormValues,

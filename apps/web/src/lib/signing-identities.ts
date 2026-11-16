@@ -3,6 +3,7 @@ import type {
   PipelineWorkflowSettings,
   SigningIdentity,
   SigningIdentityKind,
+  SigningIdentityPipelineUse,
   SigningIdentityUse,
   UpdatePipelineWorkflowSettingsRequest,
 } from '@oore/client/models'
@@ -51,11 +52,28 @@ export function signingIdentityUseLabel(use: SigningIdentityUse): string {
   return `${use.pipeline_name} (${use.workflow})`
 }
 
+/** `Android Release` for a pipeline's own pick, `(debug)` for its debug builds. */
+export function signingIdentityPipelineUseLabel(
+  use: SigningIdentityPipelineUse,
+): string {
+  return use.build_type === 'debug'
+    ? `${use.pipeline_name} (debug builds)`
+    : use.pipeline_name
+}
+
+/** Pipelines, then workflow settings, that sign with the identity. */
+export function signingIdentityUses(identity: SigningIdentity): Array<string> {
+  return [
+    ...(identity.used_by_pipelines ?? []).map(signingIdentityPipelineUseLabel),
+    ...(identity.used_by ?? []).map(signingIdentityUseLabel),
+  ]
+}
+
 /** Where the identity is picked, for its row and its delete prompt. */
 export function signingIdentityUsage(identity: SigningIdentity): string {
-  const uses = identity.used_by ?? []
-  if (uses.length === 0) return 'Not picked in any workflow settings'
-  return `Picked by ${uses.map(signingIdentityUseLabel).join(', ')}`
+  const uses = signingIdentityUses(identity)
+  if (uses.length === 0) return 'Not used by any pipeline'
+  return `Used by ${uses.join(', ')}`
 }
 
 /**

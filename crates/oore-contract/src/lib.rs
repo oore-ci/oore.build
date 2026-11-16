@@ -5102,15 +5102,18 @@ pub enum GooglePlayReleaseNotesSource {
 }
 
 /// Per-pipeline Google Play upload settings. Credentials are referenced by
-/// secret name and never stored here.
+/// secret name and never stored here. An empty `service_account_secret` uses
+/// the app's Google Play connection.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GooglePlayPublishConfig {
     #[serde(default)]
     pub enabled: bool,
-    /// Name of the secret holding the service account JSON key.
+    /// Name of the secret holding the service account JSON key. Empty uses
+    /// the app's Google Play connection.
     pub service_account_secret: String,
-    /// Expected application id. When omitted, the AAB's package is used.
+    /// Expected application id. When omitted, the app's Google Play
+    /// connection's package is used, then the AAB's package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_name: Option<String>,
     /// `internal`, `closed`, `open`, `production`, or a custom track name.
@@ -5216,7 +5219,11 @@ pub(crate) fn is_valid_play_track(track: &str) -> bool {
 /// Validate Google Play publish settings, returning every problem found.
 pub fn validate_google_play_publish_config(config: &GooglePlayPublishConfig) -> Vec<String> {
     let mut errors = Vec::new();
-    if let Err(error) = validate_secret_name(config.service_account_secret.trim()) {
+    // Empty means the app's Google Play connection.
+    let secret = config.service_account_secret.trim();
+    if !secret.is_empty()
+        && let Err(error) = validate_secret_name(secret)
+    {
         errors.push(format!("service_account_secret {error}"));
     }
     if let Some(package) = &config.package_name {
@@ -5528,6 +5535,11 @@ pub struct AndroidSigningProfileInput {
     pub key_alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_password: Option<String>,
+    /// Sign with this identity from the app's signing library. Omit to keep
+    /// the current choice; an empty string clears it. A keystore upload
+    /// replaces the choice and is added to the library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
@@ -5553,6 +5565,11 @@ pub struct AndroidSigningProfile {
     pub has_key_password: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    /// The signing library identity this build type signs with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -5602,6 +5619,16 @@ pub struct SigningIdentityUse {
     pub workflow: String,
 }
 
+/// A pipeline whose own signing picks a signing identity.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SigningIdentityPipelineUse {
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    /// Android: the build type that signs with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_type: Option<AndroidSigningBuildType>,
+}
+
 /// A provisioning profile in an iOS signing identity, without its contents.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SigningIdentityProfile {
@@ -5643,6 +5670,9 @@ pub struct SigningIdentity {
     /// not listed.
     #[serde(default)]
     pub used_by: Vec<SigningIdentityUse>,
+    /// Pipelines whose own signing picks it.
+    #[serde(default)]
+    pub used_by_pipelines: Vec<SigningIdentityPipelineUse>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -5884,6 +5914,12 @@ pub struct UpdatePipelineIosSigningRequest {
     /// pipeline's own key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_api_key_id: Option<String>,
+    /// Manual mode: sign with this identity from the app's signing library,
+    /// which then sets the team, export method and bundle IDs. Omit to keep
+    /// the current choice; an empty string clears it. A certificate upload
+    /// replaces the choice and is added to the library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -5938,6 +5974,11 @@ pub struct PipelineIosSigningResponse {
     pub provisioning_profiles: Vec<IosProvisioningProfileSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    /// Manual mode: the signing library identity iOS builds sign with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -6096,6 +6137,95 @@ impl fmt::Debug for UpdateAppStoreConnectKeyRequest {
     }
 }
 
+// ── App store connections ───────────────────────────────────────
+
+/// An app's Google Play connection: the service account key its pipelines
+/// upload with, and the app's package.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectGooglePlayConnection {
+    /// Name of the secret holding the service account JSON key, resolved in
+    /// the app's scope, then the instance's.
+    pub service_account_secret: String,
+    /// Whether that secret exists in the app or the instance.
+    pub service_account_secret_present: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+    /// The latest connection test, while the key it checked is still the
+    /// one the secret name resolves to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<GooglePlayCredentialsTestResponse>,
+    pub updated_at: i64,
+}
+
+/// An app's App Store Connect connection: a stored API key and the app's
+/// bundle ID.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectAppStoreConnection {
+    pub key: AppStoreConnectKeySummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    /// The latest connection test, while the key is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<AppStoreConnectionTestResponse>,
+    pub updated_at: i64,
+}
+
+/// A pipeline of the app that uploads with its own credentials instead of
+/// the app's connection.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectStoreOverride {
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    pub store: PublishStore,
+    /// What it uses instead, such as the secret name.
+    pub detail: String,
+}
+
+/// `GET /v1/projects/{project_id}/stores`
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct ProjectStoresResponse {
+    pub project_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub google_play: Option<ProjectGooglePlayConnection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_store: Option<ProjectAppStoreConnection>,
+    /// Pipelines that keep their own credentials.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub overrides: Vec<ProjectStoreOverride>,
+}
+
+/// `PUT /v1/projects/{project_id}/stores/google-play`
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateProjectGooglePlayConnectionRequest {
+    pub service_account_secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_name: Option<String>,
+}
+
+/// `PUT /v1/projects/{project_id}/stores/app-store`
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateProjectAppStoreConnectionRequest {
+    /// A stored App Store Connect key, from `GET /v1/app-store-connect-keys`.
+    pub app_store_connect_key_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+}
+
+/// Outcome of an App Store Connect connection test. A failed test is a
+/// normal answer, with Apple's reason in `message`.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AppStoreConnectionTestResponse {
+    pub ok: bool,
+    /// What passed, or the exact failure.
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle_id: Option<String>,
+    pub checked_at: i64,
+}
+
 // ── Pipeline App Store publishing types ─────────────────────────
 
 /// Where an App Store Connect upload goes once Apple finishes processing it.
@@ -6150,8 +6280,9 @@ pub struct AppStoreListing {
 }
 
 /// App Store publishing settings for a pipeline, stored as the `app_store`
-/// publish target. Uploads use the App Store Connect API key from the
-/// pipeline's iOS signing settings and require the `app_store` export method.
+/// publish target. Uploads use the app's App Store Connect connection (or,
+/// without one or with `upload_with_signing_key`, the API key from the
+/// pipeline's iOS signing settings) and require the `app_store` export method.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, ToSchema)]
 pub struct AppStorePublishConfig {
     pub enabled: bool,
@@ -6203,6 +6334,10 @@ pub struct AppStorePublishConfig {
     /// Checks before the upload.
     #[serde(default)]
     pub preflight: PublishPreflight,
+    /// Upload with the API key in this pipeline's iOS signing settings
+    /// instead of the app's App Store Connect connection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub upload_with_signing_key: bool,
 }
 
 /// Whether `value` is an RFC 3339 date-time such as `2026-12-01T09:00:00Z`

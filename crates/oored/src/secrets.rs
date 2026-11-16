@@ -312,7 +312,11 @@ async fn google_play_dependents(
         "SELECT p.name FROM pipeline_publish_targets t \
          JOIN pipelines p ON p.id = t.pipeline_id \
          WHERE t.store = 'google_play' \
-           AND json_extract(t.config, '$.service_account_secret') = ?4 \
+           AND COALESCE( \
+                 NULLIF(trim(json_extract(t.config, '$.service_account_secret')), ''), \
+                 (SELECT c.service_account_secret FROM project_store_connections c \
+                  WHERE c.project_id = p.project_id AND c.store = 'google_play') \
+               ) = ?4 \
            AND CASE ?1 \
                  WHEN 'instance' THEN 1 \
                  WHEN 'project' THEN p.project_id = ?2 \
@@ -827,6 +831,8 @@ mod tests {
             "CREATE TABLE projects (id TEXT PRIMARY KEY)",
             "CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_id TEXT, name TEXT)",
             include_str!("../migrations/042_secrets.sql"),
+            "CREATE TABLE project_store_connections (project_id TEXT, store TEXT, \
+             service_account_secret TEXT, app_identifier TEXT)",
             include_str!("../migrations/043_pipeline_publish.sql"),
             "INSERT INTO projects VALUES ('p1'), ('p2')",
             "INSERT INTO pipelines VALUES ('pl1', 'p1', 'Android'), ('pl2', 'p1', 'Beta'), \

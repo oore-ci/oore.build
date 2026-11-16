@@ -218,6 +218,10 @@ function pipeline({ d, entry, name }: Context): AuditPart {
   return strong([entry.project_name, own].filter(Boolean).join(' '))
 }
 
+function storeName(d: Context['d']) {
+  return text(d, 'store') === 'app_store' ? 'App Store Connect' : 'Google Play'
+}
+
 function app({ d, entry }: Context): AuditPart {
   return named(entry.project_name ?? text(d, 'project_name'), 'an app')
 }
@@ -411,6 +415,21 @@ const TEMPLATES = new Map<string, Template>(
         plain(' from '),
         app(c),
       ],
+    }),
+    project_store_connected: (c) => ({
+      say: [plain(`connected ${storeName(c.d)} to `), app(c)],
+    }),
+    project_store_disconnected: (c) => ({
+      say: [plain(`disconnected ${storeName(c.d)} from `), app(c)],
+    }),
+    project_store_tested: (c) => ({
+      say: [plain(`tested the ${storeName(c.d)} connection of `), app(c)],
+      meta:
+        flag(c.d, 'ok') === true
+          ? 'Passed'
+          : flag(c.d, 'ok') === false
+            ? 'Failed'
+            : undefined,
     }),
 
     // Builds and releases

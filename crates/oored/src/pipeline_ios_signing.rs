@@ -65,6 +65,7 @@ struct IosSigningSettingsRow {
     api_private_key_encrypted: Option<String>,
     shared_api_key_id: Option<String>,
     updated_at: i64,
+    identity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]
@@ -1275,7 +1276,7 @@ async fn load_ios_settings(
         "SELECT id, enabled, mode, team_id, export_method, bundle_ids_json,
                 p12_filename, p12_encrypted, p12_password_encrypted, p12_fingerprint, p12_expires_at,
                 api_key_id, api_issuer_id, api_private_key_encrypted, shared_api_key_id,
-                updated_at
+                updated_at, identity_id
          FROM pipeline_ios_signing_settings WHERE pipeline_id = ?1",
     )
     .bind(pipeline_id)
@@ -1380,6 +1381,8 @@ fn default_ios_signing_response(pipeline_id: String) -> PipelineIosSigningRespon
         shared_api_key: None,
         provisioning_profiles: Vec::new(),
         updated_at: None,
+        identity_id: None,
+        identity_name: None,
     }
 }
 
@@ -1396,6 +1399,8 @@ async fn build_public_response(
         Some(id) => app_store_connect_keys::load_summary(pool, id).await?,
         None => None,
     };
+    let identity_name =
+        crate::signing_identities::identity_name(pool, settings.identity_id.as_deref()).await?;
 
     Ok(PipelineIosSigningResponse {
         pipeline_id: pipeline_id.to_string(),
@@ -1415,6 +1420,8 @@ async fn build_public_response(
         shared_api_key,
         provisioning_profiles: profiles.iter().map(profile_row_to_summary).collect(),
         updated_at: Some(settings.updated_at),
+        identity_id: settings.identity_id,
+        identity_name,
     })
 }
 
@@ -2410,6 +2417,16 @@ pub async fn update_pipeline_ios_signing(
         req,
     )
     .await?;
+    // A certificate uploaded here goes into the app's signing library.
+    if let Err(e) = crate::signing_adoption::adopt_pipeline_signing(
+        &pool,
+        &state.encryption_key,
+        Some(&pipeline_id),
+    )
+    .await
+    {
+        error!(error = %e, "failed to add the uploaded certificate to the signing library");
+    }
 
     let details = serde_json::json!({
         "pipeline_id": &pipeline_id,
@@ -2506,6 +2523,48 @@ async fn save_ios_signing(
         .unwrap_or_default();
 
     let team_id = trim_opt(req.team_id.clone());
+
+    // Manual mode signs with a library identity, which sets the team,
+    // export method and bundle IDs. A certificate upload replaces the pick;
+    // the upload is added to the library after the save.
+    let uploads_certificate = req.certificate.as_ref().is_some_and(|cert| {
+        cert.p12_base64
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+    });
+    let identity_id = if uploads_certificate || !matches!(req.mode, IosSigningMode::Manual) {
+        None
+    } else {
+        match req.identity_id.as_deref().map(str::trim) {
+            Some("") => None,
+            Some(id) => Some(id.to_string()),
+            None => settings_existing
+                .as_ref()
+                .and_then(|row| row.identity_id.clone()),
+        }
+    };
+    let picked = match identity_id.as_deref() {
+        Some(id) => Some(
+            crate::signing_identities::pick_for_pipeline(
+                pool,
+                pipeline_id,
+                id,
+                oore_contract::SigningIdentityKind::IosDistribution,
+            )
+            .await?,
+        ),
+        None => None,
+    };
+    let (team_id, export_method, bundle_ids) = match &picked {
+        Some(picked) => (
+            picked.team_id.clone(),
+            picked.export_method.unwrap_or(export_method),
+            picked.bundle_ids.clone(),
+        ),
+        None => (team_id, export_method, bundle_ids),
+    };
+    let identity_id = picked.map(|picked| picked.id);
+
     if req.enabled {
         let Some(team_id_value) = team_id.as_deref() else {
             return Err(api_err(
@@ -2706,6 +2765,7 @@ async fn save_ios_signing(
             ));
         }
         match req.mode {
+            IosSigningMode::Manual if identity_id.is_some() => {}
             IosSigningMode::Manual => {
                 if p12_encrypted.is_none()
                     || p12_filename.is_none()
@@ -2788,6 +2848,7 @@ async fn save_ios_signing(
                  api_issuer_id = ?11,
                  api_private_key_encrypted = ?12,
                  shared_api_key_id = ?17,
+                 identity_id = ?18,
                  updated_by = ?13,
                  updated_at = ?14
              WHERE id = ?15",
@@ -2809,6 +2870,7 @@ async fn save_ios_signing(
         .bind(&settings_id)
         .bind(export_method.as_str())
         .bind(shared_api_key_id.clone())
+        .bind(identity_id.clone())
         .execute(&mut *transaction)
         .await
     } else {
@@ -2817,12 +2879,12 @@ async fn save_ios_signing(
                 id, pipeline_id, enabled, mode, team_id, export_method, bundle_ids_json,
                 p12_filename, p12_encrypted, p12_password_encrypted, p12_fingerprint, p12_expires_at,
                 api_key_id, api_issuer_id, api_private_key_encrypted, shared_api_key_id,
-                created_by, updated_by, created_at, updated_at
+                created_by, updated_by, created_at, updated_at, identity_id
              ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?17, ?6,
                 ?7, ?8, ?9, ?10, ?11,
                 ?12, ?13, ?14, ?18,
-                ?15, ?15, ?16, ?16
+                ?15, ?15, ?16, ?16, ?19
              )",
         )
         .bind(&settings_id)
@@ -2843,6 +2905,7 @@ async fn save_ios_signing(
         .bind(now)
         .bind(export_method.as_str())
         .bind(shared_api_key_id.clone())
+        .bind(identity_id.clone())
         .execute(&mut *transaction)
         .await
     };
@@ -2861,7 +2924,11 @@ async fn save_ios_signing(
         ));
     }
 
-    if previous_export_method.is_some_and(|previous| previous != export_method) {
+    // With a library identity the pipeline's own profiles are not used, so
+    // they stay as stored.
+    if identity_id.is_none()
+        && previous_export_method.is_some_and(|previous| previous != export_method)
+    {
         // Ad hoc and App Store profiles are not interchangeable; stale ones
         // must be replaced by an upload or an API sync before the next build.
         sqlx::query("DELETE FROM pipeline_ios_provisioning_profiles WHERE pipeline_id = ?1")
@@ -2880,7 +2947,7 @@ async fn save_ios_signing(
         store_profile(&mut transaction, pipeline_id, actor_id, profile).await?;
     }
 
-    if req.enabled && matches!(req.mode, IosSigningMode::Manual) {
+    if req.enabled && identity_id.is_none() && matches!(req.mode, IosSigningMode::Manual) {
         let profile_rows = load_ios_profiles(&mut *transaction, pipeline_id)
             .await
             .map_err(|e| {
@@ -2907,11 +2974,13 @@ async fn save_ios_signing(
         }
     }
 
-    prune_ios_profiles(&mut *transaction, pipeline_id, &bundle_ids)
-        .await
-        .map_err(|e| {
-            ios_signing_store_error(e, "failed to prune removed iOS provisioning profiles")
-        })?;
+    if identity_id.is_none() {
+        prune_ios_profiles(&mut *transaction, pipeline_id, &bundle_ids)
+            .await
+            .map_err(|e| {
+                ios_signing_store_error(e, "failed to prune removed iOS provisioning profiles")
+            })?;
+    }
 
     transaction
         .commit()
@@ -3541,18 +3610,30 @@ pub async fn get_job_ios_signing(
 
     let pipeline_id =
         require_active_job_signing_grant(&pool, &job_id, &runner_id, &headers).await?;
+    job_ios_signing(&pool, &state.encryption_key, &pipeline_id, &job_id)
+        .await
+        .map(Json)
+}
 
+/// The iOS signing a build of `pipeline_id` gets: its workflow's identity,
+/// else the identity the pipeline picks, else the pipeline's own files.
+pub(crate) async fn job_ios_signing(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    pipeline_id: &str,
+    job_id: &str,
+) -> Result<RunnerIosSigningResponse, (StatusCode, Json<ApiError>)> {
     // A workflow that names an identity signs with it instead of the
     // pipeline's settings.
     if let Some(bundle) =
-        crate::signing_identities::job_ios_bundle(&pool, &state.encryption_key, &job_id).await?
+        crate::signing_identities::job_ios_bundle(pool, encryption_key, job_id).await?
     {
-        return Ok(Json(RunnerIosSigningResponse {
+        return Ok(RunnerIosSigningResponse {
             bundle: Some(bundle),
-        }));
+        });
     }
 
-    let settings = load_ios_settings(&pool, &pipeline_id).await.map_err(|e| {
+    let settings = load_ios_settings(pool, pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to load iOS signing settings for runner");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3561,10 +3642,20 @@ pub async fn get_job_ios_signing(
         )
     })?;
     let Some(settings) = settings else {
-        return Ok(Json(RunnerIosSigningResponse { bundle: None }));
+        return Ok(RunnerIosSigningResponse { bundle: None });
     };
     if settings.enabled == 0 {
-        return Ok(Json(RunnerIosSigningResponse { bundle: None }));
+        return Ok(RunnerIosSigningResponse { bundle: None });
+    }
+    if let (IosSigningMode::Manual, Some(identity_id)) =
+        (parse_mode(&settings.mode), settings.identity_id.as_deref())
+    {
+        let bundle =
+            crate::signing_identities::pipeline_ios_bundle(pool, encryption_key, identity_id)
+                .await?;
+        return Ok(RunnerIosSigningResponse {
+            bundle: Some(bundle),
+        });
     }
 
     let team_id = settings.team_id.clone().ok_or_else(|| {
@@ -3581,7 +3672,7 @@ pub async fn get_job_ios_signing(
             "iOS signing is enabled but p12 filename is missing (run iOS signing sync)",
         )
     })?;
-    let p12_base64 = decrypt_opt(settings.p12_encrypted.as_deref(), &state.encryption_key)
+    let p12_base64 = decrypt_opt(settings.p12_encrypted.as_deref(), encryption_key)
         .map_err(|e| {
             error!(error = %e, "failed to decrypt iOS p12");
             api_err(
@@ -3597,25 +3688,22 @@ pub async fn get_job_ios_signing(
                 "iOS signing is enabled but p12 payload is missing (run iOS signing sync)",
             )
         })?;
-    let p12_password = decrypt_opt(
-        settings.p12_password_encrypted.as_deref(),
-        &state.encryption_key,
-    )
-    .map_err(|e| {
-        error!(error = %e, "failed to decrypt iOS p12 password");
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "decryption_error",
-            "Failed to load iOS certificate password",
-        )
-    })?
-    .ok_or_else(|| {
-        api_err(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "incomplete_signing_profile",
-            "iOS signing is enabled but p12 password is missing (run iOS signing sync)",
-        )
-    })?;
+    let p12_password = decrypt_opt(settings.p12_password_encrypted.as_deref(), encryption_key)
+        .map_err(|e| {
+            error!(error = %e, "failed to decrypt iOS p12 password");
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "decryption_error",
+                "Failed to load iOS certificate password",
+            )
+        })?
+        .ok_or_else(|| {
+            api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "incomplete_signing_profile",
+                "iOS signing is enabled but p12 password is missing (run iOS signing sync)",
+            )
+        })?;
 
     let p12_bytes = decode_b64(&p12_base64).map_err(|e| {
         error!(error = %e, "stored iOS p12 payload is invalid base64");
@@ -3643,7 +3731,7 @@ pub async fn get_job_ios_signing(
         .into_iter()
         .collect();
     let now = now_unix();
-    let profile_rows = load_ios_profiles(&pool, &pipeline_id).await.map_err(|e| {
+    let profile_rows = load_ios_profiles(pool, pipeline_id).await.map_err(|e| {
         error!(error = %e, "failed to load iOS profiles for runner");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -3674,7 +3762,7 @@ pub async fn get_job_ios_signing(
                 .map(|uuid| format!("{uuid}.mobileprovision"))
                 .unwrap_or_else(|| format!("{}.mobileprovision", row.bundle_id))
         });
-        let profile_base64 = decrypt_opt(row.profile_encrypted.as_deref(), &state.encryption_key)
+        let profile_base64 = decrypt_opt(row.profile_encrypted.as_deref(), encryption_key)
             .map_err(|e| {
                 error!(error = %e, "failed to decrypt iOS provisioning profile");
                 api_err(
@@ -3713,9 +3801,9 @@ pub async fn get_job_ios_signing(
         provisioning_profiles,
     };
 
-    Ok(Json(RunnerIosSigningResponse {
+    Ok(RunnerIosSigningResponse {
         bundle: Some(bundle),
-    }))
+    })
 }
 
 #[cfg(test)]

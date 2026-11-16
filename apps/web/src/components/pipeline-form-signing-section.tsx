@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { Link, useParams } from '@tanstack/react-router'
 import type { PipelineFormValues } from '@/lib/pipeline-schema'
 import type {
   PipelineAndroidSigningResponse,
@@ -11,15 +12,17 @@ import {
 } from '@/components/pipeline-form-ios-signing-section'
 import { PipelineFormSection } from '@/components/pipeline-form-section'
 import { SettingsSurfaceSeparator } from '@/components/settings/settings-section'
+import { Button } from '@/components/ui/button'
 
 /**
- * Signing: one section with a subsection per selected platform. Nothing
- * renders when the pipeline builds neither Android nor iOS.
+ * Signing: one section with a subsection per selected platform. Each picks
+ * an identity from the app's signing library, the only place keystores and
+ * certificates are uploaded. Nothing renders when the pipeline builds
+ * neither Android nor iOS.
  */
 export function PipelineSigningSection({
   androidSigningData,
   bundleIds,
-  debugKeystoreFile,
   iosActions,
   iosApiKeyFile,
   iosAppStorePublishing,
@@ -27,18 +30,14 @@ export function PipelineSigningSection({
   iosProfileFiles,
   iosSigningData,
   onApiKeyFileChange,
-  onDebugKeystoreFileChange,
   onP12FileChange,
   onProfileFileChange,
-  onReleaseKeystoreFileChange,
-  releaseKeystoreFile,
   summary,
   values,
 }: {
   summary?: string
   androidSigningData?: PipelineAndroidSigningResponse
   bundleIds: Array<string>
-  debugKeystoreFile: File | null
   iosActions?: ReactNode
   iosApiKeyFile: File | null
   iosAppStorePublishing?: IosAppStorePublishing
@@ -46,27 +45,39 @@ export function PipelineSigningSection({
   iosProfileFiles: Record<string, File | null>
   iosSigningData?: PipelineIosSigningResponse
   onApiKeyFileChange: (file: File | null) => void
-  onDebugKeystoreFileChange: (file: File | null) => void
   onP12FileChange: (file: File | null) => void
   onProfileFileChange: (bundleId: string, file: File | null) => void
-  onReleaseKeystoreFileChange: (file: File | null) => void
-  releaseKeystoreFile: File | null
   values: Pick<PipelineFormValues, 'platform_android' | 'platform_ios'>
 }) {
+  const { projectId = '' } = useParams({ strict: false })
   if (!values.platform_android && !values.platform_ios) return null
   return (
     <PipelineFormSection
       id="signing"
       summary={summary}
       title="Signing"
-      hint="Credentials stay on the server. Builds are signed on the runner."
+      hint="Keystores and certificates live in the app's signing library. Builds are signed on the runner."
+      actions={
+        <Button
+          size="sm"
+          variant="ghost"
+          nativeButton={false}
+          render={
+            <Link
+              to="/projects/$projectId"
+              params={{ projectId }}
+              search={{ tab: 'settings' }}
+              hash="signing"
+            />
+          }
+        >
+          Signing library
+        </Button>
+      }
     >
       {values.platform_android ? (
         <PipelineAndroidSigningSection
-          debugKeystoreFile={debugKeystoreFile}
-          onDebugKeystoreFileChange={onDebugKeystoreFileChange}
-          onReleaseKeystoreFileChange={onReleaseKeystoreFileChange}
-          releaseKeystoreFile={releaseKeystoreFile}
+          projectId={projectId}
           signingData={androidSigningData}
         />
       ) : null}
@@ -84,6 +95,7 @@ export function PipelineSigningSection({
           onProfileFileChange={onProfileFileChange}
           p12File={iosP12File}
           profileFiles={iosProfileFiles}
+          projectId={projectId}
           signingData={iosSigningData}
         />
       ) : null}

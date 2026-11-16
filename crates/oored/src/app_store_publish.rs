@@ -233,23 +233,53 @@ struct SigningKeyRow {
     api_private_key_encrypted: Option<String>,
 }
 
-/// The pipeline's signing settings with the API key it uses: the shared key
-/// when one is selected, otherwise its own.
+/// The pipeline's signing settings with the API key its uploads use: the
+/// app's App Store Connect connection, unless the pipeline uploads with its
+/// signing key (`upload_with_signing_key`) or the app has none; then the
+/// shared key its iOS signing selects, otherwise its own.
 async fn load_signing_key_row(
     pool: &SqlitePool,
     pipeline_id: &str,
 ) -> sqlx::Result<Option<SigningKeyRow>> {
+    load_signing_key_row_as(pool, pipeline_id, None).await
+}
+
+/// [`load_signing_key_row`], with `upload_with_signing_key` taken from
+/// unsaved settings when given.
+async fn load_signing_key_row_as(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+    upload_with_signing_key: Option<bool>,
+) -> sqlx::Result<Option<SigningKeyRow>> {
     sqlx::query_as::<_, SigningKeyRow>(
-        "SELECT s.enabled, s.export_method,
-                CASE WHEN k.id IS NULL THEN s.api_key_id ELSE k.key_id END AS api_key_id,
-                CASE WHEN k.id IS NULL THEN s.api_issuer_id ELSE k.issuer_id END AS api_issuer_id,
-                CASE WHEN k.id IS NULL THEN s.api_private_key_encrypted
+        "SELECT COALESCE(s.enabled, 0) AS enabled,
+                COALESCE(s.export_method, 'ad_hoc') AS export_method,
+                CASE WHEN app.use_app THEN app.key_id
+                     WHEN k.id IS NULL THEN s.api_key_id ELSE k.key_id END AS api_key_id,
+                CASE WHEN app.use_app THEN app.issuer_id
+                     WHEN k.id IS NULL THEN s.api_issuer_id ELSE k.issuer_id END AS api_issuer_id,
+                CASE WHEN app.use_app THEN app.private_key_encrypted
+                     WHEN k.id IS NULL THEN s.api_private_key_encrypted
                      ELSE k.private_key_encrypted END AS api_private_key_encrypted
-         FROM pipeline_ios_signing_settings s
+         FROM pipelines p
+         LEFT JOIN pipeline_ios_signing_settings s ON s.pipeline_id = p.id
          LEFT JOIN app_store_connect_keys k ON k.id = s.shared_api_key_id
-         WHERE s.pipeline_id = ?1",
+         LEFT JOIN (
+             SELECT c.project_id, ak.key_id, ak.issuer_id, ak.private_key_encrypted,
+                    NOT COALESCE(?2, EXISTS (
+                        SELECT 1 FROM pipeline_publish_targets t
+                        WHERE t.pipeline_id = ?1 AND t.store = 'app_store'
+                          AND json_valid(t.config)
+                          AND COALESCE(json_extract(t.config, '$.upload_with_signing_key'), 0) = 1
+                    )) AS use_app
+             FROM project_store_connections c
+             JOIN app_store_connect_keys ak ON ak.id = c.app_store_connect_key_id
+             WHERE c.store = 'app_store'
+         ) app ON app.project_id = p.project_id
+         WHERE p.id = ?1 AND (s.id IS NOT NULL OR app.use_app)",
     )
     .bind(pipeline_id)
+    .bind(upload_with_signing_key)
     .fetch_optional(pool)
     .await
 }
@@ -365,9 +395,13 @@ pub async fn update_pipeline_app_store_publish(
         )
     })?;
     if config.enabled {
-        let signing = load_signing_key_row(&state.db, &pipeline_id)
-            .await
-            .map_err(store_error)?;
+        let signing = load_signing_key_row_as(
+            &state.db,
+            &pipeline_id,
+            Some(config.upload_with_signing_key),
+        )
+        .await
+        .map_err(store_error)?;
         let Some(signing) = signing.filter(|row| row.enabled != 0) else {
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
@@ -386,7 +420,7 @@ pub async fn update_pipeline_app_store_publish(
             return Err(api_err(
                 StatusCode::BAD_REQUEST,
                 "invalid_publish_config",
-                "Add an App Store Connect API key in iOS signing before publishing",
+                "Connect App Store Connect in the app's Stores, or add an API key in iOS signing, before publishing",
             ));
         }
     }
@@ -1644,6 +1678,10 @@ pub(crate) async fn pipeline_bundle_id(pool: &SqlitePool, pipeline_id: &str) -> 
              UNION ALL
              SELECT app_identifier, 0 FROM store_app_vitals
              WHERE pipeline_id = ?1 AND store = 'app_store'
+             UNION ALL
+             SELECT c.app_identifier, -1 FROM project_store_connections c
+             JOIN pipelines p ON p.project_id = c.project_id
+             WHERE p.id = ?1 AND c.store = 'app_store' AND c.app_identifier IS NOT NULL
          ) ORDER BY at DESC LIMIT 1",
     )
     .bind(pipeline_id)
@@ -1653,14 +1691,24 @@ pub(crate) async fn pipeline_bundle_id(pool: &SqlitePool, pipeline_id: &str) -> 
     .flatten()
 }
 
+/// The App Store Connect API key the pipeline's uploads use, if it has one.
+pub(crate) async fn upload_credentials(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    pipeline_id: &str,
+) -> anyhow::Result<Option<AppleApiCredentials>> {
+    match load_signing_key_row(pool, pipeline_id).await? {
+        Some(row) => decrypt_credentials(&row, encryption_key),
+        None => Ok(None),
+    }
+}
+
 pub(crate) async fn load_credentials(
     state: &AppState,
     pipeline_id: &str,
 ) -> anyhow::Result<AppleApiCredentials> {
-    let row = load_signing_key_row(&state.db, pipeline_id)
+    upload_credentials(&state.db, &state.encryption_key, pipeline_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("pipeline has no iOS signing settings"))?;
-    decrypt_credentials(&row, &state.encryption_key)?
         .ok_or_else(|| anyhow::anyhow!("pipeline has no App Store Connect API key"))
 }
 

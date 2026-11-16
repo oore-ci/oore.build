@@ -63,6 +63,7 @@ fn app_store(groups: &[&str]) -> AppStorePublishConfig {
         listing: Vec::new(),
         cancel_previous_submission: false,
         preflight: PublishPreflight::default(),
+        upload_with_signing_key: false,
     }
 }
 
