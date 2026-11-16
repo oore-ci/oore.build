@@ -8,7 +8,6 @@ import {
   Card,
   CardAction,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -58,9 +57,6 @@ export function NextSteps({ projectId }: { projectId: string }) {
     <Card size="sm">
       <CardHeader>
         <CardTitle>Next steps</CardTitle>
-        <CardDescription>
-          Your app installs. These take it to testers and the stores.
-        </CardDescription>
         <CardAction>
           <Button variant="ghost" size="sm" onClick={hide}>
             Hide

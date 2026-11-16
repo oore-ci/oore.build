@@ -12,7 +12,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -106,10 +105,6 @@ function GroupDialog({
           <DialogTitle>
             {group ? `Edit ${group.name}` : 'New tester group'}
           </DialogTitle>
-          <DialogDescription>
-            Send a build to everyone in the group from its build page. Members
-            only receive builds of apps they can open.
-          </DialogDescription>
         </DialogHeader>
         <Stack gap={4}>
           <Stack gap={2}>
@@ -189,7 +184,6 @@ function TesterGroupsPage() {
       <PageMeta title="Tester groups" noindex />
       <PageHeader
         title="Tester groups"
-        description="People who try builds before they go to a store. Send a build to a whole group from its page."
         actions={
           <Button onClick={() => setEditing(null)}>
             <HugeiconsIcon icon={Add01Icon} />

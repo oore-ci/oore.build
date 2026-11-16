@@ -4,7 +4,6 @@ import type { GitLabSetupForm } from './-gitlab-setup'
 import SetupHint from '@/components/setup-hint'
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -18,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Text } from '@/components/layout/text'
 
 type GitLabAuthStepProps = {
   form: UseFormReturn<GitLabSetupForm>
@@ -37,16 +35,19 @@ export function GitLabAuthStep({
     <section className="space-y-4">
       <div>
         <p className="text-sm font-medium">2. Authenticate</p>
-        <Text variant="muted" className="mt-1">
-          Choose the credential model that fits this GitLab source.
-        </Text>
       </div>
       <FormField
         control={form.control}
         name="auth_mode"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Authentication method</FormLabel>
+            <FormLabel
+              hint={
+                'Personal access tokens are fastest for one account and are verified before saving. OAuth keeps user authorization in GitLab and is better for a shared source; it requires one additional authorization after saving.'
+              }
+            >
+              Authentication method
+            </FormLabel>
             <Select
               value={field.value}
               onValueChange={field.onChange}
@@ -67,12 +68,6 @@ export function GitLabAuthStep({
                 <SelectItem value="oauth_app">OAuth application</SelectItem>
               </SelectContent>
             </Select>
-            <FormDescription>
-              Personal access tokens are fastest for one account and are
-              verified before saving. OAuth keeps user authorization in GitLab
-              and is better for a shared source; it requires one additional
-              authorization after saving.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -124,14 +119,19 @@ export function GitLabAuthStep({
             name="client_id"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Client ID</FormLabel>
+                <FormLabel
+                  hint={
+                    <>
+                      Create an OAuth application on {hostUrl} and paste its
+                      Application ID here.
+                    </>
+                  }
+                >
+                  Client ID
+                </FormLabel>
                 <FormControl>
                   <Input {...field} placeholder="Application ID" />
                 </FormControl>
-                <FormDescription>
-                  Create an OAuth application on {hostUrl} and paste its
-                  Application ID here.
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -149,9 +149,6 @@ export function GitLabAuthStep({
                     placeholder="Application secret"
                   />
                 </FormControl>
-                <FormDescription>
-                  Use the Secret from the same GitLab OAuth application.
-                </FormDescription>
                 <SetupHint
                   title="OAuth callback"
                   items={[

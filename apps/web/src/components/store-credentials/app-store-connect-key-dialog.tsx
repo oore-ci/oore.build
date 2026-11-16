@@ -22,7 +22,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -200,9 +199,6 @@ export function AppStoreConnectKeyDialog({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Shown when choosing a key for a pipeline.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

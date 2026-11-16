@@ -50,10 +50,7 @@ function InsightsPage() {
     <PageLayout width="wide">
       <PageMeta title="Insights" noindex />
       <Stack gap={10}>
-        <PageHeader
-          title="Insights"
-          description="How builds, apps and store releases are going over time."
-        />
+        <PageHeader title="Insights" />
         <DashboardBuildHealth
           canApprove={canApprove}
           days={days}

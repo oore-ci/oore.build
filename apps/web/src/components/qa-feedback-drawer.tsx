@@ -25,7 +25,6 @@ import {
   Drawer,
   DrawerClose,
   DrawerContent,
-  DrawerDescription,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
@@ -34,7 +33,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -232,9 +230,6 @@ export function QaFeedbackDrawer({
       <DrawerContent>
         <DrawerHeader>
           <DrawerTitle>Send feedback</DrawerTitle>
-          <DrawerDescription>
-            Your note goes to the team with this build.
-          </DrawerDescription>
         </DrawerHeader>
         <Form {...form}>
           <form
@@ -297,10 +292,6 @@ export function QaFeedbackDrawer({
                     <FormControl>
                       <Input {...field} className="font-mono" />
                     </FormControl>
-                    <FormDescription>
-                      Filled in from this release. Change it if you tested
-                      another version.
-                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

@@ -9,7 +9,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -147,10 +146,6 @@ function SendToTestersDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Send build #{buildNumber} to testers</DialogTitle>
-          <DialogDescription>
-            Each tester gets an email with their own install link, and a browser
-            notification if they turned those on.
-          </DialogDescription>
         </DialogHeader>
         {groupsQuery.isSuccess && groups.length === 0 ? (
           <Text variant="muted">

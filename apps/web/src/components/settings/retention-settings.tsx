@@ -23,7 +23,6 @@ import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -105,7 +104,6 @@ function EnabledRetentionFields({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>Delete builds older than this</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -125,7 +123,6 @@ function EnabledRetentionFields({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>Keep only the N most recent</FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -145,10 +142,6 @@ function EnabledRetentionFields({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>
-                  Oldest builds are cleaned up once an app&apos;s artifacts
-                  exceed this
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -185,10 +178,6 @@ function EnabledRetentionFields({
                     </SelectItem>
                   </SelectContent>
                 </Select>
-                <FormDescription>
-                  &ldquo;Artifacts only&rdquo; deletes files but preserves build
-                  logs and metadata
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -218,9 +207,6 @@ function EnabledRetentionFields({
                     ))}
                   </SelectContent>
                 </Select>
-                <FormDescription>
-                  How often the cleanup job runs
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
