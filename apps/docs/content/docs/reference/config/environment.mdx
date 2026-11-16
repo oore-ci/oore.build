@@ -57,18 +57,26 @@ commit credential values to repository YAML.
 
 ## Operator CLI
 
-| Variable                                | Role                                                       |
-| --------------------------------------- | ---------------------------------------------------------- |
-| `OORE_DAEMON_URL`                       | Backend URL for commands that contact `oored`              |
-| `OORE_SESSION_TOKEN`                    | Session token fallback for authenticated commands          |
-| `OORE_CONFIG_FILE`                      | CLI config path override                                   |
-| `OORE_SETUP_STATE_FILE`                 | Local database path for setup, recovery, and service seams |
-| `OORE_WEB_URL`                          | Browser base URL for `oore recovery`                       |
-| `OORE_TRUSTED_PROXY_SHARED_SECRET`      | Trusted Proxy proof for direct setup                       |
-| `OORE_TRUSTED_PROXY_SHARED_SECRET_FILE` | File containing that proof                                 |
-| `OORE_INSTALL_ROOT`                     | Installed Oore root used by config and update              |
-| `OORE_GITHUB_REPO`                      | Release repository override for `oore update`              |
-| `OORE_RELEASE_INDEX_BASE_URL`           | Static release-index origin for `oore update`              |
+| Variable                                | Role                                                                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `OORE_URL`                              | Backend URL for commands that contact `oored`                                                            |
+| `OORE_DAEMON_URL`                       | Older name for `OORE_URL`; `OORE_URL` wins when both are set                                             |
+| `OORE_TOKEN`                            | API or session token for authenticated commands                                                          |
+| `OORE_SESSION_TOKEN`                    | Older name for `OORE_TOKEN`; `OORE_TOKEN` wins when both are set                                         |
+| `OORE_HTTP_HEADERS`                     | Extra headers for every API request, one `Name: value` per line, such as an access proxy's service token |
+| `OORE_CONFIG_FILE`                      | CLI config path override                                                                                 |
+| `OORE_SETUP_STATE_FILE`                 | Local database path for setup, recovery, and service seams                                               |
+| `OORE_WEB_URL`                          | Browser base URL for `oore recovery`                                                                     |
+| `OORE_TRUSTED_PROXY_SHARED_SECRET`      | Trusted Proxy proof for direct setup                                                                     |
+| `OORE_TRUSTED_PROXY_SHARED_SECRET_FILE` | File containing that proof                                                                               |
+| `OORE_INSTALL_ROOT`                     | Installed Oore root used by config and update                                                            |
+| `OORE_GITHUB_REPO`                      | Release repository override for `oore update`                                                            |
+| `OORE_RELEASE_INDEX_BASE_URL`           | Static release-index origin for `oore update`                                                            |
+
+For each setting, the flag (`--url`, `--token`, `--header`) wins, then the
+new variable, then the older one, then the login `oore login` saved. An API
+token works wherever a session token does. See
+[the CLI reference](/reference/cli#for-scripts-and-agents).
 
 Command-line options take precedence over corresponding environment values.
 See [`oore config`](/reference/cli/oore-config) for daemon URL and token

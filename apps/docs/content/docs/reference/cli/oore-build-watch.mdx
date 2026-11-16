@@ -6,22 +6,25 @@ description: 'Follow a build to its result and, with --store, to the store’s a
 
 ```text
 oore build watch <BUILD_ID> [--store] [--interval SECONDS]
-                 [--daemon-url <URL>] [--token <TOKEN>] [--json]
+                 [--url <URL>] [--token <TOKEN>] [--json]
 ```
 
 The command checks the build with `GET /v1/builds/{build_id}` and prints a
-line each time it moves. A build that uploaded to Google Play or the App
+line each time it moves. While the build runs, it also reads the build's live
+log stream and prints each step as it starts and ends, indented under the
+status. When the stream is not available it checks every `--interval`
+seconds instead. A build that uploaded to Google Play or the App
 Store also says where its release stands, because a build succeeds once the
 store has the upload, not once the app is live. It needs a signed-in session
-(`oore login`, `--token`, or `OORE_SESSION_TOKEN`) that can see the build.
+(`oore login`, `--token`, or `OORE_TOKEN`) that can see the build.
 
-| Option               | Effect                                                                                                                     |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `--store`            | After the build succeeds, keep watching until the store is done: live, rejected, failed, or blocked until someone acts.    |
-| `--interval SECONDS` | Seconds between checks, from 2 to 3600. Defaults to 10.                                                                    |
-| `--daemon-url`       | Backend URL; otherwise uses environment, CLI config, then loopback.                                                        |
-| `--token`            | Session token; otherwise `OORE_SESSION_TOKEN` or the stored session.                                                       |
-| `--json`             | Print nothing while waiting, then the build as JSON once it settles. Its `release_outcome` field holds the store's answer. |
+| Option               | Effect                                                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `--store`            | After the build succeeds, keep watching until the store is done: live, rejected, failed, or blocked until someone acts. |
+| `--interval SECONDS` | Seconds between checks, from 2 to 3600. Defaults to 10.                                                                 |
+| `--url`              | Backend URL; otherwise `OORE_URL`, `OORE_DAEMON_URL`, CLI config, then loopback.                                        |
+| `--token`            | API or session token; otherwise `OORE_TOKEN`, `OORE_SESSION_TOKEN` or the stored session.                               |
+| `--json`             | Print one JSON object per line for each change, then the settled build. See below.                                      |
 
 ```bash
 oore build run --pipeline pipe_123 --workflow release --json | jq -r .id \
@@ -30,6 +33,10 @@ oore build run --pipeline pipe_123 --workflow release --json | jq -r .id \
 
 ```text
 Build #48 running
+  Install started
+  Install succeeded
+  Build Android started
+  Build Android succeeded
 Build #48 succeeded, waiting on the store
 Build #48 succeeded, in store review
 Build #48 succeeded, live in the store
@@ -40,11 +47,28 @@ store, in store review, approved, not released yet, rejected by the store,
 live in the store, or store release failed. When a build has several store
 releases, the line names the one that most needs a person.
 
+With `--json`, each line is one object, with `event` saying which:
+
+```json
+{"event":"status","build_id":"bld_9c1e","build_number":48,"status":"running"}
+{"event":"step","build_id":"bld_9c1e","name":"Build Android","state":"started"}
+{"event":"step","build_id":"bld_9c1e","name":"Build Android","state":"failed","exit_code":1}
+{"event":"status","build_id":"bld_9c1e","build_number":48,"status":"failed"}
+{"event":"settled","build":{"id":"bld_9c1e","status":"failed","release_outcome":null}}
+```
+
+The last line, `settled`, carries the whole build. Its `release_outcome` field
+holds the store's answer. `oore build run --wait` prints the same lines, after
+a `queued` line with the new build.
+
 | Exit code | Meaning                                                     |
 | --------- | ----------------------------------------------------------- |
 | `0`       | The build succeeded and, with `--store`, the store took it. |
 | `1`       | The build failed, timed out, was canceled or expired.       |
 | `3`       | With `--store`: the store blocked, rejected or failed it.   |
+
+These are the [shared exit codes](/reference/cli/exit-codes); `4` and `5`
+mean the build could not be read.
 
 App Store review can take a day or more. Run `--store` where a long wait is
 fine, or check the build page instead.

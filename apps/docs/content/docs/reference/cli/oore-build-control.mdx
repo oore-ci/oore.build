@@ -1,0 +1,25 @@
+---
+title: '`oore build cancel`, `rerun` and `retry-step`'
+status: implemented
+description: 'Stop a build, start it again, or run one step of it again.'
+---
+
+```text
+oore build cancel <BUILD_ID> [--json]
+oore build rerun <BUILD_ID> [--json]
+oore build retry-step <BUILD_ID> --step <STEP> [--json]
+```
+
+| Command      | API                                     | Effect                                                                                                  |
+| ------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `cancel`     | `POST /v1/builds/{build_id}/cancel`     | Stops a queued or running build.                                                                        |
+| `rerun`      | `POST /v1/builds/{build_id}/rerun`      | Queues a new build of the same commit, workflow and platforms.                                          |
+| `retry-step` | `POST /v1/builds/{build_id}/retry-step` | Runs one step of a finished build again, such as `publish-play` or `publish-app-store`, from its files. |
+
+Each prints the build it changed or queued, or the build as JSON with
+`--json`. Follow a new build with [`oore build watch`](/reference/cli/oore-build-watch).
+
+```bash
+oore build rerun bld_9c1e --json | jq -r .id | xargs oore build watch
+oore build retry-step bld_9c1e --step publish-play
+```

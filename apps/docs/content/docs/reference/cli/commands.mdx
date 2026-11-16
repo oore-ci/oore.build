@@ -1,0 +1,602 @@
+---
+title: All commands
+description: Every oore command and flag, generated from the CLI itself.
+---
+
+This page is generated from the CLI. `oore commands --json` prints the same
+tree for scripts and agents, and `oore <command> --help` prints one command.
+Every command takes `--color`, `--header` and `--help`, and exits with the codes in
+[Exit codes](/reference/cli/exit-codes).
+
+## `oore install`
+
+Choose and install the role for this device.
+
+| Flag | What it does |
+| --- | --- |
+| `--profile <PROFILE>` | Device role. Omit this option for guided terminal setup. One of `complete`, `control-plane`, `runner`, `web-node`, `cli-only`. |
+| `--plan` | Print the installation plan without changing this device. |
+| `--json` | Print the result as JSON on stdout; progress goes to stderr. |
+
+## `oore uninstall`
+
+Remove this Oore installation.
+
+| Flag | What it does |
+| --- | --- |
+| `--purge` | Remove Oore data as well as installed components. |
+| `--yes` | Apply the displayed plan without an interactive confirmation. |
+| `--legacy-v0-1-41` | Remove an exact service-managed v0.1.41 installation without deleting its data. |
+| `--ignore-invalid-manifest` | Uninstall even though the installation manifest cannot be read. Oore then removes every component path and owned service it can prove belongs to this install root. |
+| `--json` | Print the result as JSON on stdout; progress goes to stderr. |
+
+## `oore setup`
+
+Configure this device and finish first-run setup.
+
+| Flag | What it does |
+| --- | --- |
+| `--daemon-url <DAEMON_URL>` | Env `OORE_DAEMON_URL`. |
+| `--config <PATH>` | Read setup values from a YAML or JSON file. |
+| `--plan` | Show the setup plan without changing this device. |
+| `--json` | Print the final setup state as JSON. |
+| `--state-file <STATE_FILE>` | Path to the local control-plane database. Env `OORE_SETUP_STATE_FILE`. |
+| `--interface <INTERFACE>` | Choose the setup interface. Auto uses the terminal over SSH. Default `auto`. One of `auto`, `terminal`, `browser`. |
+| `--access <ACCESS>` | Choose an access outcome without a prompt. One of `this-device`, `identity-provider`, `trusted-proxy`. |
+| `--owner-email <OWNER_EMAIL>` | Initial owner email for terminal setup. |
+| `--daemon-listen <DAEMON_LISTEN>` | Address for the managed control-plane service. Default `127.0.0.1:8787`. |
+| `--web-listen <WEB_LISTEN>` | Address for the local web service. Default `127.0.0.1:4173`. |
+| `--backend-url <BACKEND_URL>` | Control-plane URL for a Runner, Web node, or CLI-only profile. |
+| `--runner-token <RUNNER_TOKEN>` | Oore API or session token used to register a Runner profile. Env `OORE_SESSION_TOKEN`. |
+| `--runner-name <RUNNER_NAME>` | Name used to register a Runner profile. |
+| `--pairing-code <PAIRING_CODE>` | Single-use code from `oore frontend invite` for a Web node. |
+| `--browser-transport-protected` | Confirm that non-loopback browser traffic has separate encrypted ingress. |
+| `--backend-transport-protected` | Confirm that non-loopback control-plane traffic uses a protected private network. |
+
+## `oore setup init`
+
+Initialize setup directly on the backend host.
+
+| Flag | What it does |
+| --- | --- |
+| `--mode <MODE>` | Setup mode to initialize. Required. One of `local`, `trusted-proxy`. |
+| `--owner-email <OWNER_EMAIL>` | Initial owner email. Required. |
+| `--user-email-header <USER_EMAIL_HEADER>` | Trusted proxy identity header. Required only for trusted-proxy mode. Default `x-oore-user-email`. |
+| `--trusted-proxy-cidr <TRUSTED_PROXY_CIDRS>` | Trusted proxy peer CIDR. Repeat for multiple frontend/proxy networks. |
+| `--shared-secret <SHARED_SECRET>` | Shared secret expected from the trusted proxy/oore-web hop. Env `OORE_TRUSTED_PROXY_SHARED_SECRET`. |
+| `--shared-secret-file <SHARED_SECRET_FILE>` | File containing the shared secret expected from the trusted proxy/oore-web hop. Env `OORE_TRUSTED_PROXY_SHARED_SECRET_FILE`. |
+| `--state-file <STATE_FILE>` | Path to the setup database file. Env `OORE_SETUP_STATE_FILE`. |
+| `--force` | Replace an unfinished access choice before owner creation. |
+| `--json` | Print machine-readable output. |
+
+## `oore setup token`
+
+Generate a bootstrap token for web UI setup.
+
+| Flag | What it does |
+| --- | --- |
+| `--ttl <TTL>` | Default `15m`. |
+| `--json` |  |
+| `--state-file <STATE_FILE>` | Env `OORE_SETUP_STATE_FILE`. |
+
+## `oore frontend invite`
+
+Create a short-lived, single-use frontend pairing code.
+
+| Flag | What it does |
+| --- | --- |
+| `--ttl <TTL>` | How long the pairing code remains valid. Default `10m`. |
+| `--state-file <STATE_FILE>` | Path to the setup database file. Env `OORE_SETUP_STATE_FILE`. |
+| `--json` | Print machine-readable output. |
+
+## `oore login`
+
+Create a Local Only session or import an existing session.
+
+| Flag | What it does |
+| --- | --- |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, then the saved login. Env `OORE_URL`. |
+| `--token <TOKEN>` | Import an existing API or session token and validate it against /v1/users/me. |
+| `--email <EMAIL>` | Optional local-login email (local mode). Defaults to owner@local server-side. |
+| `--json` |  |
+
+## `oore recovery`
+
+Mint a single-use browser recovery link over the local management socket.
+
+| Flag | What it does |
+| --- | --- |
+| `--email <EMAIL>` | Account to recover. Required when more than one active account exists. |
+| `--web-url <WEB_URL>` | Web UI base URL placed before the non-leaking recovery fragment. Default `http://127.0.0.1:4173`. Env `OORE_WEB_URL`. |
+| `--ttl <TTL>` | How long the single-use capability remains valid (maximum 5m). Default `5m`. |
+| `--state-file <STATE_FILE>` | Path to the setup database file used to locate the management socket. Env `OORE_SETUP_STATE_FILE`. |
+| `--json` | Print machine-readable output. |
+
+## `oore status`
+
+Show public setup status and authenticated runtime details.
+
+| Flag | What it does |
+| --- | --- |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, then the saved login. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token for authenticated status details. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the saved login. Env `OORE_TOKEN`. |
+| `--json` |  |
+
+## `oore runner register`
+
+Register this host as a build runner.
+
+| Flag | What it does |
+| --- | --- |
+| `--daemon-url <DAEMON_URL>` | Daemon URL to register with. Default `http://127.0.0.1:8787`. Env `OORE_DAEMON_URL`. |
+| `--name <NAME>` | Runner name (defaults to hostname). |
+| `--label <LABELS>` | Extra label for pipelines to select with `runs_on`, added to the detected labels such as `macos-15` and `xcode-16`. Repeatable. |
+| `--token <TOKEN>` | Auth session token for registration. Required. Env `OORE_SESSION_TOKEN`. |
+| `--json` | Print the result as JSON on stdout; progress goes to stderr. |
+
+## `oore runner start`
+
+Start the runner daemon (poll for jobs, execute builds).
+
+| Flag | What it does |
+| --- | --- |
+| `--daemon-url <DAEMON_URL>` | Daemon URL (loaded from config if not specified). Env `OORE_DAEMON_URL`. |
+| `--config <CONFIG>` | Path to runner config file. Default `~/.oore/runner.json`. |
+
+## `oore runner install-service`
+
+Install and start the runner as a boot-time macOS service.
+
+| Flag | What it does |
+| --- | --- |
+| `--config <CONFIG>` | Path to runner config file. |
+| `--managed-local` | Install or repair the runner managed by this local Oore backend. |
+| `--daemon-url <DAEMON_URL>` | Daemon URL stored when this local installation is enrolled. Env `OORE_DAEMON_URL`. |
+| `--state-file <STATE_FILE>` | Path to the local Oore SQLite database. Env `OORE_SETUP_STATE_FILE`. |
+| `--name <NAME>` | Managed runner name (defaults to hostname). |
+| `--json` | Print the result as JSON on stdout; progress goes to stderr. |
+
+## `oore runner rotate-token`
+
+Rotate this device's managed local runner token.
+
+| Flag | What it does |
+| --- | --- |
+| `--json` | Print the result as JSON on stdout. |
+
+## `oore runner uninstall-service`
+
+Stop and remove the managed macOS runner service.
+
+| Flag | What it does |
+| --- | --- |
+| `--json` | Print the result as JSON on stdout. |
+
+## `oore runner config show`
+
+Print every runner setting and its value.
+
+## `oore runner config set`
+
+Set a runner setting.
+
+| Flag | What it does |
+| --- | --- |
+| `<KEY>` | Setting name, such as OORE_RUNNER_CACHE_MAX_GB. Required. |
+| `<VALUE>` | Required. |
+
+## `oore runner config unset`
+
+Remove a runner setting, so the runner uses its default.
+
+| Flag | What it does |
+| --- | --- |
+| `<KEY>` | Required. |
+
+## `oore config set`
+
+
+| Flag | What it does |
+| --- | --- |
+| `<KEY>` | Required. |
+| `<VALUE>` | Required. |
+| `--json` | Print what was saved as JSON. |
+
+## `oore config get`
+
+
+| Flag | What it does |
+| --- | --- |
+| `<KEY>` | Required. |
+| `--json` | Print the value as JSON. |
+
+## `oore doctor`
+
+Check the host and selected build-platform toolchains.
+
+| Flag | What it does |
+| --- | --- |
+| `--json` |  |
+| `--platform <PLATFORM>` | Check requirements for a build platform. Repeat for multiple platforms. One of `android`, `ios`, `macos`. |
+| `--all` | Check Android, iOS, and macOS requirements. |
+| `--update` | Run the one-click backend update preflight that the web UI shows. Run it as the account that owns the install, without sudo. |
+
+## `oore init`
+
+Write a starter .oore.yaml for the Flutter app in a folder.
+
+| Flag | What it does |
+| --- | --- |
+| `<DIR>` | The app's repository folder. Default `.`. |
+| `--force` | Replace an existing `.oore.yaml`. |
+| `--print` | Print the file instead of writing it. |
+| `--json` | Print the result as JSON on stdout; progress goes to stderr. |
+
+## `oore pipeline validate`
+
+Validate repository pipeline YAML using the runner's schema.
+
+| Flag | What it does |
+| --- | --- |
+| `<PATH>` | Repository pipeline file to validate. Default `.oore.yaml`. |
+| `--project <PROJECT_ID>` | Also check the signing identities and secrets the file names, including `${{ secrets.NAME }}` references, against this project, with the stored session. |
+| `--pipeline <PIPELINE_ID>` | With --project, also look for secrets in this pipeline's scope. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print `{"path", "valid", "notices"}` as JSON. |
+
+## `oore pipeline plan`
+
+Print the steps a build runs for each workflow and platform.
+
+| Flag | What it does |
+| --- | --- |
+| `<PATH>` | Repository pipeline file to plan. Default `.oore.yaml`. |
+| `--workflow <WORKFLOW>` | Plan only this workflow (version 2). Defaults to every workflow. |
+| `--platform <PLATFORM>` | Plan only these platforms, as a run that selects them would. |
+| `--json` | Print the plans as JSON. |
+
+## `oore pipeline migrate`
+
+Rewrite a version 1 pipeline file as version 2.
+
+| Flag | What it does |
+| --- | --- |
+| `<PATH>` | Version 1 pipeline file to migrate. Default `.oore.yaml`. |
+| `-o, --output <FILE>` | Write the version 2 file to FILE instead of printing it. |
+| `--write` | Replace PATH with the version 2 file. |
+| `--check` | Print no file; fail while PATH is still version 1. |
+| `--json` | Print `{"path", "migrated", "yaml", "written_to", "warnings", "notes"}` as JSON. |
+
+## `oore pipeline workflows`
+
+List the workflows a build of a pipeline can name, read from its file.
+
+| Flag | What it does |
+| --- | --- |
+| `<PIPELINE_ID>` | Pipeline whose file to read. Required. |
+| `--ref <REF>` | Branch, tag or commit to read the file at. Defaults to the project's default branch. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore pipeline readiness`
+
+Check what would stop the pipeline's next store upload. Exits 2 when something blocks it.
+
+| Flag | What it does |
+| --- | --- |
+| `<PIPELINE_ID>` | Pipeline whose next store upload to check. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore pipeline list`
+
+List pipelines, of one app or of every app.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <APP>` | Only this app's pipelines. Takes a name or an ID. |
+| `--search <SEARCH>` | Only pipelines whose name contains this text. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the pipelines as JSON. |
+
+## `oore build run`
+
+Queue a build of a pipeline, optionally naming its workflow.
+
+| Flag | What it does |
+| --- | --- |
+| `--pipeline <PIPELINE>` | Pipeline to build. Takes a name or an ID. Required. |
+| `--project <APP>` | App the pipeline belongs to, by name or ID, when its name is not unique. |
+| `--workflow <WORKFLOW>` | `.oore.yaml` version 2 workflow to build. Defaults to the pipeline's default workflow, then the file's only workflow. |
+| `--branch <BRANCH>` | Branch to build. Defaults to the project's default branch. |
+| `--commit <COMMIT>` | Exact commit to build. Overrides the branch head. |
+| `--platform <PLATFORM>` | Build only `android`, `ios` or `macos`. Repeat for several. |
+| `--notes <TEXT>` | Release notes for the app version this build makes. They become the version's notes, shared by its other builds and sent to testers, Google Play and the App Store, unless the repository's CHANGELOG.md already has them. `oore notes set` changes them later. |
+| `--rehearsal` | Rehearse the release: build and sign as usual, then ask Google Play and App Store Connect to check it. Nothing is submitted or released. |
+| `--wait` | Follow the build to its result, like `oore build watch`, with the same exit codes. |
+| `--store` | With --wait, also wait for the store's answer. |
+| `--interval <INTERVAL>` | With --wait, seconds between checks. Default `10`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the queued build as JSON. With --wait, print JSON lines as `oore build watch --json` does. |
+
+## `oore build watch`
+
+Follow a build to its result, and with --store to the store's answer. Exits 1 when the build does not succeed, and 3 with --store when the store blocks, rejects or fails its release.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | Build to follow. Required. |
+| `--store` | Keep watching after the build succeeds until the store is done with its release: live, rejected, failed, or blocked until someone acts. |
+| `--interval <INTERVAL>` | Seconds between checks. Default `10`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print one JSON line per change, then the settled build. |
+
+## `oore build list`
+
+List builds, newest first, with the ID first.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <APP>` | Only this app's builds. Takes a name or an ID. |
+| `--pipeline <PIPELINE>` | Only this pipeline's builds. Takes a name or an ID. |
+| `--branch <BRANCH>` | Only builds of this branch. |
+| `--status <STATUS>` | Only builds with this status, such as failed or running. |
+| `--workflow <WORKFLOW>` | Only builds of this `.oore.yaml` workflow. |
+| `--commit <SHA>` | Only builds of this commit, by full SHA or prefix. |
+| `--mine` | Only builds you started. |
+| `--limit <LIMIT>` | How many builds to list, newest first. Default `20`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the builds as JSON. |
+
+## `oore build show`
+
+Show one build: status, commit, version and steps.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | The build. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's answer as JSON. |
+
+## `oore build logs`
+
+Print a build's log, or follow it with -f.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | Build whose log to print. Required. |
+| `-f, --follow` | Keep printing new lines until the build finishes, then exit as `oore build watch` does. |
+| `--step <STEP>` | Only the lines of this step, such as "Build Android". |
+| `--tail <N>` | Only the last N lines. |
+| `--search <SEARCH>` | Only lines that contain this text, ignoring case. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print `{"build_id", "lines", "truncated"}`. With -f, one JSON line per log line instead. |
+
+## `oore build why`
+
+Explain why a build failed: the step, the likely cause and fix, the failed tests and the last lines of the log.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | Build to explain. Required. |
+| `--tail <TAIL>` | Lines of the failed step to show. Default `40`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the diagnosis as JSON, the shape of `GET /v1/builds/{id}/diagnosis`. |
+
+## `oore build cancel`
+
+Stop a queued or running build.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | The build. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's answer as JSON. |
+
+## `oore build rerun`
+
+Start a new build of the same commit and settings.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | The build. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's answer as JSON. |
+
+## `oore build retry-step`
+
+Run one step of a finished build again, such as a store upload.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | The build whose step to run again. Required. |
+| `--step <STEP>` | Step to run again, such as publish-play or publish-app-store. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the new build as JSON. |
+
+## `oore build artifacts`
+
+List the files a build made.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | The build. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's answer as JSON. |
+
+## `oore build install-link`
+
+Print a link to install the build on a phone.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | The build to install. Required. |
+| `--platform <PLATFORM>` | Which app to link to when the build made both. One of `android`, `ios`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the links as JSON. |
+
+## `oore project list`
+
+List apps, with the ID first.
+
+| Flag | What it does |
+| --- | --- |
+| `--search <SEARCH>` | Only apps whose name or repository contains this text. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the apps as JSON. |
+
+## `oore artifact download`
+
+Download one build file, by the ID `oore build artifacts` prints.
+
+| Flag | What it does |
+| --- | --- |
+| `<ARTIFACT_ID>` | The artifact to download. Required. |
+| `-o, --output <PATH>` | Where to write the file. `-` writes it to standard output. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print where the file went as JSON. |
+
+## `oore api`
+
+Call any Oore API operation, by method and path or by operation ID.
+
+| Flag | What it does |
+| --- | --- |
+| `<METHOD\|OPERATION>` | An HTTP method followed by a path, or an operation ID such as list_builds. |
+| `<PATH>` | The path, such as /v1/builds, when the first argument is a method. |
+| `-p, --path-param <KEY=VALUE>` | A path parameter, as key=value, for an operation ID's path. |
+| `-q, --query <KEY=VALUE>` | A query parameter, as key=value. Repeat for several. |
+| `-f, --field <KEY=VALUE>` | A string field of the JSON body, as key=value. On GET it becomes a query parameter. |
+| `-F, --typed-field <KEY=VALUE>` | A typed field of the JSON body, as key=value, where the value is JSON: true, 3, null, ["a"] or \{"a": 1\}. |
+| `--input <FILE>` | Read the request body from a file, or `-` for standard input. |
+| `--paginate` | Follow limit and offset lists until `total` is reached, and print one merged answer. |
+| `-o, --output <FILE>` | Write the answer to this file instead of printing it, for downloads. |
+| `--list` | List the operations instead of calling one. |
+| `--tag <TAG>` | With --list, only operations with this tag, such as Builds. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Answers are JSON already; with --json a failure is a JSON object on stderr too. |
+
+## `oore commands`
+
+Print every command and flag, for scripts and agents.
+
+| Flag | What it does |
+| --- | --- |
+| `--json` | Print the tree as JSON: every command with its flags, plus the exit codes. |
+| `--markdown` | Print the CLI reference page the docs publish. |
+
+## `oore completions`
+
+Print a shell completion script.
+
+| Flag | What it does |
+| --- | --- |
+| `<SHELL>` | Shell to write the completion script for. Required. One of `bash`, `elvish`, `fish`, `powershell`, `zsh`. |
+
+## `oore notes show`
+
+Print the release notes of an app version.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT>` | Project the app belongs to. Required. |
+| `--version <VERSION>` | App version, as in pubspec.yaml without the +build number, such as 2.5.1. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore notes set`
+
+Write the release notes of an app version.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT>` | Project the app belongs to. Required. |
+| `--version <VERSION>` | App version, as in pubspec.yaml without the +build number, such as 2.5.1. Required. |
+| `--text <TEXT>` | The notes, in the default language (en-US unless the pipeline says otherwise). |
+| `--file <PATH>` | Read the notes from a file, or from standard input with `-`. |
+| `--locale <LOCALE=PATH>` | Notes in another language, as LOCALE=PATH, such as de-DE=notes/de.txt. Repeat for several. Replaces the languages saved before. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the saved notes as JSON. |
+
+## `oore notes draft`
+
+Print notes drafted from the commits since the last released version. Nothing is saved.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT>` | Project the app belongs to. Required. |
+| `--version <VERSION>` | App version, as in pubspec.yaml without the +build number, such as 2.5.1. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore version`
+
+Print the installed oore version.
+
+| Flag | What it does |
+| --- | --- |
+| `--json` | Print the result as JSON on stdout. |
+
+## `oore update`
+
+Update oore and oored to the latest release.
+
+| Flag | What it does |
+| --- | --- |
+| `--check` | Only check for updates, don't install. |
+| `--force` | Reinstall even if already on the latest version. |
+| `--channel <CHANNEL>` | Release channel to update from: stable, beta, alpha. |
+| `--switch-channel` | Move this installation to the --channel release channel in place. |
+| `--repo <REPO>` | GitHub repository in `owner/name` format. Env `OORE_GITHUB_REPO`. |
+| `--json` | Print the result as JSON on stdout; progress goes to stderr. |
+
+## `oore backup create`
+
+Create a consistent SQLite snapshot and package it with the encryption key.
+
+| Flag | What it does |
+| --- | --- |
+| `--output <OUTPUT>` | Destination .tar.gz file. Required. |
+| `--json` | Print the result as JSON on stdout. |
+| `--state-file <STATE_FILE>` | Path to the SQLite state file. Env `OORE_SETUP_STATE_FILE`. |
+
+## `oore backup verify`
+
+Verify a backup manifest, checksums, and SQLite integrity.
+
+| Flag | What it does |
+| --- | --- |
+| `--input <INPUT>` | Backup .tar.gz file. Required. |
+| `--json` | Print the result as JSON on stdout. |
+
+## `oore backup restore`
+
+Atomically restore a verified backup while the daemon is stopped.
+
+| Flag | What it does |
+| --- | --- |
+| `--input <INPUT>` | Backup .tar.gz file. Required. |
+| `--yes` | Replace the live state without asking. Needed when there is no terminal. |
+| `--json` | Print the result as JSON on stdout. |
+| `--state-file <STATE_FILE>` | Path to the SQLite state file to restore. Env `OORE_SETUP_STATE_FILE`. |

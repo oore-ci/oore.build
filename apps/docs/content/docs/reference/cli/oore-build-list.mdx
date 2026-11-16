@@ -1,0 +1,36 @@
+---
+title: '`oore build list` and `oore build show`'
+status: implemented
+description: 'Find builds by app, pipeline, branch, status, workflow or commit, and read one build.'
+---
+
+```text
+oore build list [--project <NAME|ID>] [--pipeline <NAME|ID>] [--branch BRANCH]
+                [--status STATUS] [--workflow NAME] [--commit SHA] [--mine]
+                [--limit N] [--json]
+oore build show <BUILD_ID> [--json]
+```
+
+`oore build list` prints the newest builds first, 20 by default and up to 200.
+`--commit` takes a full SHA or a prefix. `--mine` keeps the builds you
+started.
+
+```text
+$ oore build list --project Coin --status failed --limit 3
+ID          BUILD  STATUS  PIPELINE  BRANCH  COMMIT    CREATED
+bld_9c1e    #48    failed  Release   main    3f9a2c1d  2h ago
+bld_70aa    #45    failed  Release   main    9e01b7f3  1d ago
+```
+
+With `--json`, it prints the API's answer, `{"builds": [...], "total": n}`.
+
+From an app name to its latest build's ID:
+
+```bash
+oore build list --project Coin --limit 1 --json | jq -r '.builds[0].id'
+```
+
+`oore build show` prints the status, app, pipeline, workflow, branch, commit,
+version, who started it, the runner, and each step with its time and exit
+code. With `--json`, it prints `GET /v1/builds/{build_id}` as the API answers.
+For a failed build it points at [`oore build why`](/reference/cli/oore-build-why).
