@@ -8,6 +8,7 @@
     "run",
     "sources",
     "sign",
-    "distribute"
+    "distribute",
+    "automate"
   ]
 }

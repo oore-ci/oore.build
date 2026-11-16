@@ -144,7 +144,7 @@ jobs:
         run: make lint-docs lint-site
 
       - name: Test
-        run: make test-site
+        run: make test-site test-docs
 
       - name: Type check
         run: make check-docs-types
