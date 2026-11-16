@@ -99,14 +99,6 @@ export function TriggerBuildStoreSection({
   return (
     <Stack gap={4} className="rounded-lg border p-4">
       <StoreReadinessChecklist readiness={readiness} />
-      <Stack gap={1}>
-        <Text className="font-medium">Release notes</Text>
-        <Text variant="muted">
-          The stores get the release notes of the app version this build makes.
-          Oore drafts them from commits, and you can edit them on the build page
-          once the build starts.
-        </Text>
-      </Stack>
     </Stack>
   )
 }

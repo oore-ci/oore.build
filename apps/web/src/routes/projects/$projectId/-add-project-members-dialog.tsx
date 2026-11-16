@@ -22,7 +22,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -261,10 +260,6 @@ export function AddProjectMembersDialog({ projectId }: { projectId: string }) {
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>Add app members</DialogTitle>
-          <DialogDescription>
-            Pick people or paste a list of emails. Everyone gets the same app
-            role.
-          </DialogDescription>
         </DialogHeader>
 
         <form

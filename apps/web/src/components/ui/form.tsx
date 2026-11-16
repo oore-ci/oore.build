@@ -8,6 +8,7 @@ import {
 import type { ControllerProps, FieldPath, FieldValues } from 'react-hook-form'
 
 import { cn } from '@/lib/utils'
+import { InfoHint } from '@/components/ui/info-hint'
 import { Label } from '@/components/ui/label'
 
 const Form = FormProvider
@@ -85,16 +86,31 @@ function FormItem({ className, ...props }: React.ComponentProps<'div'>) {
 
 function FormLabel({
   className,
+  hint,
   ...props
-}: React.ComponentProps<typeof Label>) {
+}: React.ComponentProps<typeof Label> & {
+  /**
+   * Help that is not needed to fill the field in, shown behind an info icon
+   * beside the label. Use `FormDescription` only for a consequence that
+   * prevents a real mistake.
+   */
+  hint?: React.ReactNode
+}) {
   const { error, formItemId } = useFormField()
-
-  return (
+  const label = (
     <Label
       className={cn(error && 'text-destructive', className)}
       htmlFor={formItemId}
       {...props}
     />
+  )
+  if (!hint) return label
+
+  return (
+    <div data-slot="form-label-row" className="flex items-center gap-1">
+      {label}
+      <InfoHint>{hint}</InfoHint>
+    </div>
   )
 }
 

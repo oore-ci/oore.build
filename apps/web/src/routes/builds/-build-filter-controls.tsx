@@ -16,6 +16,7 @@ import { useDebouncedCallback } from '@/hooks/use-debounced-callback'
 import { useInfinitePipelines, usePipeline } from '@/hooks/use-pipelines'
 import { useInfiniteProjects, useProject } from '@/hooks/use-projects'
 import { useBuildActors } from '@/hooks/use-builds'
+import { useAuthStore } from '@/stores/auth-store'
 import { BUILD_STATUS_FILTER_OPTIONS } from '@/lib/status-variants'
 import { isNearScrollEnd } from '@/lib/scroll'
 import { cn } from '@/lib/utils'
@@ -345,6 +346,7 @@ function ValueFilter({
   loading,
   onSearch,
   onValueChange,
+  pinned,
   placeholder,
   suggestions,
   value,
@@ -356,6 +358,8 @@ function ValueFilter({
   loading?: boolean
   onSearch?: (value: string) => void
   onValueChange: (value: string | undefined) => void
+  /** A choice listed right after `allLabel`, such as the signed-in user. */
+  pinned?: { id: string; name: string }
   placeholder: string
   suggestions: ReadonlyArray<string>
   value?: string
@@ -368,12 +372,22 @@ function ValueFilter({
     )
     const values =
       needle && !matching.includes(needle) ? [needle, ...matching] : matching
+    const showPinned =
+      pinned &&
+      (!needle ||
+        pinned.name.toLowerCase().includes(needle.toLowerCase()) ||
+        pinned.id.toLowerCase().includes(needle.toLowerCase()))
     return [
       { id: '', name: allLabel },
-      ...values.map((id) => ({ id, name: id })),
+      ...(showPinned && pinned ? [pinned] : []),
+      ...values
+        .filter((id) => id !== pinned?.id)
+        .map((id) => ({ id, name: id })),
     ]
-  }, [allLabel, needle, suggestions])
-  const selected = value ? { id: value, name: value } : options[0]
+  }, [allLabel, needle, pinned, suggestions])
+  const selected = value
+    ? { id: value, name: value === pinned?.id ? pinned.name : value }
+    : options[0]
 
   return (
     <Combobox
@@ -445,6 +459,7 @@ export function ActorFilter({
     project_id: filters.project,
     q: search || undefined,
   })
+  const myEmail = useAuthStore((state) => state.user?.email)
 
   return (
     <ValueFilter
@@ -457,6 +472,7 @@ export function ActorFilter({
       loading={actorsQuery.isLoading}
       onSearch={updateSearch}
       onValueChange={(actor) => onChange({ actor, page: undefined })}
+      pinned={myEmail ? { id: myEmail, name: 'Me' } : undefined}
       placeholder="Search actors"
       suggestions={actorsQuery.data?.actors ?? []}
       value={filters.actor}

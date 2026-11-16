@@ -39,7 +39,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -388,7 +387,17 @@ export function SigningIdentityDialog({
               name="name"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Name</FormLabel>
+                  <FormLabel
+                    hint={
+                      existing
+                        ? 'Files that name it under signing need the new name.'
+                        : kind === 'android_keystore'
+                          ? 'What a file writes under signing, such as android: coin-upload.'
+                          : 'What a file writes under signing, such as ios: coin-app-store.'
+                    }
+                  >
+                    Name
+                  </FormLabel>
                   <FormControl>
                     <Input
                       autoFocus
@@ -403,13 +412,6 @@ export function SigningIdentityDialog({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    {existing
-                      ? 'Files that name it under signing need the new name.'
-                      : kind === 'android_keystore'
-                        ? 'What a file writes under signing, such as android: coin-upload.'
-                        : 'What a file writes under signing, such as ios: coin-app-store.'}
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -533,7 +535,11 @@ export function SigningIdentityDialog({
                   name="p12_password"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Certificate password</FormLabel>
+                      <FormLabel
+                        hint={'Leave empty if the .p12 has no password.'}
+                      >
+                        Certificate password
+                      </FormLabel>
                       <FormControl>
                         <Input
                           type="password"
@@ -542,9 +548,6 @@ export function SigningIdentityDialog({
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>
-                        Leave empty if the .p12 has no password.
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

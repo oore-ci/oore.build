@@ -373,9 +373,6 @@ function IntegrationsPage() {
             <h2 id="connect-source-title" className="text-sm font-semibold">
               Connect a source
             </h2>
-            <Text variant="muted" className="mt-1">
-              Choose a provider to start discovering repositories.
-            </Text>
           </div>
           <div className="grid items-stretch gap-4 md:grid-cols-2">
             {PROVIDERS.map((provider) => (

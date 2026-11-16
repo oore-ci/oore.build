@@ -417,7 +417,15 @@ function ProjectScopeField({
       name="project_id"
       render={({ field }) => (
         <FormItem>
-          <FormLabel>App</FormLabel>
+          <FormLabel
+            hint={
+              field.value === ALL_PROJECTS
+                ? 'Receives events from every app, plus runner alerts.'
+                : 'Receives build and release events for this app only.'
+            }
+          >
+            App
+          </FormLabel>
           <Select
             value={field.value}
             onValueChange={field.onChange}
@@ -436,11 +444,6 @@ function ProjectScopeField({
               ))}
             </SelectContent>
           </Select>
-          <FormDescription>
-            {field.value === ALL_PROJECTS
-              ? 'Receives events from every app, plus runner alerts.'
-              : 'Receives build and release events for this app only.'}
-          </FormDescription>
           {projectsQuery.isError ? (
             <p className="text-sm text-destructive">
               Could not load projects.{' '}
@@ -508,11 +511,6 @@ export function NotificationChannelFormFields({
             <FormItem className="flex items-center justify-between gap-4 space-y-0">
               <div className="space-y-0.5">
                 <FormLabel>Enabled</FormLabel>
-                <FormDescription>
-                  {field.value
-                    ? 'This channel sends notifications.'
-                    : 'Paused. Events are not sent to this channel.'}
-                </FormDescription>
               </div>
               <FormControl>
                 <Switch
@@ -529,7 +527,19 @@ export function NotificationChannelFormFields({
           name="channel_type"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Type</FormLabel>
+              <FormLabel
+                hint={
+                  channelType === 'slack'
+                    ? 'Posts Slack messages with a link to the build or release and a mention of the person who triggered it.'
+                    : channelType === 'webhook'
+                      ? 'Sends a JSON payload with event details to your URL.'
+                      : channelType === 'mattermost'
+                        ? 'Sends a formatted message to a Mattermost incoming webhook.'
+                        : 'Sends HTML email notifications via SMTP.'
+                }
+              >
+                Type
+              </FormLabel>
               <Select
                 value={field.value}
                 onValueChange={field.onChange}
@@ -548,15 +558,6 @@ export function NotificationChannelFormFields({
                   ))}
                 </SelectContent>
               </Select>
-              <FormDescription>
-                {channelType === 'slack'
-                  ? 'Posts Slack messages with a link to the build or release and a mention of the person who triggered it.'
-                  : channelType === 'webhook'
-                    ? 'Sends a JSON payload with event details to your URL.'
-                    : channelType === 'mattermost'
-                      ? 'Sends a formatted message to a Mattermost incoming webhook.'
-                      : 'Sends HTML email notifications via SMTP.'}
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -633,7 +634,13 @@ export function NotificationChannelFormFields({
               name="smtp_password"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Password</FormLabel>
+                  <FormLabel
+                    hint={
+                      'Enter a new password only to change it. Changing the host, port or username needs it again.'
+                    }
+                  >
+                    Password
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="password"
@@ -646,12 +653,6 @@ export function NotificationChannelFormFields({
                       {...field}
                     />
                   </FormControl>
-                  {editing && channel.has_smtp_config ? (
-                    <FormDescription>
-                      Enter a new password only to change it. Changing the host,
-                      port or username needs it again.
-                    </FormDescription>
-                  ) : null}
                   <FormMessage />
                 </FormItem>
               )}
@@ -726,12 +727,6 @@ export function NotificationChannelFormFields({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>
-                  Comma-separated list of email addresses
-                  {smtpUnknown
-                    ? '. Leave blank to keep existing recipients.'
-                    : '.'}
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -920,7 +915,11 @@ export function NotificationChannelFormFields({
                   name="slack_channel_id"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>
+                      <FormLabel
+                        hint={
+                          "With a bot token that has chat:write and is in this channel, each release gets one message that Oore edits as it moves (uploaded, in review, approved, rolling, done), and every change goes in its thread. Find the ID under the channel's name, then About."
+                        }
+                      >
                         Channel ID for release threads (optional)
                       </FormLabel>
                       <FormControl>
@@ -932,13 +931,6 @@ export function NotificationChannelFormFields({
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>
-                        With a bot token that has chat:write and is in this
-                        channel, each release gets one message that Oore edits
-                        as it moves (uploaded, in review, approved, rolling,
-                        done), and every change goes in its thread. Find the ID
-                        under the channel's name, then About.
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -948,7 +940,13 @@ export function NotificationChannelFormFields({
                   name="slack_mentions"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Slack member IDs (optional)</FormLabel>
+                      <FormLabel
+                        hint={
+                          'One per line: a sign-in email or Git username, then the Slack member ID to mention. Push builds use the Git username. These take priority over the bot token lookup.'
+                        }
+                      >
+                        Slack member IDs (optional)
+                      </FormLabel>
                       <FormControl>
                         <Textarea
                           placeholder={
@@ -960,11 +958,6 @@ export function NotificationChannelFormFields({
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>
-                        One per line: a sign-in email or Git username, then the
-                        Slack member ID to mention. Push builds use the Git
-                        username. These take priority over the bot token lookup.
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -997,11 +990,6 @@ export function NotificationChannelFormFields({
                 </label>
               </RadioGroup>
             </FormControl>
-            <FormDescription>
-              {field.value === 'all'
-                ? 'Sends every build, release and runner event, including events added later.'
-                : 'Sends only the events you choose below.'}
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

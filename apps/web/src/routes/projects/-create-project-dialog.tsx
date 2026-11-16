@@ -444,16 +444,6 @@ export default function CreateProjectDialog({
                             </div>
                           ) : null}
                         </Stack>
-                        <FormDescription>
-                          Absolute path to the Git repository.
-                          {!canBrowseLocalFs ? (
-                            <>
-                              {' '}
-                              For security, folder browsing is only available
-                              from localhost.
-                            </>
-                          ) : null}
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

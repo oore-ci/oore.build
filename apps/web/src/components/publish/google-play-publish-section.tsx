@@ -533,7 +533,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
           name="track"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Track</FormLabel>
+              <FormLabel hint={TRACKS[field.value].effect}>Track</FormLabel>
               <Select
                 value={field.value}
                 onValueChange={(next) => {
@@ -560,7 +560,6 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
                   ))}
                 </SelectContent>
               </Select>
-              <FormDescription>{TRACKS[field.value].effect}</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -592,7 +591,19 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="release_type"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Rollout</FormLabel>
+            <FormLabel
+              hint={
+                releaseType === 'draft'
+                  ? 'Nothing reaches users until you review and roll out the draft in Play Console.'
+                  : releaseType === 'staged'
+                    ? 'Only the share below gets the update at first. Increase, halt or complete it later from the release board or Play Console.'
+                    : track === 'internal'
+                      ? 'Every internal tester gets the update. The internal track does not support staged rollouts.'
+                      : 'Everyone on the track gets the update as soon as Google approves it.'
+              }
+            >
+              Rollout
+            </FormLabel>
             <FormControl>
               <RadioGroup
                 value={field.value}
@@ -613,15 +624,6 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
                 })}
               </RadioGroup>
             </FormControl>
-            <FormDescription>
-              {releaseType === 'draft'
-                ? 'Nothing reaches users until you review and roll out the draft in Play Console.'
-                : releaseType === 'staged'
-                  ? 'Only the share below gets the update at first. Increase, halt or complete it later from the release board or Play Console.'
-                  : track === 'internal'
-                    ? 'Every internal tester gets the update. The internal track does not support staged rollouts.'
-                    : 'Everyone on the track gets the update as soon as Google approves it.'}
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -654,7 +656,15 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
           name="release_notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Release notes</FormLabel>
+              <FormLabel
+                hint={
+                  field.value === 'repo_files'
+                    ? 'One <locale>.txt file per language, such as en-US.txt.'
+                    : 'Written once per app version on the build page, or read from a changelog in .oore.yaml. Play shows the first 500 characters; a version without notes sends none.'
+                }
+              >
+                Release notes
+              </FormLabel>
               <Select
                 value={field.value}
                 onValueChange={field.onChange}
@@ -673,11 +683,6 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
                   ))}
                 </SelectContent>
               </Select>
-              <FormDescription>
-                {field.value === 'repo_files'
-                  ? 'One <locale>.txt file per language, such as en-US.txt.'
-                  : 'Written once per app version on the build page, or read from a changelog in .oore.yaml. Play shows the first 500 characters; a version without notes sends none.'}
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -749,7 +754,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="listing_dir"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Store listing from the repository</FormLabel>
+            <FormLabel
+              hint={
+                'fastlane’s layout: en-US/title.txt, short_description.txt, full_description.txt and video.txt. Sent with every upload; files you leave out stay as they are in Play Console. Screenshots are not uploaded.'
+              }
+            >
+              Store listing from the repository
+            </FormLabel>
             <FormControl>
               <Input
                 className="font-mono"
@@ -758,12 +769,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 {...field}
               />
             </FormControl>
-            <FormDescription>
-              Optional. fastlane’s layout: en-US/title.txt,
-              short_description.txt, full_description.txt and video.txt. Sent
-              with every upload; files you leave out stay as they are in Play
-              Console. Screenshots are not uploaded.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -773,7 +778,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="package_name"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Expected package</FormLabel>
+            <FormLabel
+              hint={
+                'When set, a bundle for any other application id fails the upload.'
+              }
+            >
+              Expected package
+            </FormLabel>
             <FormControl>
               <Input
                 className="font-mono"
@@ -782,9 +793,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 {...field}
               />
             </FormControl>
-            <FormDescription>
-              When set, a bundle for any other application id fails the upload.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -794,7 +802,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="in_app_update_priority"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>In-app update priority</FormLabel>
+            <FormLabel
+              hint={
+                'Apps using the Play in-app updates API can prompt harder for higher priorities.'
+              }
+            >
+              In-app update priority
+            </FormLabel>
             <Select
               value={field.value}
               onValueChange={field.onChange}
@@ -813,10 +827,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 ))}
               </SelectContent>
             </Select>
-            <FormDescription>
-              Apps using the Play in-app updates API can prompt harder for
-              higher priorities.
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -827,11 +837,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         render={({ field }) => (
           <FormItem className="flex flex-row items-start justify-between gap-4">
             <Stack gap={1}>
-              <FormLabel>Upload mapping.txt</FormLabel>
-              <FormDescription>
-                Play Console deobfuscates crash reports with it. Skipped when
-                the build produced none.
-              </FormDescription>
+              <FormLabel
+                hint={
+                  'Play Console deobfuscates crash reports with it. Skipped when the build produced none.'
+                }
+              >
+                Upload mapping.txt
+              </FormLabel>
             </Stack>
             <FormControl>
               <Switch
@@ -848,7 +860,13 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
         name="preflight"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Pre-flight checks</FormLabel>
+            <FormLabel
+              hint={
+                'Before the release is committed, Google Play validates it, which catches a version code Play already has or a track the service account cannot release to. Automatic warns until a release from this pipeline has been accepted, then stops a refused release so nothing half-published reaches Play.'
+              }
+            >
+              Pre-flight checks
+            </FormLabel>
             <FormControl>
               <RadioGroup
                 value={field.value}
@@ -866,13 +884,6 @@ function AdvancedFields({ form }: { form: UseFormReturn<FormValues> }) {
                 ))}
               </RadioGroup>
             </FormControl>
-            <FormDescription>
-              Before the release is committed, Google Play validates it, which
-              catches a version code Play already has or a track the service
-              account cannot release to. Automatic warns until a release from
-              this pipeline has been accepted, then stops a refused release so
-              nothing half-published reaches Play.
-            </FormDescription>
           </FormItem>
         )}
       />

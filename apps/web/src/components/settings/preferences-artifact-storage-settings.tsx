@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -191,7 +190,17 @@ export function ArtifactStorageSettings({
                   name="backend_kind"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Provider</FormLabel>
+                      <FormLabel
+                        hint={
+                          backendKind === 'disabled'
+                            ? 'Artifacts are recorded as metadata only. Files are not stored, so downloads are unavailable.'
+                            : backendKind === 'local'
+                              ? 'Artifacts are uploaded to the daemon and stored on local disk (best for single-host setups).'
+                              : 'Artifacts are stored in an S3-compatible bucket and served via time-limited download links.'
+                        }
+                      >
+                        Provider
+                      </FormLabel>
                       <Select
                         value={field.value}
                         onValueChange={(value) => {
@@ -222,13 +231,6 @@ export function ArtifactStorageSettings({
                           </SelectItem>
                         </SelectContent>
                       </Select>
-                      <FormDescription>
-                        {backendKind === 'disabled'
-                          ? 'Artifacts are recorded as metadata only. Files are not stored, so downloads are unavailable.'
-                          : backendKind === 'local'
-                            ? 'Artifacts are uploaded to the daemon and stored on local disk (best for single-host setups).'
-                            : 'Artifacts are stored in an S3-compatible bucket and served via time-limited download links.'}
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -264,17 +266,6 @@ export function ArtifactStorageSettings({
                             </Button>
                           ) : null}
                         </Row>
-                        <FormDescription>
-                          Absolute path on the daemon host where artifact files
-                          are stored.
-                          {!canBrowseLocalFs ? (
-                            <>
-                              {' '}
-                              For security, folder browsing is only available
-                              from localhost.
-                            </>
-                          ) : null}
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
