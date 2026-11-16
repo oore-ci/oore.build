@@ -120,13 +120,18 @@ jobs:
           fi
           echo "SKIP_RUST_ACCEPTANCE=$skip" >> "$GITHUB_ENV"
 
-      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
-      - name: Install pinned Rust toolchain
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
         if: env.SKIP_RUST_ACCEPTANCE != 'true'
-        run: |
-          if [[ -f rust-toolchain.toml ]]; then
-            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-          fi
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # Self-hosted Macs have no preinstalled rustup guarantee (jarvis has
+      # none on the runner PATH), so install it the way Validate does.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        if: env.SKIP_RUST_ACCEPTANCE != 'true'
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
 
       - name: Setup Bun
         if: env.SKIP_RUST_ACCEPTANCE != 'true'
@@ -299,15 +304,16 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.commit }}
 
-      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
-      - name: Install pinned Rust toolchain
-        run: |
-          if [[ -f rust-toolchain.toml ]]; then
-            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-          fi
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Rust target
-        run: rustup target add "${{ matrix.target }}"
+      # Self-hosted Macs have no preinstalled rustup guarantee, so install the
+      # pinned toolchain and target the way Validate does.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
