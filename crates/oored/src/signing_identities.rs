@@ -17,11 +17,12 @@ use oore_contract::{
     IosDistributionInput, IosExportMethod, IosSigningMode, ListPipelineWorkflowSettingsResponse,
     ListSigningIdentitiesResponse, OkResponse, PipelineWorkflowSettings,
     RunnerAndroidSigningProfile, RunnerIosProvisioningProfile, RunnerIosSigningBundle,
-    SigningIdentity, SigningIdentityKind, SigningIdentityProfile, SigningIdentityResponse,
-    SigningIdentityUse, SigningSpec, UpdatePipelineWorkflowSettingsRequest,
-    UpdateSigningIdentityRequest, is_valid_workflow_name,
+    SigningIdentity, SigningIdentityKind, SigningIdentityPipelineUse, SigningIdentityProfile,
+    SigningIdentityResponse, SigningIdentityUse, SigningSpec,
+    UpdatePipelineWorkflowSettingsRequest, UpdateSigningIdentityRequest, is_valid_workflow_name,
 };
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqlitePool};
 use tracing::error;
 use uuid::Uuid;
@@ -54,7 +55,7 @@ fn invalid(message: impl Into<String>) -> ApiFailure {
     api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
 }
 
-fn kind_str(kind: SigningIdentityKind) -> &'static str {
+pub(crate) fn kind_str(kind: SigningIdentityKind) -> &'static str {
     match kind {
         SigningIdentityKind::AndroidKeystore => "android_keystore",
         SigningIdentityKind::IosDistribution => "ios_distribution",
@@ -105,7 +106,7 @@ fn required(value: &str, field: &str) -> Result<String, ApiFailure> {
 /// Encrypted as a whole into `material_encrypted`.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-enum Material {
+pub(crate) enum Material {
     AndroidKeystore {
         keystore_filename: String,
         keystore_base64: String,
@@ -154,19 +155,72 @@ impl Drop for Material {
 
 /// What the API shows, stored in `summary`.
 #[derive(Default, Serialize, Deserialize)]
-struct Summary {
+pub(crate) struct Summary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    filename: Option<String>,
+    pub filename: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_alias: Option<String>,
+    pub key_alias: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    team_id: Option<String>,
+    pub team_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    export_method: Option<IosExportMethod>,
+    pub export_method: Option<IosExportMethod>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    expires_at: Option<i64>,
+    pub expires_at: Option<i64>,
     #[serde(default)]
-    profiles: Vec<SigningIdentityProfile>,
+    pub profiles: Vec<SigningIdentityProfile>,
+}
+
+fn base64_bytes(value: &str) -> Vec<u8> {
+    base64::engine::general_purpose::STANDARD
+        .decode(value.trim())
+        .unwrap_or_else(|_| value.trim().as_bytes().to_vec())
+}
+
+/// A hash of the key material, keyed with the instance key so it says
+/// nothing about the passwords it covers. Identical uploads hash the same,
+/// whatever their file names, so the library keeps one identity for them.
+pub(crate) fn content_hash(material: &Material, encryption_key: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"oore-signing-identity-v1\0");
+    hasher.update(encryption_key);
+    let mut field = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    };
+    match material {
+        Material::AndroidKeystore {
+            keystore_base64,
+            store_password,
+            key_alias,
+            key_password,
+            ..
+        } => {
+            field(b"android_keystore");
+            field(&base64_bytes(keystore_base64));
+            field(store_password.as_bytes());
+            field(key_alias.as_bytes());
+            field(key_password.as_bytes());
+        }
+        Material::IosDistribution {
+            export_method,
+            p12_base64,
+            p12_password,
+            profiles,
+            ..
+        } => {
+            field(b"ios_distribution");
+            field(export_method.as_str().as_bytes());
+            field(&base64_bytes(p12_base64));
+            field(p12_password.as_bytes());
+            let mut sorted: Vec<_> = profiles.iter().collect();
+            sorted.sort_by(|a, b| a.bundle_id.cmp(&b.bundle_id));
+            for profile in sorted {
+                field(profile.bundle_id.as_bytes());
+                field(&base64_bytes(&profile.profile_base64));
+            }
+        }
+    }
+    hex::encode(hasher.finalize())
 }
 
 fn android_material(input: &AndroidKeystoreInput) -> Result<(Material, Summary), ApiFailure> {
@@ -343,6 +397,39 @@ async fn uses_of(
         .collect())
 }
 
+async fn pipeline_uses_of(
+    pool: &SqlitePool,
+    identity_id: &str,
+) -> Result<Vec<SigningIdentityPipelineUse>, ApiFailure> {
+    let rows = sqlx::query(
+        "SELECT s.pipeline_id, p.name AS pipeline_name, s.build_type \
+         FROM pipeline_android_signing_profiles s JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE s.identity_id = ?1 \
+         UNION ALL \
+         SELECT s.pipeline_id, p.name, NULL \
+         FROM pipeline_ios_signing_settings s JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE s.identity_id = ?1 \
+         ORDER BY 2, 3",
+    )
+    .bind(identity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| store_error("Failed to load where the identity is used", e))?;
+    Ok(rows
+        .iter()
+        .map(|row| SigningIdentityPipelineUse {
+            pipeline_id: row.get("pipeline_id"),
+            pipeline_name: row.get("pipeline_name"),
+            build_type: row
+                .get::<Option<String>, _>("build_type")
+                .map(|raw| match raw.as_str() {
+                    "debug" => AndroidSigningBuildType::Debug,
+                    _ => AndroidSigningBuildType::Release,
+                }),
+        })
+        .collect())
+}
+
 async fn row_to_identity(
     pool: &SqlitePool,
     row: &sqlx::sqlite::SqliteRow,
@@ -352,6 +439,7 @@ async fn row_to_identity(
     let id: String = row.get("id");
     Ok(SigningIdentity {
         used_by: uses_of(pool, &id).await?,
+        used_by_pipelines: pipeline_uses_of(pool, &id).await?,
         id,
         project_id: row.get("project_id"),
         name: row.get("name"),
@@ -456,6 +544,7 @@ pub async fn create_signing_identity(
     let name = normalize_name(&req.name)?;
     let (material, summary) =
         material_for(req.kind, req.android.as_ref(), req.ios.as_ref()).await?;
+    let hash = content_hash(&material, &state.encryption_key);
     let encrypted = crypto::encrypt(
         &serde_json::to_string(&material).expect("material serializes"),
         &state.encryption_key,
@@ -465,8 +554,8 @@ pub async fn create_signing_identity(
     let now = now_unix();
     sqlx::query(
         "INSERT INTO project_signing_identities \
-         (id, project_id, name, kind, summary, material_encrypted, created_by, updated_by, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?8)",
+         (id, project_id, name, kind, summary, material_encrypted, created_by, updated_by, created_at, updated_at, content_hash) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7, ?8, ?8, ?9)",
     )
     .bind(&id)
     .bind(&project_id)
@@ -476,6 +565,7 @@ pub async fn create_signing_identity(
     .bind(&encrypted)
     .bind(&auth.0.user_id)
     .bind(now)
+    .bind(&hash)
     .execute(&state.db)
     .await
     .map_err(|e| name_taken(&e, &name).unwrap_or_else(|| store_error("Failed to save the signing identity", e)))?;
@@ -518,19 +608,22 @@ pub async fn update_signing_identity(
             )
             .map_err(|e| store_error("Failed to encrypt the signing identity", e))?,
             serde_json::to_string(&summary).expect("summary serializes"),
+            Some(content_hash(&material, &state.encryption_key)),
         ))
     } else {
         None
     };
-    let (encrypted, summary) = replaced.unwrap_or_else(|| {
+    let (encrypted, summary, hash) = replaced.unwrap_or_else(|| {
         (
             row.get("material_encrypted"),
             row.get::<String, _>("summary"),
+            row.get::<Option<String>, _>("content_hash"),
         )
     });
     sqlx::query(
         "UPDATE project_signing_identities \
-         SET name = ?1, summary = ?2, material_encrypted = ?3, updated_by = ?4, updated_at = ?5 \
+         SET name = ?1, summary = ?2, material_encrypted = ?3, updated_by = ?4, updated_at = ?5, \
+             content_hash = ?7 \
          WHERE id = ?6",
     )
     .bind(&name)
@@ -539,12 +632,17 @@ pub async fn update_signing_identity(
     .bind(&auth.0.user_id)
     .bind(now_unix())
     .bind(&identity_id)
+    .bind(&hash)
     .execute(&state.db)
     .await
     .map_err(|e| {
         name_taken(&e, &name)
             .unwrap_or_else(|| store_error("Failed to save the signing identity", e))
     })?;
+    // Pipelines that sign iOS with it follow its team, export and bundles.
+    sync_ios_pipelines(&state.db, &identity_id)
+        .await
+        .map_err(|e| store_error("Failed to update the pipelines that use the identity", e))?;
     let row = load_identity_row(&state.db, &project_id, &identity_id).await?;
     Ok(Json(SigningIdentityResponse {
         identity: row_to_identity(&state.db, &row).await?,
@@ -566,6 +664,22 @@ pub async fn delete_signing_identity(
     )
     .await?;
     load_identity_row(&state.db, &project_id, &identity_id).await?;
+    let pipeline_uses = pipeline_uses_of(&state.db, &identity_id).await?;
+    if !pipeline_uses.is_empty() {
+        let mut names: Vec<&str> = pipeline_uses
+            .iter()
+            .map(|usage| usage.pipeline_name.as_str())
+            .collect();
+        names.dedup();
+        return Err(api_err(
+            StatusCode::CONFLICT,
+            "identity_in_use",
+            format!(
+                "Pipelines sign with this identity: {}. Pick another in their signing settings first.",
+                names.join(", ")
+            ),
+        ));
+    }
     let uses = uses_of(&state.db, &identity_id).await?;
     if !uses.is_empty() {
         let list = uses
@@ -1014,7 +1128,11 @@ async fn snapshot_identity(
             format!("The {platform} signing identity this build was created with was deleted"),
         ));
     };
-    let mut plain = crypto::decrypt(&encrypted, encryption_key).map_err(|e| {
+    decrypt_material(&encrypted, encryption_key).map(Some)
+}
+
+fn decrypt_material(encrypted: &str, encryption_key: &[u8]) -> Result<Material, ApiFailure> {
+    let mut plain = crypto::decrypt(encrypted, encryption_key).map_err(|e| {
         error!(error = %e, "failed to decrypt a signing identity");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1025,7 +1143,73 @@ async fn snapshot_identity(
     let material = serde_json::from_str::<Material>(&plain)
         .map_err(|e| store_error("Failed to load build signing settings", e));
     plain.zeroize();
-    material.map(Some)
+    material
+}
+
+/// The decrypted material of a library identity, for a pipeline's own
+/// signing. `None` when the identity is gone.
+async fn identity_material(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    identity_id: &str,
+) -> Result<Option<Material>, ApiFailure> {
+    let encrypted: Option<String> = sqlx::query_scalar(
+        "SELECT material_encrypted FROM project_signing_identities WHERE id = ?1",
+    )
+    .bind(identity_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| store_error("Failed to load build signing settings", e))?;
+    encrypted
+        .map(|encrypted| decrypt_material(&encrypted, encryption_key))
+        .transpose()
+}
+
+fn android_profile(
+    material: Option<Material>,
+    build_type: AndroidSigningBuildType,
+) -> Option<RunnerAndroidSigningProfile> {
+    match material? {
+        Material::AndroidKeystore {
+            ref keystore_filename,
+            ref keystore_base64,
+            ref store_password,
+            ref key_alias,
+            ref key_password,
+        } => Some(RunnerAndroidSigningProfile {
+            build_type,
+            enabled: true,
+            keystore_filename: keystore_filename.clone(),
+            keystore_base64: keystore_base64.clone(),
+            store_password: store_password.clone(),
+            key_alias: key_alias.clone(),
+            key_password: key_password.clone(),
+        }),
+        _ => None,
+    }
+}
+
+fn ios_bundle(material: Option<Material>) -> Option<RunnerIosSigningBundle> {
+    match material? {
+        Material::IosDistribution {
+            ref team_id,
+            export_method,
+            ref p12_filename,
+            ref p12_base64,
+            ref p12_password,
+            ref profiles,
+        } => Some(RunnerIosSigningBundle {
+            enabled: true,
+            mode: IosSigningMode::Manual,
+            team_id: team_id.clone(),
+            export_method,
+            p12_filename: p12_filename.clone(),
+            p12_base64: p12_base64.clone(),
+            p12_password: p12_password.clone(),
+            provisioning_profiles: profiles.clone(),
+        }),
+        _ => None,
+    }
 }
 
 /// The release profile a build's Android signing identity holds, when its
@@ -1035,26 +1219,10 @@ pub(crate) async fn job_android_release_profile(
     encryption_key: &[u8],
     job_id: &str,
 ) -> Result<Option<RunnerAndroidSigningProfile>, ApiFailure> {
-    Ok(
-        match snapshot_identity(pool, encryption_key, job_id, "android").await? {
-            Some(Material::AndroidKeystore {
-                ref keystore_filename,
-                ref keystore_base64,
-                ref store_password,
-                ref key_alias,
-                ref key_password,
-            }) => Some(RunnerAndroidSigningProfile {
-                build_type: AndroidSigningBuildType::Release,
-                enabled: true,
-                keystore_filename: keystore_filename.clone(),
-                keystore_base64: keystore_base64.clone(),
-                store_password: store_password.clone(),
-                key_alias: key_alias.clone(),
-                key_password: key_password.clone(),
-            }),
-            _ => None,
-        },
-    )
+    Ok(android_profile(
+        snapshot_identity(pool, encryption_key, job_id, "android").await?,
+        AndroidSigningBuildType::Release,
+    ))
 }
 
 /// The signing bundle a build's iOS signing identity holds, when its
@@ -1064,28 +1232,124 @@ pub(crate) async fn job_ios_bundle(
     encryption_key: &[u8],
     job_id: &str,
 ) -> Result<Option<RunnerIosSigningBundle>, ApiFailure> {
-    Ok(
-        match snapshot_identity(pool, encryption_key, job_id, "ios").await? {
-            Some(Material::IosDistribution {
-                ref team_id,
-                export_method,
-                ref p12_filename,
-                ref p12_base64,
-                ref p12_password,
-                ref profiles,
-            }) => Some(RunnerIosSigningBundle {
-                enabled: true,
-                mode: IosSigningMode::Manual,
-                team_id: team_id.clone(),
-                export_method,
-                p12_filename: p12_filename.clone(),
-                p12_base64: p12_base64.clone(),
-                p12_password: p12_password.clone(),
-                provisioning_profiles: profiles.clone(),
-            }),
-            _ => None,
-        },
+    Ok(ios_bundle(
+        snapshot_identity(pool, encryption_key, job_id, "ios").await?,
+    ))
+}
+
+/// The keystore of the identity a pipeline's Android build type picks.
+/// A deleted identity is an error, so the build fails instead of shipping
+/// unsigned.
+pub(crate) async fn pipeline_android_profile(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    identity_id: &str,
+    build_type: AndroidSigningBuildType,
+) -> Result<RunnerAndroidSigningProfile, ApiFailure> {
+    android_profile(
+        identity_material(pool, encryption_key, identity_id).await?,
+        build_type,
     )
+    .ok_or_else(missing_pipeline_identity)
+}
+
+/// The certificate and profiles of the identity a pipeline's iOS signing
+/// picks.
+pub(crate) async fn pipeline_ios_bundle(
+    pool: &SqlitePool,
+    encryption_key: &[u8],
+    identity_id: &str,
+) -> Result<RunnerIosSigningBundle, ApiFailure> {
+    ios_bundle(identity_material(pool, encryption_key, identity_id).await?)
+        .ok_or_else(missing_pipeline_identity)
+}
+
+fn missing_pipeline_identity() -> ApiFailure {
+    api_err(
+        StatusCode::CONFLICT,
+        "signing_identity_missing",
+        "The pipeline's signing identity is missing from the app's signing library; pick another in the pipeline's signing settings",
+    )
+}
+
+/// What a pipeline copies from the identity it picks.
+pub(crate) struct PickedIdentity {
+    pub id: String,
+    pub team_id: Option<String>,
+    pub export_method: Option<IosExportMethod>,
+    pub bundle_ids: Vec<String>,
+}
+
+/// Check that `identity_id` is a `kind` identity of the pipeline's app.
+pub(crate) async fn pick_for_pipeline(
+    pool: &SqlitePool,
+    pipeline_id: &str,
+    identity_id: &str,
+    kind: SigningIdentityKind,
+) -> Result<PickedIdentity, ApiFailure> {
+    let row = sqlx::query(
+        "SELECT i.id, i.kind, i.summary FROM project_signing_identities i \
+         JOIN pipelines p ON p.project_id = i.project_id \
+         WHERE p.id = ?1 AND i.id = ?2",
+    )
+    .bind(pipeline_id)
+    .bind(identity_id.trim())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| store_error("Failed to load the signing identity", e))?
+    .ok_or_else(|| invalid("The signing identity is not in this app's signing library"))?;
+    if parse_kind(&row.get::<String, _>("kind")) != kind {
+        return Err(invalid(format!("Pick an {} identity here", kind_str(kind))));
+    }
+    let summary: Summary =
+        serde_json::from_str(&row.get::<String, _>("summary")).unwrap_or_default();
+    Ok(PickedIdentity {
+        id: row.get("id"),
+        team_id: summary.team_id,
+        export_method: summary.export_method,
+        bundle_ids: summary
+            .profiles
+            .into_iter()
+            .map(|profile| profile.bundle_id)
+            .collect(),
+    })
+}
+
+/// The name of a library identity, for the pipeline signing responses.
+pub(crate) async fn identity_name(
+    pool: &SqlitePool,
+    identity_id: Option<&str>,
+) -> sqlx::Result<Option<String>> {
+    let Some(identity_id) = identity_id else {
+        return Ok(None);
+    };
+    sqlx::query_scalar("SELECT name FROM project_signing_identities WHERE id = ?1")
+        .bind(identity_id)
+        .fetch_optional(pool)
+        .await
+}
+
+/// Copy an iOS identity's team, export method and bundle IDs onto the
+/// pipelines that sign with it, which publishing and store checks read.
+pub(crate) async fn sync_ios_pipelines(
+    executor: impl sqlx::SqliteExecutor<'_>,
+    identity_id: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE pipeline_ios_signing_settings SET \
+           team_id = COALESCE((SELECT json_extract(summary, '$.team_id') \
+                               FROM project_signing_identities WHERE id = ?1), team_id), \
+           export_method = COALESCE((SELECT json_extract(summary, '$.export_method') \
+                                     FROM project_signing_identities WHERE id = ?1), export_method), \
+           bundle_ids_json = COALESCE((SELECT json_group_array(json_extract(p.value, '$.bundle_id')) \
+                                       FROM project_signing_identities i, json_each(i.summary, '$.profiles') p \
+                                       WHERE i.id = ?1), bundle_ids_json) \
+         WHERE identity_id = ?1",
+    )
+    .bind(identity_id)
+    .execute(executor)
+    .await?;
+    Ok(())
 }
 
 /// Whether a build's workflow settings turn its publishing off.

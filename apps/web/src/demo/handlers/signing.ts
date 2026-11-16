@@ -4,6 +4,7 @@ import * as z from 'zod'
 import type {
   PipelineWorkflowSettings,
   SigningIdentity,
+  SigningIdentityPipelineUse,
   SigningIdentityProfile,
 } from '@oore/client/models'
 import { SIGNING_IDENTITY_NAME } from '@/lib/signing-identities'
@@ -12,6 +13,7 @@ import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { ago } from '../seed'
 import { demoState } from '../state'
 import { demoApi } from './api'
+import { demoPipelineIosSigning } from './pipelines'
 
 const DEMO_TEAM_ID = 'A1B2C3D4E5'
 
@@ -74,8 +76,34 @@ function withUses(identity: SigningIdentity): SigningIdentity {
           workflow: entry.workflow,
         })),
     )
-  return { ...identity, used_by }
+  const used_by_pipelines = demoState.pipelines
+    .filter((pipeline) => pipeline.project_id === identity.project_id)
+    .flatMap((pipeline) => {
+      const android = demoState.androidSigning[pipeline.id]
+      const uses: Array<SigningIdentityPipelineUse> = []
+      for (const buildType of ['release', 'debug'] as const) {
+        const profile = pickSchema.safeParse(android?.[buildType]).data
+        if (profile?.enabled && profile.identity_id === identity.id) {
+          uses.push({
+            pipeline_id: pipeline.id,
+            pipeline_name: pipeline.name,
+            build_type: buildType,
+          })
+        }
+      }
+      const ios = pickSchema.safeParse(demoPipelineIosSigning(pipeline.id)).data
+      if (ios?.enabled && ios.identity_id === identity.id) {
+        uses.push({ pipeline_id: pipeline.id, pipeline_name: pipeline.name })
+      }
+      return uses
+    })
+  return { ...identity, used_by, used_by_pipelines }
 }
+
+const pickSchema = z.object({
+  enabled: z.boolean().optional(),
+  identity_id: z.string().nullish(),
+})
 
 function normalizeName(name: string) {
   const trimmed = name.trim()
@@ -282,6 +310,15 @@ export const signingHandlers = [
     const identity = findIdentity(projectId, String(params.identity_id))
     if (!identity)
       return failure('Signing identity not found', 404, 'not_found')
+    const pipelineUses = withUses(identity).used_by_pipelines ?? []
+    if (pipelineUses.length > 0) {
+      const names = [...new Set(pipelineUses.map((use) => use.pipeline_name))]
+      return failure(
+        `Pipelines sign with this identity: ${names.join(', ')}. Pick another in their signing settings first.`,
+        409,
+        'identity_in_use',
+      )
+    }
     const uses = withUses(identity).used_by ?? []
     if (uses.length > 0) {
       const list = uses

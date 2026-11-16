@@ -5535,6 +5535,11 @@ pub struct AndroidSigningProfileInput {
     pub key_alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_password: Option<String>,
+    /// Sign with this identity from the app's signing library. Omit to keep
+    /// the current choice; an empty string clears it. A keystore upload
+    /// replaces the choice and is added to the library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, ToSchema)]
@@ -5560,6 +5565,11 @@ pub struct AndroidSigningProfile {
     pub has_key_password: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    /// The signing library identity this build type signs with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -5609,6 +5619,16 @@ pub struct SigningIdentityUse {
     pub workflow: String,
 }
 
+/// A pipeline whose own signing picks a signing identity.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SigningIdentityPipelineUse {
+    pub pipeline_id: String,
+    pub pipeline_name: String,
+    /// Android: the build type that signs with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_type: Option<AndroidSigningBuildType>,
+}
+
 /// A provisioning profile in an iOS signing identity, without its contents.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SigningIdentityProfile {
@@ -5650,6 +5670,9 @@ pub struct SigningIdentity {
     /// not listed.
     #[serde(default)]
     pub used_by: Vec<SigningIdentityUse>,
+    /// Pipelines whose own signing picks it.
+    #[serde(default)]
+    pub used_by_pipelines: Vec<SigningIdentityPipelineUse>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -5891,6 +5914,12 @@ pub struct UpdatePipelineIosSigningRequest {
     /// pipeline's own key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shared_api_key_id: Option<String>,
+    /// Manual mode: sign with this identity from the app's signing library,
+    /// which then sets the team, export method and bundle IDs. Omit to keep
+    /// the current choice; an empty string clears it. A certificate upload
+    /// replaces the choice and is added to the library.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -5945,6 +5974,11 @@ pub struct PipelineIosSigningResponse {
     pub provisioning_profiles: Vec<IosProvisioningProfileSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    /// Manual mode: the signing library identity iOS builds sign with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

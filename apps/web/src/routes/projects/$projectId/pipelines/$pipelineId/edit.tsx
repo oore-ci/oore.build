@@ -41,8 +41,10 @@ import {
   toMultiline,
 } from '@/lib/pipeline-form-utils'
 import {
+  androidIdentityValue,
   buildAndroidSigningPayload,
   buildIosSigningPayload,
+  iosIdentityValue,
   iosProfilesNeedResync,
 } from '@/lib/pipeline-signing'
 import { PageMeta } from '@/lib/seo'
@@ -230,7 +232,14 @@ function EditPipelinePage() {
     android_signing_debug_store_password: '',
     android_signing_debug_key_alias: signingQuery.data?.debug.key_alias ?? '',
     android_signing_debug_key_password: '',
+    android_signing_release_identity_id: androidIdentityValue(
+      signingQuery.data?.release,
+    ),
+    android_signing_debug_identity_id: androidIdentityValue(
+      signingQuery.data?.debug,
+    ),
     ios_signing_enabled: iosSigningQuery.data?.enabled ?? false,
+    ios_signing_identity_id: iosIdentityValue(iosSigningQuery.data),
     ios_signing_mode: iosSigningQuery.data?.mode ?? 'manual',
     ios_signing_export_method: iosSigningQuery.data?.export_method ?? 'ad_hoc',
     ios_signing_team_id: iosSigningQuery.data?.team_id ?? '',

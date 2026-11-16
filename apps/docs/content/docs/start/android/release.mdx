@@ -50,11 +50,11 @@ it before you can publish updates.
 
 1. Open the app and its **Pipelines** tab, then select **Add pipeline**.
 2. Under **Start from**, select **Release Android**. The pipeline is named
-   `Release Android`, and **Enable release signing** is already turned on
-   under **Signing > Android**.
-3. Under **Signing > Android**, select the keystore file for
-   **Release keystore (.jks)**. Enter **Release key alias**,
-   **Release store password**, and **Release key password**.
+   `Release Android`.
+3. Under **Signing > Android**, open **Release builds** and select
+   **New keystore…**. Select the keystore file and enter the key alias,
+   store password, and key password. The keystore is saved to the app's
+   signing library and picked for release builds.
 4. Under **Build > Commands**, open
    **Per-platform arguments and overrides**. In
    **Android command override**, enter:
@@ -73,8 +73,7 @@ it before you can publish updates.
 
 5. Select **Create pipeline**.
 
-Oore uploads the keystore, then opens **Run build** with the new pipeline
-selected.
+Oore opens **Run build** with the new pipeline selected.
 
 ## 3. Run the release build
 

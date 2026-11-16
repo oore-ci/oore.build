@@ -17543,6 +17543,19 @@
           "has_store_password": {
             "type": "boolean"
           },
+          "identity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The signing library identity this build type signs with."
+          },
+          "identity_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "key_alias": {
             "type": [
               "string",
@@ -17575,6 +17588,13 @@
         "properties": {
           "enabled": {
             "type": "boolean"
+          },
+          "identity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Sign with this identity from the app's signing library. Omit to keep\nthe current choice; an empty string clears it. A keystore upload\nreplaces the choice and is added to the library."
           },
           "key_alias": {
             "type": [
@@ -24496,6 +24516,19 @@
           "has_p12_password": {
             "type": "boolean"
           },
+          "identity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Manual mode: the signing library identity iOS builds sign with."
+          },
+          "identity_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "mode": {
             "$ref": "#/components/schemas/IosSigningMode"
           },
@@ -28551,6 +28584,13 @@
               "$ref": "#/components/schemas/SigningIdentityUse"
             },
             "description": "Pipeline workflows whose settings pick it. Files that name it are\nnot listed."
+          },
+          "used_by_pipelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SigningIdentityPipelineUse"
+            },
+            "description": "Pipelines whose own signing picks it."
           }
         }
       },
@@ -28561,6 +28601,33 @@
           "android_keystore",
           "ios_distribution"
         ]
+      },
+      "SigningIdentityPipelineUse": {
+        "type": "object",
+        "description": "A pipeline whose own signing picks a signing identity.",
+        "required": [
+          "pipeline_id",
+          "pipeline_name"
+        ],
+        "properties": {
+          "build_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AndroidSigningBuildType",
+                "description": "Android: the build type that signs with it."
+              }
+            ]
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          }
+        }
       },
       "SigningIdentityProfile": {
         "type": "object",
@@ -29930,6 +29997,13 @@
                 "description": "Omit to keep the stored export method. Changing it discards stored\nprovisioning profiles because ad hoc and App Store profiles differ."
               }
             ]
+          },
+          "identity_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Manual mode: sign with this identity from the app's signing library,\nwhich then sets the team, export method and bundle IDs. Omit to keep\nthe current choice; an empty string clears it. A certificate upload\nreplaces the choice and is added to the library."
           },
           "mode": {
             "$ref": "#/components/schemas/IosSigningMode"

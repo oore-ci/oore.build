@@ -1,11 +1,12 @@
 ---
 title: 'Add Android signing'
 status: implemented
-description: 'Upload an Android keystore so Gradle signs the APK or App Bundle with it.'
+description: 'Add an Android keystore to the app’s signing library so Gradle signs the APK or App Bundle with it.'
 ---
 
-Add a keystore to one pipeline so Gradle signs the APKs or App Bundles that
-pipeline builds, and the runner verifies them.
+Add a keystore to the app's signing library once, then pick it on each
+pipeline, so Gradle signs the APKs or App Bundles that pipeline builds and the
+runner verifies them.
 
 [How signing works in Oore](/concepts/signing) explains how the keystore
 reaches Gradle and why repository code cannot read it.
@@ -36,17 +37,20 @@ keytool -genkeypair -v -keystore my-release-key.jks \
 
 Record the store password, alias, and key password when prompted.
 
-## 2. Add the signing profile
+## 2. Add the keystore and pick it
 
-1. Open the app, then open the pipeline for editing.
-2. Under **Signing > Android**, turn on **Enable release signing**.
-3. Select the **Release keystore (.jks)** file.
-4. Enter **Release key alias**, **Release store password**, and
-   **Release key password**.
-5. Select **Save changes**.
+1. Open the app, then its **Settings** tab. Under **Signing**, select
+   **Add identity**, choose **Android keystore**, select the `.jks` file, and
+   enter the key alias, store password, and key password.
+2. Open the pipeline for editing. Under **Signing > Android**, pick the
+   keystore for **Release builds**. **New keystore…** in the same list adds
+   one without leaving the page.
+3. Select **Save changes**.
 
-Use **Enable debug signing** only when that pipeline's supported Flutter build
-command produces a debug artifact that needs a specific key.
+Pick one for **Debug builds** only when that pipeline's supported Flutter
+build command produces a debug artifact that needs a specific key. Keystores
+saved on a pipeline before the signing library existed were moved into it
+automatically, named after the pipeline (such as `android-release-keystore`).
 For automation, use the generated
 [Update Android signing configuration](/openapi/operations/update_pipeline_android_signing)
 operation.
