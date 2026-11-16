@@ -13770,10 +13770,12 @@ mod tests {
     use super::*;
 
     /// Commands that print no result to parse: a long-running service, a
-    /// shell script, and the hidden helpers updates call.
-    const NO_JSON: [&str; 4] = [
+    /// shell script, the MCP stdio bridge, and the hidden helpers updates
+    /// call.
+    const NO_JSON: [&str; 5] = [
         "oore runner start",
         "oore completions",
+        "oore mcp",
         "oore bootstrap-guard",
         "oore update-supervisor",
     ];
