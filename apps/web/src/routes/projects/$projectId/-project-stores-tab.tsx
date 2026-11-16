@@ -30,6 +30,7 @@ import {
 import { useInheritedSecrets, type SecretTarget } from '@/hooks/use-secrets'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import { CollectionError } from '@/components/collection'
+import { StoreTracks } from '@/components/environments/store-tracks'
 import { SecretValueDialog } from '@/components/secrets/secret-value-dialog'
 import {
   SettingsSection,
@@ -158,7 +159,7 @@ function OverridesNote({
           <Link
             to="/projects/$projectId/pipelines/$pipelineId"
             params={{ projectId, pipelineId: item.pipeline_id }}
-            search={{ tab: 'publishing' }}
+            search={{ row: 'publishing' }}
             className="underline underline-offset-4"
           >
             {item.pipeline_name}
@@ -214,12 +215,14 @@ function StoreFooter({
 }
 
 function GooglePlayStore({
+  canManageTracks,
   canReadInstanceSecrets,
   canWrite,
   connection,
   overrides,
   projectId,
 }: {
+  canManageTracks: boolean
   canReadInstanceSecrets: boolean
   canWrite: boolean
   connection: ProjectGooglePlayConnection | undefined
@@ -425,6 +428,11 @@ function GooglePlayStore({
         </form>
       </Form>
       <OverridesNote overrides={overrides} projectId={projectId} />
+      <StoreTracks
+        canManage={canManageTracks}
+        projectId={projectId}
+        store="google_play"
+      />
       <UnsavedChangesGuard
         when={isDirty && !connect.isPending}
         title="Discard Google Play changes?"
@@ -457,11 +465,13 @@ function GooglePlayStore({
 }
 
 function AppStoreStore({
+  canManageTracks,
   canWrite,
   connection,
   overrides,
   projectId,
 }: {
+  canManageTracks: boolean
   canWrite: boolean
   connection: ProjectAppStoreConnection | undefined
   overrides: Array<ProjectStoreOverride>
@@ -659,6 +669,11 @@ function AppStoreStore({
         </form>
       </Form>
       <OverridesNote overrides={overrides} projectId={projectId} />
+      <StoreTracks
+        canManage={canManageTracks}
+        projectId={projectId}
+        store="app_store"
+      />
       <UnsavedChangesGuard
         when={isDirty && !connect.isPending}
         title="Discard App Store Connect changes?"
@@ -688,14 +703,18 @@ function AppStoreStore({
 }
 
 /**
- * Where the app's builds go: each store is connected once here, and its
- * pipelines only pick a track on their Publishing tab.
+ * Where the app's builds go: each store is connected once here with the
+ * tracks it releases to, and pipelines only pick a track on their
+ * Publishing tab.
  */
 export function ProjectStoresTab({
+  canManageTracks,
   canReadInstanceSecrets,
   canWrite,
   projectId,
 }: {
+  /** Maintainers set up the tracks each store releases to. */
+  canManageTracks: boolean
   canReadInstanceSecrets: boolean
   canWrite: boolean
   projectId: string
@@ -716,6 +735,7 @@ export function ProjectStoresTab({
         ) : stores ? (
           <>
             <GooglePlayStore
+              canManageTracks={canManageTracks}
               canReadInstanceSecrets={canReadInstanceSecrets}
               canWrite={canWrite}
               connection={stores.google_play ?? undefined}
@@ -725,6 +745,7 @@ export function ProjectStoresTab({
               projectId={projectId}
             />
             <AppStoreStore
+              canManageTracks={canManageTracks}
               canWrite={canWrite}
               connection={stores.app_store ?? undefined}
               overrides={overrides.filter((item) => item.store === 'app_store')}

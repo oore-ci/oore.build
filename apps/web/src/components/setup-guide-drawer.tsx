@@ -24,7 +24,7 @@ interface GuideTarget {
   label: string
   platform: 'android' | 'ios'
   hash: string
-  /** The pipeline edit page, or the pipeline's Publishing tab. */
+  /** The pipeline's Signing row, or its Publishing row. */
   page: 'edit' | 'publishing'
 }
 
@@ -187,21 +187,14 @@ function TargetLink({
   target: GuideTarget
 }) {
   const params = { projectId, pipelineId: pipeline.id }
-  const link =
-    target.page === 'edit' ? (
-      <Link
-        to="/projects/$projectId/pipelines/$pipelineId/edit"
-        params={params}
-        hash={target.hash}
-      />
-    ) : (
-      <Link
-        to="/projects/$projectId/pipelines/$pipelineId"
-        params={params}
-        search={{ tab: 'publishing' }}
-        hash={target.hash}
-      />
-    )
+  const link = (
+    <Link
+      to="/projects/$projectId/pipelines/$pipelineId"
+      params={params}
+      search={{ row: target.page === 'edit' ? 'signing' : 'publishing' }}
+      hash={target.hash}
+    />
+  )
   return (
     <Button size="sm" variant="outline" nativeButton={false} render={link}>
       {target.label}

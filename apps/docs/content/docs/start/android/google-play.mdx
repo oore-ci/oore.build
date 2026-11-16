@@ -54,7 +54,7 @@ Oore stores the key as an encrypted instance secret named
 
 ## 4. Turn on publishing
 
-1. Open the `Release Android` pipeline and its **Publishing** tab.
+1. Open the `Release Android` pipeline and its **Publishing** row.
 2. Under **Google Play**, turn on
    **Upload to Google Play after each successful build**.
 3. For **Service account key**, choose `PLAY_SERVICE_ACCOUNT`.
@@ -95,7 +95,7 @@ processed, or the API is turned off in the Google Cloud project.
 **The Google Play upload fails because the version code is not higher**
 
 The message names both numbers. If the app already had releases before Oore,
-open the pipeline's **Edit** page and set **Build number offset** above the
+open the pipeline's **Build** row and set **Build number offset** above the
 highest version code on Google Play. Then run a new build.
 
 **The Google Play upload fails after you fixed the cause**

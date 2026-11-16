@@ -40,8 +40,21 @@ export function revealInvalidPipelineSections() {
   window.dispatchEvent(new Event(REVEAL_INVALID_EVENT))
 }
 
-/** Whether sections start closed with a summary (the Edit page) or open. */
+/** Whether sections start closed with a summary or open. */
 export const PipelineSectionsCollapsible = createContext(false)
+
+/**
+ * The title of the pipeline page row a section renders in. Inside a row a
+ * section is a plain group: no surface of its own, and no heading when it
+ * repeats the row's title.
+ */
+export const PipelineSectionsEmbeddedIn = createContext<string | null>(null)
+
+/**
+ * Inside a row whose other values come from the pipeline's file, groups
+ * of fields say they are set here.
+ */
+export const PipelineSectionsSetHere = createContext(false)
 
 /**
  * One top-level block of the pipeline editor: a heading outside one bordered
@@ -69,7 +82,10 @@ export function PipelineFormSection({
   summary?: string
   title: string
 }) {
-  const collapsible = useContext(PipelineSectionsCollapsible) && !!summary
+  const embeddedIn = useContext(PipelineSectionsEmbeddedIn)
+  const markSetHere = useContext(PipelineSectionsSetHere)
+  const collapsible =
+    useContext(PipelineSectionsCollapsible) && !!summary && embeddedIn === null
   const [open, setOpen] = useState(!collapsible)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -96,6 +112,36 @@ export function PipelineFormSection({
       window.removeEventListener(REVEAL_INVALID_EVENT, onRevealInvalid)
     }
   }, [collapsible])
+
+  if (embeddedIn !== null) {
+    if (title === embeddedIn) {
+      return (
+        <Stack
+          id={id}
+          gap={5}
+          className="scroll-mt-[calc(var(--header-height)+4rem)]"
+        >
+          {children}
+          {actions ? <Row className="justify-end">{actions}</Row> : null}
+        </Stack>
+      )
+    }
+    return (
+      <PipelineFormSubsection
+        actions={actions}
+        hint={hint}
+        id={id}
+        meta={
+          markSetHere ? (
+            <span className="text-[13px] text-muted-foreground">set here</span>
+          ) : undefined
+        }
+        title={title}
+      >
+        {children}
+      </PipelineFormSubsection>
+    )
+  }
 
   const errorBadge =
     errorCount && errorCount > 0 ? (

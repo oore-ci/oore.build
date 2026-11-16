@@ -63,7 +63,12 @@ export function primaryReleaseAction(
   if (release.origin === 'adopted' && allowed.has('attach_schedule')) {
     return 'attach_schedule'
   }
-  if (release.state === 'paused' && allowed.has('resume')) return 'resume'
+  if (
+    (release.state === 'paused' || release.state === 'halted') &&
+    allowed.has('resume')
+  ) {
+    return 'resume'
+  }
   for (const action of ['approve', 'release_now'] as const) {
     if (allowed.has(action)) return action
   }
@@ -78,14 +83,17 @@ export function primaryReleaseAction(
  * clicks away.
  */
 export function ReleaseActions({
+  menuOnly = false,
   release,
   size = 'sm',
 }: {
+  /** Another action leads beside it, so every action sits in the menu. */
+  menuOnly?: boolean
   release: Release
   size?: 'sm' | 'default'
 }) {
   const [pending, setPending] = useState<ReleaseAction | null>(null)
-  const primary = primaryReleaseAction(release)
+  const primary = menuOnly ? null : primaryReleaseAction(release)
   const allowed = new Set(release.allowed_actions)
   const menuActions = [
     ...RELEASE_ACTION_ORDER.filter(

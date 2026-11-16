@@ -6,7 +6,7 @@ description: 'Choose which pushes, tags, changed paths and schedules start build
 
 Decide which source events start a pipeline's builds, how long a build may
 run, and which builds wait for a maintainer first. You set all three on the
-pipeline's **Edit** page, so a commit cannot loosen them.
+pipeline's **Source and triggers** row, so a commit cannot loosen them.
 
 Every field, pattern rule, and limit is in
 [Pipeline settings](/reference/config/pipeline-settings). For automation, use
@@ -25,8 +25,7 @@ Every field, pattern rule, and limit is in
 ## 1. Open the trigger settings
 
 1. Open the app, then the pipeline.
-2. Select **Edit**.
-3. Scroll to **Triggers**.
+2. Open the **Source and triggers** row.
 
 If the pipeline builds a workflow from a `.oore.yaml` version 2 file whose
 workflow or file sets `on`, that `on` decides which events start builds
