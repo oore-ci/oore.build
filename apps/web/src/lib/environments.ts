@@ -207,3 +207,101 @@ export function promotionSource(
     ? environment
     : undefined
 }
+
+/**
+ * One row of the app's Releases tab: a track the app set up (an
+ * environment in the API), or a store track that has releases but no setup.
+ */
+export interface TrackRow {
+  key: string
+  /** The track's own name, such as Beta, or the store track's label. */
+  name: string
+  store: Release['store']
+  track: string
+  environment?: ProjectEnvironment
+  /** The newest version people can get on this track. */
+  out: Release | null
+  /** Newer versions on their way to this track, newest first. */
+  coming: Array<Release>
+  /** A promotion into this track that waits for approval. */
+  pending?: EnvironmentPromotion
+}
+
+/**
+ * The tracks an app releases to, in promotion order, with what is out on
+ * each. Store tracks that have releases but were never set up follow.
+ */
+export function trackRows(
+  environments: ReadonlyArray<ProjectEnvironment>,
+  statuses: ReadonlyArray<Omit<TrackRow, 'name' | 'environment' | 'pending'>>,
+  promotions: ReadonlyArray<EnvironmentPromotion>,
+): Array<TrackRow> {
+  const byKey = new Map(statuses.map((status) => [status.key, status]))
+  const configured = [...environments]
+    .sort((a, b) => a.position - b.position)
+    .map((environment): TrackRow => {
+      const key = `${environment.store}:${environment.track}`
+      const status = byKey.get(key)
+      byKey.delete(key)
+      const latest = environment.latest_release
+      const fallback =
+        latest &&
+        ['rolling', 'paused', 'halted', 'complete'].includes(latest.state)
+          ? latest
+          : null
+      return {
+        key,
+        name: environment.name,
+        store: environment.store,
+        track: environment.track,
+        environment,
+        out: status?.out ?? fallback,
+        coming: status?.coming ?? [],
+        pending: promotions.find(
+          (promotion) =>
+            promotion.state === 'pending' &&
+            promotion.environment_id === environment.id,
+        ),
+      }
+    })
+  const unconfigured = [...byKey.values()].map((status): TrackRow => ({
+    ...status,
+    name: releaseDestinationLabel(status),
+  }))
+  return [...configured, ...unconfigured]
+}
+
+export type TrackNextAction =
+  | { kind: 'approve'; promotion: EnvironmentPromotion }
+  | { kind: 'promote' }
+  | { kind: 'release'; release: Release }
+  | null
+
+/**
+ * The one action a track row offers: approve a waiting promotion, resume or
+ * halt its rollout, let a store-approved version out, or promote what it has.
+ * `primary` is the release's own leading action, as release controls pick it.
+ */
+export function trackNextAction(
+  row: Pick<TrackRow, 'out' | 'coming' | 'pending'>,
+  canPromote: boolean,
+  primary: (release: Release) => string | null,
+): TrackNextAction {
+  if (row.pending?.can_decide) {
+    return { kind: 'approve', promotion: row.pending }
+  }
+  const outAction = row.out ? primary(row.out) : null
+  if (
+    row.out &&
+    (outAction === 'resume' ||
+      outAction === 'halt' ||
+      outAction === 'attach_schedule')
+  ) {
+    return { kind: 'release', release: row.out }
+  }
+  const next = row.coming[0]
+  if (next && primary(next)) return { kind: 'release', release: next }
+  if (canPromote) return { kind: 'promote' }
+  if (row.out && outAction) return { kind: 'release', release: row.out }
+  return null
+}

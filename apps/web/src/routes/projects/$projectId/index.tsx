@@ -84,11 +84,6 @@ const ProjectStoresTab = lazy(() =>
     default: module.ProjectStoresTab,
   })),
 )
-const ProjectEnvironmentsTab = lazy(() =>
-  import('./-project-environments-tab').then((module) => ({
-    default: module.ProjectEnvironmentsTab,
-  })),
-)
 const loadProjectSettingsForm = () => import('./-project-settings-form')
 const ProjectSettingsForm = lazy(() =>
   loadProjectSettingsForm().then((module) => ({
@@ -118,7 +113,6 @@ const TAB_VALUES = [
   'builds',
   'releases',
   'stores',
-  'environments',
   'settings',
 ] as const
 type TabValue = (typeof TAB_VALUES)[number]
@@ -161,7 +155,11 @@ function validateProjectSearch(search: SearchInput): ProjectDetailSearch {
   const pipelinePage = searchNumber(search, 'pipelinePage')
   const pipelinePageSize = searchNumber(search, 'pipelinePageSize')
   const pipelineQ = searchString(search, 'pipelineQ')?.trim() ?? ''
-  const selectedTab = TAB_VALUES.find((value) => value === tab)
+  // The Environments tab became the Releases tab's tracks; old links land there.
+  const selectedTab =
+    tab === 'environments'
+      ? 'releases'
+      : TAB_VALUES.find((value) => value === tab)
 
   return {
     tab: selectedTab,
@@ -581,7 +579,7 @@ function ProjectDetailPage() {
         }}
         className="min-h-0 flex-1"
       >
-        {/* Seven tabs outgrow a phone; the row scrolls instead of the page. */}
+        {/* Six tabs outgrow a phone; the row scrolls instead of the page. */}
         <div className="-mb-2 max-w-full shrink-0 overflow-x-auto pb-2">
           <TabsList variant="line">
             <TabsTrigger value="overview">Overview</TabsTrigger>
@@ -594,7 +592,6 @@ function ProjectDetailPage() {
             </TabsTrigger>
             <TabsTrigger value="releases">Releases</TabsTrigger>
             <TabsTrigger value="stores">Stores</TabsTrigger>
-            <TabsTrigger value="environments">Environments</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
         </div>
@@ -688,6 +685,7 @@ function ProjectDetailPage() {
             <ProjectReleasesTab
               projectId={projectId}
               canManage={canManageReleases || isInstanceAdmin}
+              canOperate={canOperateReleases}
               canRehearse={canRunBuild}
             />
           </Suspense>
@@ -696,18 +694,9 @@ function ProjectDetailPage() {
         {activeTab === 'stores' ? (
           <Suspense fallback={<Skeleton className="h-48 w-full" />}>
             <ProjectStoresTab
+              canManageTracks={canManageReleases}
               canReadInstanceSecrets={canReadInstanceSettings}
               canWrite={canWritePipelines}
-              projectId={projectId}
-            />
-          </Suspense>
-        ) : null}
-
-        {activeTab === 'environments' ? (
-          <Suspense fallback={<Skeleton className="h-48 w-full" />}>
-            <ProjectEnvironmentsTab
-              canManage={canManageReleases}
-              canOperate={canOperateReleases}
               projectId={projectId}
             />
           </Suspense>

@@ -8,8 +8,8 @@ import { PromoteDialog } from '@/components/environments/promote-dialog'
 import { Button } from '@/components/ui/button'
 
 /**
- * "Promote to Beta" wherever a release shows, not only on the Environments
- * tab. It appears only when the release is the one its environment would
+ * "Promote to Beta" wherever a release shows, not only on the Releases
+ * tab. It appears only when the release is the one its track would
  * promote and the person may promote or ask for it.
  */
 export function PromoteReleaseButton({

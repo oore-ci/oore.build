@@ -290,7 +290,7 @@ const promotion =
       plain(`${verb} `),
       build(c),
       plain(' to '),
-      named(text(c.d, 'environment'), 'an environment'),
+      named(text(c.d, 'environment'), 'a track'),
     ],
     meta: joined([text(c.d, 'reason') ?? text(c.d, 'error')]),
   })
@@ -630,24 +630,24 @@ const TEMPLATES = new Map<string, Template>(
     ),
     environment_created: (c) => ({
       say: [
-        plain('created the environment '),
-        named(text(c.d, 'key'), 'an environment'),
+        plain('created the track '),
+        named(text(c.d, 'key'), 'a track'),
         plain(' in '),
         app(c),
       ],
     }),
     environment_updated: (c) => ({
       say: [
-        plain('updated the environment '),
-        named(text(c.d, 'key'), 'an environment'),
+        plain('updated the track '),
+        named(text(c.d, 'key'), 'a track'),
         plain(' in '),
         app(c),
       ],
     }),
     environment_deleted: (c) => ({
       say: [
-        plain('deleted the environment '),
-        named(text(c.d, 'key'), 'an environment'),
+        plain('deleted the track '),
+        named(text(c.d, 'key'), 'a track'),
         plain(' from '),
         app(c),
       ],
