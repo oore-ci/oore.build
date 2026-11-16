@@ -1,0 +1,40 @@
+---
+title: '`oore signing`'
+status: implemented
+description: "List, add and remove the signing identities in an app's library from the terminal."
+---
+
+```text
+oore signing list   --project <ID> [--json]
+oore signing add    --project <ID> --name <NAME> --keystore <PATH> --alias <ALIAS> [--json]
+oore signing add    --project <ID> --name <NAME> --p12 <PATH> --profile <PATH>... [--json]
+oore signing remove <IDENTITY_ID> --project <ID> [--yes] [--json]
+```
+
+Each app keeps one [signing library](/build/sign). A pipeline file names an
+identity under `signing`, and builds sign with it. Key material is never
+returned or printed.
+
+`add` reads files from disk and passwords from variables, never from
+arguments:
+
+| Identity         | Files                                       | Passwords                                                              |
+| ---------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
+| Android keystore | `--keystore` (.jks or .keystore), `--alias` | `OORE_KEYSTORE_PASSWORD`, and `OORE_KEY_PASSWORD` if the key's differs |
+| iOS distribution | `--p12`, one `--profile` per bundle id      | `OORE_P12_PASSWORD`                                                    |
+
+When a variable is not set, a terminal prompts for the password. Without a
+terminal, the passwords are read from standard input, one per line (keystore
+first, then key).
+
+```bash
+OORE_KEYSTORE_PASSWORD="$KEYSTORE_PASSWORD" oore signing add \
+  --project proj_123 --name upload --keystore upload.jks --alias upload
+
+OORE_P12_PASSWORD="$P12_PASSWORD" oore signing add \
+  --project proj_123 --name distribution --p12 dist.p12 \
+  --profile AppStore.mobileprovision --profile Widget.mobileprovision
+```
+
+`remove` asks first, or needs `--yes` without a terminal. Builds that sign with
+the identity fail until another is picked.

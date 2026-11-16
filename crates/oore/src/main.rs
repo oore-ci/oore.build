@@ -35,20 +35,28 @@ use sqlx::{Row, SqlitePool};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 
+mod admin_api;
 mod api_command;
 mod build_commands;
 mod build_logs;
 mod cli_contract;
 mod command_tree;
+mod device_login;
 mod init_command;
 mod install_lock;
 mod install_manifest;
 mod installer;
 mod managed_services;
+mod mcp_bridge;
 mod notes_commands;
 mod pipeline_credentials;
 mod project_commands;
+mod release_commands;
+mod secret_commands;
 mod setup_journey;
+mod signing_commands;
+mod tester_commands;
+mod token_commands;
 mod uninstaller;
 mod update_supervisor;
 mod update_transaction;
@@ -175,6 +183,21 @@ enum Commands {
     Completions(command_tree::CompletionsArgs),
     /// Read and write the release notes of an app version
     Notes(notes_commands::NotesArgs),
+    /// Create, list and revoke API tokens for agents and scripts
+    Token(token_commands::TokenArgs),
+    /// Set, list and delete secrets for the instance, an app or a pipeline
+    Secret(secret_commands::SecretArgs),
+    /// List, add and remove an app's signing identities
+    Signing(signing_commands::SigningArgs),
+    /// Manage tester groups
+    Tester(tester_commands::TesterArgs),
+    /// Read and drive store releases, tracks and release freezes
+    Release(release_commands::ReleaseArgs),
+    /// Promote a build's release into another track
+    Promote(release_commands::PromoteArgs),
+    /// Bridge an agent's MCP client on standard input and output to the
+    /// daemon's MCP endpoint
+    Mcp(mcp_bridge::McpArgs),
     /// Print the installed oore version
     Version(JsonFlag),
     /// Update oore and oored to the latest release
@@ -964,6 +987,8 @@ enum BuildSubcommand {
     Artifacts(build_commands::BuildIdArgs),
     /// Print a link to install the build on a phone.
     InstallLink(build_commands::BuildInstallLinkArgs),
+    /// Send a build to a tester group by email.
+    Share(tester_commands::BuildShareArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1495,6 +1520,12 @@ struct LoginArgs {
     #[arg(long)]
     email: Option<String>,
 
+    /// Sign in from another device: print a code, approve it in the web
+    /// app, and save the API token it creates. Used by itself when local
+    /// sign-in is not available.
+    #[arg(long, default_value = "false", conflicts_with_all = ["token", "email"])]
+    device: bool,
+
     #[arg(long, default_value = "false")]
     json: bool,
 }
@@ -1542,6 +1573,8 @@ enum RunnerSubcommand {
     UninstallService(JsonFlag),
     /// Show or change runner settings such as the cache size and VM image
     Config(RunnerConfigArgs),
+    /// List the runners registered with the daemon and their status
+    List(tester_commands::RunnerListArgs),
 }
 
 #[derive(Debug, Args)]
@@ -4300,6 +4333,10 @@ async fn handle_login(args: LoginArgs, quiet: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if args.device {
+        return device_login::login(&client, &daemon_url, args.json).await;
+    }
+
     let login_url = format!("{}/v1/auth/local/login", daemon_url.trim_end_matches('/'));
     let response = client
         .post(&login_url)
@@ -4314,6 +4351,14 @@ async fn handle_login(args: LoginArgs, quiet: bool) -> anyhow::Result<()> {
     if !response.status().is_success() {
         let status = response.status();
         let msg = extract_error_message(response).await;
+        if device_login::supported(&client, &daemon_url).await {
+            if !args.json && !quiet {
+                eprintln!(
+                    "Local sign-in is not available on {daemon_url}; approve this device in the browser instead."
+                );
+            }
+            return device_login::login(&client, &daemon_url, args.json).await;
+        }
         anyhow::bail!(
             "local login failed at {daemon_url} (HTTP {}): {}",
             status.as_u16(),
@@ -13604,6 +13649,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             RunnerSubcommand::Config(args) => {
                 prose_command(args.json, "runner config", || handle_runner_config(args))?;
             }
+            RunnerSubcommand::List(args) => admin_api::run(tester_commands::list_runners(args))?,
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
@@ -13663,6 +13709,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
             runtime.block_on(notes_commands::handle_notes(args))?;
         }
+        Commands::Token(args) => admin_api::run(token_commands::handle(args))?,
+        Commands::Secret(args) => admin_api::run(secret_commands::handle(args))?,
+        Commands::Signing(args) => admin_api::run(signing_commands::handle(args))?,
+        Commands::Tester(args) => admin_api::run(tester_commands::handle(args))?,
+        Commands::Release(args) => admin_api::run(release_commands::handle(args))?,
+        Commands::Promote(args) => admin_api::run(release_commands::promote(args))?,
+        Commands::Mcp(args) => admin_api::run(mcp_bridge::handle(args))?,
         Commands::Build(build) => match build.command {
             BuildSubcommand::Run(args) => {
                 let runtime =
@@ -13689,6 +13742,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             BuildSubcommand::InstallLink(args) => {
                 block_on(build_commands::handle_build_install_link(args))?;
             }
+            BuildSubcommand::Share(args) => admin_api::run(tester_commands::share_build(args))?,
         },
         Commands::Project(project) => match project.command {
             ProjectSubcommand::List(args) => {

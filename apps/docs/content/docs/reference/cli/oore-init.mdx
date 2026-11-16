@@ -6,6 +6,7 @@ description: 'Write a starter .oore.yaml for the Flutter app in a folder, alread
 
 ```text
 oore init [DIR] [--force] [--print]
+oore init [DIR] --agents [--print]
 ```
 
 Run it in a Flutter app's repository. It reads `pubspec.yaml` and the
@@ -14,11 +15,12 @@ Run it in a Flutter app's repository. It reads `pubspec.yaml` and the
 platform it found, and checks the file with the runner's schema before it
 says so.
 
-| Option    | Effect                                                    |
-| --------- | --------------------------------------------------------- |
-| `DIR`     | The app's folder. Defaults to the current folder.         |
-| `--force` | Replace an existing `.oore.yaml` or `.oore.yml`.          |
-| `--print` | Print the file instead of writing it, such as to compare. |
+| Option     | Effect                                                    |
+| ---------- | --------------------------------------------------------- |
+| `DIR`      | The app's folder. Defaults to the current folder.         |
+| `--force`  | Replace an existing `.oore.yaml` or `.oore.yml`.          |
+| `--print`  | Print the file instead of writing it, such as to compare. |
+| `--agents` | Write instructions for coding agents instead. See below.  |
 
 ```text
 $ oore init
@@ -30,6 +32,8 @@ iOS builds need signing: add a certificate and profiles to the pipeline first.
 The file it writes for an app with Android, iOS and a `test/` folder:
 
 ```yaml
+# yaml-language-server: $schema=https://docs.oore.build/schema/oore-yaml-v2.json
+# Oore pipeline for coin, written by oore init.
 version: 2
 
 targets:
@@ -55,3 +59,71 @@ It refuses a folder with no `pubspec.yaml`, a `pubspec.yaml` that does not
 depend on Flutter, or no platform folder. Change the file as the app needs,
 then check it with [`oore pipeline validate`](/reference/cli/oore-pipeline-validate)
 and [`oore pipeline plan`](/reference/cli/oore-pipeline-plan).
+
+The first line points editors at the
+[pipeline file schema](https://docs.oore.build/schema/oore-yaml-v2.json), so
+they check and complete the file as you type.
+
+## Instructions for coding agents
+
+`oore init --agents` tells coding agents working in the repository how to build
+the app on Oore. It writes:
+
+- a section in `AGENTS.md`, between `<!-- oore:begin -->` and
+  `<!-- oore:end -->` markers. Running it again replaces only that section and
+  keeps the rest of the file.
+- a [Claude Code skill](https://docs.claude.com/en/docs/claude-code/skills) at
+  `.claude/skills/oore/SKILL.md`.
+
+`--print` shows the text without writing anything. Commit both files. This is
+the text it writes:
+
+This app builds on [Oore](https://oore.build), a self-hosted CI for Flutter apps. The pipeline is defined in `.oore.yaml` at the repository root. Drive Oore with the `oore` CLI. Pass `--json` to any command to get JSON on standard output.
+
+#### Signing in
+
+- Read the token from the `OORE_TOKEN` environment variable and the instance from `OORE_URL`. Never print the token, write it to a file, or put it in a commit, log or message.
+- If no token is set, ask the person for one. They create it with `oore token create --name <name>` or in Settings > API tokens.
+
+#### Change the pipeline file
+
+1. Check the file: `oore pipeline validate`. It needs no sign-in.
+2. See what a build would run: `oore pipeline plan`.
+3. Commit and push. Oore builds the file from the commit it builds.
+
+#### Build and wait
+
+- Start a build and wait for its result: `oore build run --pipeline <pipeline> --wait --json`.
+- Follow a build that is already running: `oore build watch <build-id> --json`.
+- Find pipelines and builds: `oore pipeline list --json`, `oore build list --json`.
+
+#### When a build fails
+
+- Ask why: `oore build why <build-id> --json`. It names the failed step, its last log lines, failed tests and a hint.
+- Read more of the log: `oore build logs <build-id> --step <step>`.
+- Fix the cause in the code or in `.oore.yaml`, push, and build again. Do not retry an unchanged build more than once.
+
+#### Exit codes
+
+| Code | Meaning                                                                       |
+| ---- | ----------------------------------------------------------------------------- |
+| 0    | Done.                                                                         |
+| 1    | Failed: the build did not succeed, or another error.                          |
+| 2    | Blocked: a person must act, for example to approve. Stop and tell the person. |
+| 3    | The store refused the release.                                                |
+| 4    | Not signed in, or the token may not do this.                                  |
+| 5    | Not found.                                                                    |
+| 64   | The command was called wrongly.                                               |
+
+#### Safety rules
+
+- Never start, raise, resume, complete, approve or promote a store release, or change release freezes, unless the person asked for exactly that.
+- Never change secrets, signing identities, tester groups or API tokens unless the person asked for exactly that.
+- Destructive commands need `--yes` when no terminal is attached. Pass it only for the action the person asked for.
+- Use `--dry-run` first on release commands to see what would change.
+
+#### Docs
+
+- Everything about Oore, for agents: https://docs.oore.build/llms.txt
+- The pipeline file: https://docs.oore.build/reference/config/oore-yaml-v2
+- The CLI: https://docs.oore.build/reference/cli
