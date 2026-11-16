@@ -138,7 +138,6 @@ const androidSigningInputSchema = z.object({
   store_password: z.string().nullish(),
   key_alias: z.string().nullish(),
   key_password: z.string().nullish(),
-  identity_id: z.string().nullish(),
 })
 const androidSigningRequestSchema =
   z.toZod<UpdatePipelineAndroidSigningRequest>()(
