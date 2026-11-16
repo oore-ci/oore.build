@@ -34,6 +34,7 @@ const preferencesRequestSchema = z.toZod<UpdateInstancePreferencesRequest>()(
     runtime_mode: z.enum(['local', 'remote']).nullish(),
     remote_auth_mode: z.enum(['oidc', 'trusted_proxy']).nullish(),
     direct_macos_runner_paused: z.boolean().nullish(),
+    mcp_enabled: z.boolean().nullish(),
   }),
 )
 
@@ -215,6 +216,7 @@ export const settingsHandlers = [
       direct_macos_runner_paused:
         body.direct_macos_runner_paused ??
         demoState.preferences.direct_macos_runner_paused,
+      mcp_enabled: body.mcp_enabled ?? demoState.preferences.mcp_enabled,
       updated_at: now(),
     }
 

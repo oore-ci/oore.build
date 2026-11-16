@@ -5,8 +5,9 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{IntoResponse, Response};
 use oore_contract::{
     ApiError, AppendBuildLogsRequest, AppendBuildLogsResponse, BuildLogChunk, BuildLogsResponse,
     StreamTokenResponse,
@@ -70,7 +71,11 @@ const STREAM_TOKEN_TTL_SECS: i64 = 300;
 const MAX_OUTSTANDING_STREAM_TOKENS: usize = 256;
 const MAX_OUTSTANDING_STREAM_TOKENS_PER_USER: usize = 16;
 const MAX_OUTSTANDING_STREAM_TOKENS_PER_BUILD: usize = 32;
-const MAX_ACTIVE_STREAMS_PER_USER: usize = 4;
+/// Live log streams per caller: per API token, or per person for browser
+/// and CLI sign-ins.
+pub(crate) const MAX_ACTIVE_STREAMS_PER_USER: usize = 4;
+/// Live log streams of one person across their sign-ins and tokens.
+pub(crate) const MAX_ACTIVE_STREAMS_PER_PERSON: usize = 12;
 const MAX_ACTIVE_STREAMS_PER_BUILD: usize = 16;
 const MAX_ACTIVE_STREAMS_GLOBAL: usize = 128;
 
@@ -95,6 +100,7 @@ struct StreamTokenEntry {
 struct StreamState {
     tokens: HashMap<String, StreamTokenEntry>,
     active_by_user: HashMap<String, usize>,
+    active_by_key: HashMap<String, usize>,
     active_by_build: HashMap<String, usize>,
     active_total: usize,
 }
@@ -183,11 +189,18 @@ impl StreamTokenStore {
             .filter(|entry| entry.authorization.expires_at > now)
     }
 
-    fn acquire(&self, user_id: &str, build_id: &str) -> Result<StreamAdmission, ()> {
+    fn acquire(
+        &self,
+        user_id: &str,
+        limit_key: &str,
+        build_id: &str,
+    ) -> Result<StreamAdmission, ()> {
         let mut state = self.lock();
         if state.active_total >= MAX_ACTIVE_STREAMS_GLOBAL
-            || state.active_by_user.get(user_id).copied().unwrap_or(0)
+            || state.active_by_key.get(limit_key).copied().unwrap_or(0)
                 >= MAX_ACTIVE_STREAMS_PER_USER
+            || state.active_by_user.get(user_id).copied().unwrap_or(0)
+                >= MAX_ACTIVE_STREAMS_PER_PERSON
             || state.active_by_build.get(build_id).copied().unwrap_or(0)
                 >= MAX_ACTIVE_STREAMS_PER_BUILD
         {
@@ -197,12 +210,17 @@ impl StreamTokenStore {
         state.active_total += 1;
         *state.active_by_user.entry(user_id.to_string()).or_default() += 1;
         *state
+            .active_by_key
+            .entry(limit_key.to_string())
+            .or_default() += 1;
+        *state
             .active_by_build
             .entry(build_id.to_string())
             .or_default() += 1;
         Ok(StreamAdmission {
             state: self.state.clone(),
             user_id: user_id.to_string(),
+            limit_key: limit_key.to_string(),
             build_id: build_id.to_string(),
         })
     }
@@ -217,6 +235,7 @@ impl StreamTokenStore {
 struct StreamAdmission {
     state: Arc<Mutex<StreamState>>,
     user_id: String,
+    limit_key: String,
     build_id: String,
 }
 
@@ -228,6 +247,7 @@ impl Drop for StreamAdmission {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.active_total -= 1;
         decrement_count(&mut state.active_by_user, &self.user_id);
+        decrement_count(&mut state.active_by_key, &self.limit_key);
         decrement_count(&mut state.active_by_build, &self.build_id);
     }
 }
@@ -253,6 +273,98 @@ impl Default for StreamTokenStore {
 pub struct GetBuildLogsQuery {
     pub after_sequence: Option<i64>,
     pub limit: Option<i64>,
+    /// Only lines of this step, by its name in the build.
+    pub step: Option<String>,
+    /// Only the last this many matching lines.
+    pub tail: Option<i64>,
+    /// Only lines that contain this text, ignoring case.
+    pub search: Option<String>,
+    /// With `search`, also this many lines before and after each match.
+    pub context: Option<i64>,
+}
+
+/// Largest page of log lines one request returns.
+const MAX_LOG_PAGE: i64 = 5000;
+
+/// One stored log row with the step it belongs to.
+pub(crate) struct StepLogRow {
+    pub(crate) sequence: i64,
+    pub(crate) content: String,
+    pub(crate) stream: String,
+    pub(crate) step: Option<String>,
+}
+
+/// Every log row of a build, oldest first, each tagged with the step whose
+/// start marker came last before it. Rows before the first marker, and rows
+/// whose marker was dropped from an oversized log, have no step.
+pub(crate) async fn load_step_log_rows(
+    pool: &sqlx::SqlitePool,
+    build_id: &str,
+) -> sqlx::Result<Vec<StepLogRow>> {
+    let rows: Vec<(i64, String, String)> = sqlx::query_as(
+        "SELECT sequence, content, stream FROM build_logs \
+         WHERE build_id = ?1 ORDER BY sequence ASC",
+    )
+    .bind(build_id)
+    .fetch_all(pool)
+    .await?;
+    let mut current: Option<String> = None;
+    Ok(rows
+        .into_iter()
+        .map(|(sequence, content, stream)| {
+            if let Some(name) = content
+                .lines()
+                .rev()
+                .find_map(crate::build_failure_hint::step_started)
+            {
+                current = Some(name);
+            }
+            StepLogRow {
+                sequence,
+                content,
+                stream,
+                step: current.clone(),
+            }
+        })
+        .collect())
+}
+
+/// The rows that contain `search` (ignoring case; `search` is lowercase),
+/// each with `context` rows around it, in log order. All rows without a
+/// search.
+fn filter_with_context(
+    rows: Vec<StepLogRow>,
+    search: Option<&str>,
+    context: usize,
+) -> Vec<StepLogRow> {
+    let Some(search) = search else { return rows };
+    let mut keep = vec![false; rows.len()];
+    for (index, row) in rows.iter().enumerate() {
+        if row.content.to_lowercase().contains(search) {
+            let end = (index + context).min(rows.len() - 1);
+            for slot in &mut keep[index.saturating_sub(context)..=end] {
+                *slot = true;
+            }
+        }
+    }
+    rows.into_iter()
+        .zip(keep)
+        .filter_map(|(row, keep)| keep.then_some(row))
+        .collect()
+}
+
+fn wants_plain_text(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|accept| {
+            let accept = accept.to_ascii_lowercase();
+            accept.contains("text/plain") && !accept.contains("application/json")
+        })
+}
+
+fn invalid_log_query(message: &str) -> (StatusCode, Json<ApiError>) {
+    api_err(StatusCode::BAD_REQUEST, "invalid_input", message)
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,6 +397,15 @@ pub(crate) async fn require_build_log_read(
     build_id: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let project_id = load_build_project_id(pool, build_id).await?;
+    // Log streams outlive the request scope, so apply the token's app list
+    // from the session itself.
+    if !session.allows_project(&project_id) {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Build not found",
+        ));
+    }
     let effective = resolve_effective_project_role(
         pool,
         &session.user_id,
@@ -318,6 +439,7 @@ pub(crate) async fn load_current_stream_session(
                 role: row.get("role"),
                 expires_at: row.get("expires_at"),
                 auth_source: AuthSource::Session,
+                token: None,
             }))
         }
         AuthSource::ApiToken => {
@@ -588,53 +710,150 @@ async fn store_log_chunks(
 }
 
 /// `GET /v1/builds/{build_id}/logs` — fetch build logs with pagination.
+///
+/// `step`, `search` and `tail` narrow the lines; with any of them `total`
+/// counts the matching lines. `Accept: text/plain` answers with the lines
+/// alone, one per line.
 pub async fn get_build_logs(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(build_id): Path<String>,
     Query(params): Query<GetBuildLogsQuery>,
-) -> ApiResult<BuildLogsResponse> {
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let pool = state.db.clone();
     require_build_log_read(&pool, &auth.0, &build_id).await?;
 
     let after_seq = params.after_sequence.unwrap_or(-1);
-    let limit = params.limit.unwrap_or(1000).min(5000);
+    let limit = params.limit.unwrap_or(1000);
+    if limit <= 0 {
+        return Err(invalid_log_query("limit must be greater than zero"));
+    }
+    let limit = limit.min(MAX_LOG_PAGE);
+    let tail = match params.tail {
+        Some(tail) if tail <= 0 => {
+            return Err(invalid_log_query("tail must be greater than zero"));
+        }
+        Some(tail) => Some(tail.min(MAX_LOG_PAGE)),
+        None => None,
+    };
+    let step = params
+        .step
+        .as_deref()
+        .map(str::trim)
+        .filter(|step| !step.is_empty());
+    let search = params
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|search| !search.is_empty())
+        .map(str::to_lowercase);
+    if search
+        .as_ref()
+        .is_some_and(|search| search.chars().count() > 200)
+    {
+        return Err(invalid_log_query("search must be at most 200 characters"));
+    }
+    let context = match params.context {
+        Some(context) if !(0..=50).contains(&context) => {
+            return Err(invalid_log_query("context must be between 0 and 50"));
+        }
+        Some(context) => context as usize,
+        None => 0,
+    };
 
-    let rows = sqlx::query(
-        "SELECT sequence, content, stream FROM build_logs \
-         WHERE build_id = ?1 AND sequence > ?2 \
-         ORDER BY sequence ASC LIMIT ?3",
-    )
-    .bind(&build_id)
-    .bind(after_seq)
-    .bind(limit)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| {
+    let store_error = |e: sqlx::Error| {
         error!(error = %e, "failed to fetch build logs");
         api_err(
             StatusCode::INTERNAL_SERVER_ERROR,
             "store_error",
             "Failed to fetch build logs",
         )
-    })?;
+    };
 
-    let logs: Vec<BuildLogChunk> = rows
-        .iter()
-        .map(|r| BuildLogChunk {
-            sequence: r.get("sequence"),
-            content: r.get("content"),
-            stream: r.get("stream"),
-        })
-        .collect();
-
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_logs WHERE build_id = ?1")
+    let response = if step.is_none() && search.is_none() && tail.is_none() {
+        let rows = sqlx::query(
+            "SELECT sequence, content, stream FROM build_logs \
+             WHERE build_id = ?1 AND sequence > ?2 \
+             ORDER BY sequence ASC LIMIT ?3",
+        )
         .bind(&build_id)
-        .fetch_one(&pool)
+        .bind(after_seq)
+        .bind(limit)
+        .fetch_all(&pool)
         .await
-        .unwrap_or(0);
+        .map_err(store_error)?;
 
-    Ok(Json(BuildLogsResponse { logs, total }))
+        let logs: Vec<BuildLogChunk> = rows
+            .iter()
+            .map(|r| BuildLogChunk {
+                sequence: r.get("sequence"),
+                content: r.get("content"),
+                stream: r.get("stream"),
+            })
+            .collect();
+
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM build_logs WHERE build_id = ?1")
+            .bind(&build_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+        BuildLogsResponse { logs, total }
+    } else {
+        let rows = load_step_log_rows(&pool, &build_id)
+            .await
+            .map_err(store_error)?;
+        let in_scope: Vec<StepLogRow> = rows
+            .into_iter()
+            .filter(|row| row.sequence > after_seq)
+            .filter(|row| step.is_none_or(|step| row.step.as_deref() == Some(step)))
+            .collect();
+        let matching = filter_with_context(in_scope, search.as_deref(), context);
+        let total = matching.len() as i64;
+        let page: Vec<StepLogRow> = match tail {
+            Some(tail) => {
+                let skip = matching.len().saturating_sub(tail as usize);
+                matching.into_iter().skip(skip).collect()
+            }
+            None => matching.into_iter().take(limit as usize).collect(),
+        };
+        BuildLogsResponse {
+            logs: page
+                .into_iter()
+                .map(|row| BuildLogChunk {
+                    sequence: row.sequence,
+                    content: row.content,
+                    stream: row.stream,
+                })
+                .collect(),
+            total,
+        }
+    };
+
+    if wants_plain_text(&headers) {
+        let mut body = String::new();
+        for chunk in &response.logs {
+            body.push_str(&chunk.content);
+            if !chunk.content.ends_with('\n') {
+                body.push('\n');
+            }
+        }
+        return Ok((
+            [
+                (
+                    header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8".to_string(),
+                ),
+                (
+                    header::HeaderName::from_static("x-oore-log-total"),
+                    response.total.to_string(),
+                ),
+            ],
+            body,
+        )
+            .into_response());
+    }
+    Ok(Json(response).into_response())
 }
 
 /// `POST /v1/builds/{build_id}/stream-token` — exchange session for a short-lived SSE streaming token.
@@ -681,7 +900,7 @@ pub async fn stream_build_logs(
     Path(build_id): Path<String>,
     Query(sse_query): Query<SseTokenQuery>,
     headers: axum::http::HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<ApiError>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
     // Authenticate: ?token= accepts ONLY short-lived stream tokens (never session tokens).
     // Authorization header accepts full session tokens for non-browser clients (curl, etc.).
     // This prevents long-lived session tokens from appearing in URL query strings.
@@ -742,16 +961,19 @@ pub async fn stream_build_logs(
 
     let pool = state.db.clone();
     let session = require_current_stream_authorization(&pool, &authorization, &build_id).await?;
-    let admission = state
-        .stream_tokens
-        .acquire(&session.user_id, &build_id)
-        .map_err(|_| {
-            api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "stream_limit",
-                "Too many active log streams",
-            )
-        })?;
+    let Ok(admission) =
+        state
+            .stream_tokens
+            .acquire(&session.user_id, &session.limit_key(), &build_id)
+    else {
+        return Ok(crate::util::limit_reached_response(
+            "stream_limit",
+            format!(
+                "Too many live log streams: at most {MAX_ACTIVE_STREAMS_PER_USER} per API token or browser sign-in, {MAX_ACTIVE_STREAMS_PER_PERSON} per person and {MAX_ACTIVE_STREAMS_PER_BUILD} per build. Close a stream or read the logs with GET /v1/builds/{{build_id}}/logs."
+            ),
+            5,
+        ));
+    };
 
     // Check for Last-Event-ID header for reconnection support
     let last_event_id: i64 = headers
@@ -772,7 +994,9 @@ pub async fn stream_build_logs(
         build_state_events,
     );
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    Ok(Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response())
 }
 
 /// Produce an event-driven SSE stream with bounded recovery polling.

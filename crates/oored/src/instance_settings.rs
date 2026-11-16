@@ -480,6 +480,17 @@ pub async fn load_direct_macos_runner_paused(pool: &sqlx::SqlitePool) -> anyhow:
         .is_some_and(|paused| paused != 0))
 }
 
+/// Whether an owner turned on the MCP server at `/mcp`. Off when unset.
+pub async fn load_mcp_enabled(pool: &sqlx::SqlitePool) -> anyhow::Result<bool> {
+    let row = sqlx::query("SELECT mcp_enabled FROM instance_preferences WHERE id = 1")
+        .fetch_optional(pool)
+        .await?;
+
+    Ok(row
+        .and_then(|row| row.try_get::<i32, _>("mcp_enabled").ok())
+        .is_some_and(|enabled| enabled != 0))
+}
+
 pub async fn load_warpgate_install_ticket(
     pool: &sqlx::SqlitePool,
     encryption_key: &[u8],
@@ -511,6 +522,7 @@ fn preferences_response(
     runtime_mode: RuntimeMode,
     remote_auth_mode: RemoteAuthMode,
     direct_macos_runner_paused: bool,
+    mcp_enabled: bool,
     updated_at: Option<i64>,
 ) -> InstancePreferencesResponse {
     InstancePreferencesResponse {
@@ -519,6 +531,7 @@ fn preferences_response(
             runtime_mode,
             remote_auth_mode,
             direct_macos_runner_paused,
+            mcp_enabled,
             restart_required: false,
             updated_at,
         },
@@ -1133,7 +1146,7 @@ pub async fn get_instance_preferences(
     let pool = state.db.clone();
 
     let row = sqlx::query(
-        "SELECT runtime_mode, remote_auth_mode, direct_macos_runner_paused, updated_at \
+        "SELECT runtime_mode, remote_auth_mode, direct_macos_runner_paused, mcp_enabled, updated_at \
          FROM instance_preferences WHERE id = 1",
     )
     .fetch_optional(&pool)
@@ -1164,12 +1177,14 @@ pub async fn get_instance_preferences(
             .try_get::<i32, _>("direct_macos_runner_paused")
             .unwrap_or(0)
             != 0;
+        let mcp_enabled = row.try_get::<i32, _>("mcp_enabled").unwrap_or(0) != 0;
         let updated_at: Option<i64> = row.get("updated_at");
         return Ok(Json(preferences_response(
             KeyStorageMode::File,
             runtime_mode,
             remote_auth_mode,
             direct_macos_runner_paused,
+            mcp_enabled,
             updated_at,
         )));
     }
@@ -1178,6 +1193,7 @@ pub async fn get_instance_preferences(
         KeyStorageMode::File,
         RuntimeMode::Local,
         RemoteAuthMode::Oidc,
+        false,
         false,
         None,
     )))
@@ -1984,6 +2000,25 @@ pub async fn update_instance_preferences(
         direct_macos_runner_paused != existing_direct_macos_runner_paused;
     let auth_policy_changed = runtime_mode_changed || remote_auth_mode_changed;
 
+    let existing_mcp_enabled = load_mcp_enabled(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to load the MCP setting");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to update instance preferences",
+        )
+    })?;
+    let mcp_enabled_changed = req
+        .mcp_enabled
+        .is_some_and(|enabled| enabled != existing_mcp_enabled);
+    if mcp_enabled_changed && auth.0.role != "owner" {
+        return Err(api_err(
+            StatusCode::FORBIDDEN,
+            "mcp_owner_required",
+            "Only the owner can turn the MCP server on or off",
+        ));
+    }
+
     if auth_policy_changed && auth.0.role != "owner" {
         return Err(api_err(
             StatusCode::FORBIDDEN,
@@ -2090,6 +2125,43 @@ pub async fn update_instance_preferences(
             "Instance preferences changed while you were saving. Review the current settings and try again.",
         ));
     }
+
+    if let Some(enabled) = req.mcp_enabled.filter(|_| mcp_enabled_changed) {
+        sqlx::query("UPDATE instance_preferences SET mcp_enabled = ?1 WHERE id = 1")
+            .bind(enabled)
+            .execute(&pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to persist the MCP setting");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to update instance preferences",
+                )
+            })?;
+        let details = serde_json::json!({ "mcp_enabled": enabled }).to_string();
+        let _ = write_audit_log(
+            &pool,
+            Some(&auth.0.user_id),
+            if enabled {
+                "mcp_enabled"
+            } else {
+                "mcp_disabled"
+            },
+            "instance_settings",
+            Some("mcp"),
+            Some(&details),
+        )
+        .await;
+    }
+    let persisted_mcp_enabled = load_mcp_enabled(&pool).await.map_err(|e| {
+        error!(error = %e, "failed to reload the MCP setting");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to load updated instance preferences",
+        )
+    })?;
 
     let persisted_runtime_mode = load_runtime_mode(&pool).await.map_err(|e| {
         error!(error = %e, "failed to reload persisted runtime mode");
@@ -2238,6 +2310,7 @@ pub async fn update_instance_preferences(
         persisted_runtime_mode,
         persisted_remote_auth_mode,
         persisted_direct_macos_runner_paused,
+        persisted_mcp_enabled,
         Some(now),
     )))
 }

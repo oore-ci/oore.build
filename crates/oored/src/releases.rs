@@ -1524,6 +1524,12 @@ pub(crate) async fn project_role(
 }
 
 pub(crate) fn row_role(auth: &AuthUser, row: &SqliteRow) -> EffectiveProjectRole {
+    // An API token limited to chosen apps sees nothing of the others.
+    if let Ok(project_id) = row.try_get::<String, _>("project_id")
+        && !auth.0.allows_project(&project_id)
+    {
+        return EffectiveProjectRole::None;
+    }
     if auth.0.role == "owner" || auth.0.role == "admin" {
         return EffectiveProjectRole::InstanceAdmin;
     }
@@ -2198,6 +2204,7 @@ pub async fn list_release_activity(
 
     let events = rows
         .iter()
+        .filter(|row| crate::session::current_allows_project(&row.get::<String, _>("project_id")))
         .filter_map(|row| {
             let store = row.get::<String, _>("store").parse().ok()?;
             Some(ReleaseActivityEvent {

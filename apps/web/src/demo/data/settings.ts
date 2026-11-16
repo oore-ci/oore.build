@@ -19,5 +19,6 @@ export const demoInstancePreferences: InstancePreferences = {
   remote_auth_mode: 'oidc',
   restart_required: false,
   direct_macos_runner_paused: false,
+  mcp_enabled: true,
   updated_at: ago(86400 * 60),
 }

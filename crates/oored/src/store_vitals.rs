@@ -173,6 +173,7 @@ async fn load_vitals(state: &AppState, auth: &AuthUser) -> ApiResult<StoreVitals
     })?;
     let apps = rows
         .into_iter()
+        .filter(|row| auth.0.allows_project(&row.project_id))
         .filter_map(|row| {
             let store = match row.store.as_str() {
                 "google_play" => ReleaseStore::GooglePlay,

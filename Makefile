@@ -5,7 +5,7 @@
 	deploy-demo deploy-demo-dist deploy-docs deploy-docs-dist \
 	deploy-release-index-dist deploy-site deploy-site-dist deploy-web deploy-web-dist \
 	fix format format-check format-rust format-rust-check \
-	gen-openapi install-actionlint install-local \
+	gen-error-codes gen-openapi install-actionlint install-local \
 	lint lint-docs lint-rust lint-rust-full lint-site lint-web \
 	package-release-assets preview-docs preview-site preview-web \
 	register-runner release-smoke run-daemon run-runner setup-token \
@@ -174,7 +174,10 @@ test-deployment-headers:
 
 # Rust
 # Static checks do not need incremental compiler state. This prevents repeated checks from growing target/debug/incremental.
-check-rust test-rust lint-rust lint-rust-full check-openapi: export CARGO_INCREMENTAL = 0
+check-rust test-rust lint-rust lint-rust-full gen-error-codes:
+	OORE_UPDATE_ERROR_CODES=1 cargo test -p oored --locked --lib error_catalog::tests::docs_error_code_table_is_current
+
+check-openapi: export CARGO_INCREMENTAL = 0
 
 check-rust:
 	cargo check --workspace --locked

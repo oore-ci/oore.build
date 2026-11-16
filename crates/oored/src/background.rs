@@ -136,7 +136,19 @@ pub fn start_background_tasks(
         pool.clone(),
         storage.clone(),
     ));
+    tokio::spawn(idempotency_key_monitor(pool.clone()));
     tokio::spawn(expired_artifact_monitor(pool, storage));
+}
+
+/// Removes `Idempotency-Key` responses past their 24 hours, hourly.
+async fn idempotency_key_monitor(pool: SqlitePool) {
+    let mut tick = tokio::time::interval(Duration::from_secs(3600));
+    loop {
+        tick.tick().await;
+        if let Err(e) = crate::idempotency::delete_expired_keys(&pool).await {
+            warn!(error = %e, "failed to remove expired idempotency keys");
+        }
+    }
 }
 
 /// Start the release rollout monitor. It needs the store client, so it takes

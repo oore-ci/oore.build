@@ -115,11 +115,13 @@ function copyEntry(entries: Array<AuditLogEntry>) {
 function AuditRowDetail({
   description,
   onShowActor,
+  onShowToken,
   onShowApp,
   row,
 }: {
   description: AuditDescription
   onShowActor: (actorId: string) => void
+  onShowToken: (tokenId: string) => void
   onShowApp: (name: string) => void
   row: AuditRow
 }) {
@@ -163,6 +165,15 @@ function AuditRowDetail({
             {description.actorKind === 'system'
               ? 'what Oore did'
               : description.actor}
+          </Button>
+        ) : null}
+        {entry.token_id ? (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onShowToken(entry.token_id!)}
+          >
+            Show only token {entry.token_name ?? entry.token_id}
           </Button>
         ) : null}
         {entry.project_name ? (
@@ -220,10 +231,12 @@ function AuditRowDetail({
 
 function AuditRowItem({
   onShowActor,
+  onShowToken,
   onShowApp,
   row,
 }: {
   onShowActor: (actorId: string) => void
+  onShowToken: (tokenId: string) => void
   onShowApp: (name: string) => void
   row: AuditRow
 }) {
@@ -252,6 +265,14 @@ function AuditRowItem({
             <span className="font-medium text-foreground">
               {description.actor}
             </span>{' '}
+            {entry.token_name ? (
+              <>
+                via token{' '}
+                <span className="font-medium text-foreground">
+                  {entry.token_name}
+                </span>{' '}
+              </>
+            ) : null}
             {description.say.map((part, index) =>
               part.strong ? (
                 // oxlint-disable-next-line react/no-array-index-key -- parts are fixed per entry
@@ -294,6 +315,7 @@ function AuditRowItem({
         <AuditRowDetail
           description={description}
           onShowActor={onShowActor}
+          onShowToken={onShowToken}
           onShowApp={onShowApp}
           row={row}
         />
@@ -305,10 +327,12 @@ function AuditRowItem({
 function AuditDays({
   entries,
   onShowActor,
+  onShowToken,
   onShowApp,
 }: {
   entries: Array<AuditLogEntry>
   onShowActor: (actorId: string) => void
+  onShowToken: (tokenId: string) => void
   onShowApp: (name: string) => void
 }) {
   return (
@@ -324,6 +348,7 @@ function AuditDays({
                 key={row.entry.id}
                 row={row}
                 onShowActor={onShowActor}
+                onShowToken={onShowToken}
                 onShowApp={onShowApp}
               />
             ))}
@@ -364,6 +389,7 @@ export function AuditLogCollection({
   onRetry,
   onSearch,
   onShowActor,
+  onShowToken,
   onShowApp,
   page,
   pageSize,
@@ -387,6 +413,7 @@ export function AuditLogCollection({
   onRetry: () => void
   onSearch: (query: string) => void
   onShowActor: (actorId: string) => void
+  onShowToken: (tokenId: string) => void
   onShowApp: (name: string) => void
   page: number
   pageSize: number
@@ -498,6 +525,7 @@ export function AuditLogCollection({
             <AuditDays
               entries={entries}
               onShowActor={onShowActor}
+              onShowToken={onShowToken}
               onShowApp={onShowApp}
             />
           ) : (

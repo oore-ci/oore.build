@@ -60,10 +60,17 @@ pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 /// Reconnect delay suggested to EventSource-compatible clients.
 const CLIENT_RETRY: Duration = Duration::from_secs(3);
 
-const MAX_STREAMS_PER_USER: usize = 8;
+/// Live event streams per caller: per API token, or per person for browser
+/// and CLI sign-ins.
+pub(crate) const MAX_STREAMS_PER_USER: usize = 8;
+/// Live event streams of one person across their sign-ins and tokens.
+pub(crate) const MAX_STREAMS_PER_PERSON: usize = 24;
 const MAX_STREAMS_GLOBAL: usize = 256;
 
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
+
+/// Recent events kept for clients that reconnect with `Last-Event-ID`.
+const REPLAY_WINDOW: usize = 512;
 
 /// A change fanned out to every connected stream before per-user filtering.
 #[derive(Debug, Clone)]
@@ -75,28 +82,64 @@ pub enum LiveEvent {
     Resync(&'static str),
 }
 
+/// A live event with its stream id. Ids increase and start from the boot
+/// time in milliseconds times 1000, so ids from before a restart are older
+/// than every id after it.
+#[derive(Debug, Clone)]
+pub struct Sequenced {
+    pub id: u64,
+    pub event: LiveEvent,
+}
+
 /// Shared event fan-out and stream admission.
 pub struct EventHub {
-    tx: broadcast::Sender<LiveEvent>,
+    tx: broadcast::Sender<Sequenced>,
     active: Arc<Mutex<ActiveStreams>>,
+    replay: Mutex<ReplayLog>,
+}
+
+/// The last events sent, and the first id after which no change was missed.
+struct ReplayLog {
+    next_id: u64,
+    /// Changes before this id may be missing: the watcher stops scanning
+    /// while nobody listens.
+    continuous_from: u64,
+    recent: std::collections::VecDeque<Sequenced>,
+}
+
+/// What a reconnecting client gets before live events.
+pub enum Replay {
+    /// Every event after its last id, oldest first.
+    Events(Vec<Sequenced>),
+    /// Its last id is too old; it must refetch.
+    Resync,
 }
 
 #[derive(Default)]
 struct ActiveStreams {
     by_user: HashMap<String, usize>,
+    by_key: HashMap<String, usize>,
     total: usize,
 }
 
 impl EventHub {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let first_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |elapsed| elapsed.as_millis() as u64 * 1000);
         Self {
             tx,
             active: Arc::new(Mutex::new(ActiveStreams::default())),
+            replay: Mutex::new(ReplayLog {
+                next_id: first_id,
+                continuous_from: first_id,
+                recent: std::collections::VecDeque::new(),
+            }),
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<LiveEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Sequenced> {
         self.tx.subscribe()
     }
 
@@ -104,22 +147,83 @@ impl EventHub {
         self.tx.receiver_count() > 0
     }
 
-    fn publish(&self, event: LiveEvent) {
-        let _ = self.tx.send(event);
+    fn replay_log(&self) -> MutexGuard<'_, ReplayLog> {
+        self.replay
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn acquire(&self, user_id: &str) -> Option<StreamAdmission> {
+    fn publish(&self, event: LiveEvent) {
+        let mut log = self.replay_log();
+        let sequenced = Sequenced {
+            id: log.next_id,
+            event,
+        };
+        log.next_id += 1;
+        if matches!(sequenced.event, LiveEvent::Resync(_)) {
+            // Changes before a resync were not all described.
+            log.recent.clear();
+            log.continuous_from = log.next_id;
+        } else {
+            if log.recent.len() == REPLAY_WINDOW {
+                log.recent.pop_front();
+            }
+            log.recent.push_back(sequenced.clone());
+        }
+        // Sent under the lock so a subscriber that read the log sees every
+        // later event on its receiver.
+        let _ = self.tx.send(sequenced);
+    }
+
+    /// The watcher stopped scanning; changes from now on until it resumes
+    /// are not reported, so earlier ids cannot be replayed.
+    fn mark_gap(&self) {
+        let mut log = self.replay_log();
+        log.recent.clear();
+        // Skip an id, so a client whose last event was the newest one also
+        // learns it may have missed changes.
+        log.next_id += 1;
+        log.continuous_from = log.next_id;
+    }
+
+    /// Subscribes and returns what happened after `last_id`, so a client that
+    /// reconnects misses nothing.
+    pub fn resume(&self, last_id: u64) -> (broadcast::Receiver<Sequenced>, Replay) {
+        let log = self.replay_log();
+        let receiver = self.tx.subscribe();
+        let oldest_kept = log.recent.front().map_or(log.next_id, |event| event.id);
+        let replay = if last_id + 1 < log.continuous_from.max(oldest_kept) || last_id >= log.next_id
+        {
+            Replay::Resync
+        } else {
+            Replay::Events(
+                log.recent
+                    .iter()
+                    .filter(|event| event.id > last_id)
+                    .cloned()
+                    .collect(),
+            )
+        };
+        (receiver, replay)
+    }
+
+    /// Admit a stream for `user_id`, counted against `limit_key` (see
+    /// `SessionInfo::limit_key`) and the person's total.
+    fn acquire(&self, user_id: &str, limit_key: &str) -> Option<StreamAdmission> {
         let mut active = lock(&self.active);
         if active.total >= MAX_STREAMS_GLOBAL
-            || active.by_user.get(user_id).copied().unwrap_or(0) >= MAX_STREAMS_PER_USER
+            || active.by_key.get(limit_key).copied().unwrap_or(0) >= MAX_STREAMS_PER_USER
+            || active.by_user.get(user_id).copied().unwrap_or(0) >= MAX_STREAMS_PER_PERSON
         {
             return None;
         }
         active.total += 1;
         *active.by_user.entry(user_id.to_string()).or_default() += 1;
+        *active.by_key.entry(limit_key.to_string()).or_default() += 1;
         Some(StreamAdmission {
             active: self.active.clone(),
             user_id: user_id.to_string(),
+            limit_key: limit_key.to_string(),
         })
     }
 }
@@ -139,16 +243,23 @@ fn lock(active: &Mutex<ActiveStreams>) -> MutexGuard<'_, ActiveStreams> {
 struct StreamAdmission {
     active: Arc<Mutex<ActiveStreams>>,
     user_id: String,
+    limit_key: String,
 }
 
 impl Drop for StreamAdmission {
     fn drop(&mut self) {
         let mut active = lock(&self.active);
+        let active = &mut *active;
         active.total -= 1;
-        if let Some(count) = active.by_user.get_mut(&self.user_id) {
-            *count -= 1;
-            if *count == 0 {
-                active.by_user.remove(&self.user_id);
+        for (counts, key) in [
+            (&mut active.by_user, &self.user_id),
+            (&mut active.by_key, &self.limit_key),
+        ] {
+            if let Some(count) = counts.get_mut(key) {
+                *count -= 1;
+                if *count == 0 {
+                    counts.remove(key);
+                }
             }
         }
     }
@@ -175,7 +286,9 @@ pub fn start_change_watcher(pool: SqlitePool, scheduler: Arc<Scheduler>, hub: Ar
             }
 
             if !hub.has_subscribers() {
-                cursor = None;
+                if cursor.take().is_some() {
+                    hub.mark_gap();
+                }
                 continue;
             }
 
@@ -398,6 +511,8 @@ async fn load_runners(pool: &SqlitePool) -> Result<HashMap<String, (String, Stri
 #[derive(Debug, Deserialize)]
 pub struct EventStreamQuery {
     pub project_id: Option<String>,
+    /// Replay events after this id, like `Last-Event-ID`.
+    pub since: Option<u64>,
 }
 
 /// `GET /v1/events` — SSE stream of build, runner and release changes.
@@ -429,13 +544,21 @@ pub async fn stream_events(
         require_project_permission(&effective, ProjectPermission::Read)?;
     }
 
-    let admission = state.events.acquire(&session.user_id).ok_or_else(|| {
-        api_err(
-            StatusCode::TOO_MANY_REQUESTS,
+    let Some(admission) = state.events.acquire(&session.user_id, &session.limit_key()) else {
+        return Ok(crate::util::limit_reached_response(
             "stream_limit",
-            "Too many active event streams",
-        )
-    })?;
+            if session.token.is_some() {
+                format!(
+                    "This API token already has {MAX_STREAMS_PER_USER} live event streams open. Close one, or use another token for another agent."
+                )
+            } else {
+                format!(
+                    "You already have {MAX_STREAMS_PER_USER} live event streams open. Close a browser tab, or use an API token for agents."
+                )
+            },
+            5,
+        ));
+    };
     let runners_visible = can_read_runners(&state, &session).await;
     let authorization = StreamAuthorization {
         user_id: session.user_id.clone(),
@@ -443,7 +566,18 @@ pub async fn stream_events(
         auth_source: session.auth_source.clone(),
         expires_at: session.expires_at,
     };
-    let receiver = state.events.subscribe();
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or(query.since);
+    let (receiver, replay) = match last_event_id {
+        Some(last_id) => {
+            let (receiver, replay) = state.events.resume(last_id);
+            (receiver, Some(replay))
+        }
+        None => (state.events.subscribe(), None),
+    };
 
     info!(user = %session.email, project_id = ?project_id, "event stream opened");
 
@@ -453,7 +587,7 @@ pub async fn stream_events(
         authorization,
         project_id,
         runners_visible,
-        receiver,
+        (receiver, replay),
         admission,
     );
     let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL));
@@ -496,6 +630,12 @@ impl ProjectAccess {
         if let Some(readable) = self.readable.get(project_id) {
             return Some(*readable);
         }
+        // The stream outlives the request scope, so apply the token's app
+        // list from the session itself.
+        if !session.allows_project(project_id) {
+            self.readable.insert(project_id.to_string(), false);
+            return Some(false);
+        }
         let effective = resolve_effective_project_role(
             pool,
             &session.user_id,
@@ -508,6 +648,44 @@ impl ProjectAccess {
         let readable = require_project_permission(&effective, ProjectPermission::Read).is_ok();
         self.readable.insert(project_id.to_string(), readable);
         Some(readable)
+    }
+
+    /// The frame to send for `event` on a stream, if the caller may see it.
+    async fn frame(
+        &mut self,
+        pool: &SqlitePool,
+        session: &SessionInfo,
+        project_filter: Option<&str>,
+        runners_visible: bool,
+        event: &LiveEvent,
+    ) -> Option<Event> {
+        match event {
+            LiveEvent::Build(event) => {
+                if project_filter.is_some_and(|id| id != event.project_id) {
+                    return None;
+                }
+                self.project_event(pool, session, &event.project_id, || {
+                    json_event("build", event)
+                })
+                .await
+            }
+            LiveEvent::Release(event) => {
+                if project_filter.is_some_and(|id| id != event.project_id) {
+                    return None;
+                }
+                self.project_event(pool, session, &event.project_id, || {
+                    json_event("release", event)
+                })
+                .await
+            }
+            LiveEvent::Runner(event) => runners_visible.then(|| json_event("runner", event)),
+            LiveEvent::Resync(reason) => Some(json_event(
+                "resync",
+                &EventStreamResync {
+                    reason: reason.to_string(),
+                },
+            )),
+        }
     }
 
     /// The frame to send for a project-scoped change: the event itself, or a
@@ -551,7 +729,7 @@ fn event_stream(
     authorization: StreamAuthorization,
     project_filter: Option<String>,
     mut runners_visible: bool,
-    mut receiver: broadcast::Receiver<LiveEvent>,
+    (mut receiver, replay): (broadcast::Receiver<Sequenced>, Option<Replay>),
     admission: StreamAdmission,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
@@ -569,6 +747,26 @@ fn event_stream(
             runners: runners_visible,
         })
         .retry(CLIENT_RETRY));
+
+        // Live events already sent as replay are skipped below.
+        let mut replayed_up_to = 0;
+        match replay {
+            Some(Replay::Events(events)) => {
+                for sequenced in events {
+                    replayed_up_to = sequenced.id;
+                    if let Some(frame) = access
+                        .frame(&pool, &session, project_filter.as_deref(), runners_visible, &sequenced.event)
+                        .await
+                    {
+                        yield Ok(frame.id(sequenced.id.to_string()));
+                    }
+                }
+            }
+            Some(Replay::Resync) => {
+                yield Ok(json_event("resync", &EventStreamResync { reason: "replay_unavailable".to_string() }));
+            }
+            None => {}
+        }
 
         loop {
             tokio::select! {
@@ -596,31 +794,16 @@ fn event_stream(
                     runners_visible = can_read_runners(&state, &session).await;
                 }
                 received = receiver.recv() => match received {
-                    Ok(LiveEvent::Build(event)) => {
-                        if project_filter.as_ref().is_none_or(|id| *id == event.project_id)
-                            && let Some(frame) = access
-                                .project_event(&pool, &session, &event.project_id, || json_event("build", &event))
-                                .await
+                    Ok(sequenced) => {
+                        if sequenced.id <= replayed_up_to {
+                            continue;
+                        }
+                        if let Some(frame) = access
+                            .frame(&pool, &session, project_filter.as_deref(), runners_visible, &sequenced.event)
+                            .await
                         {
-                            yield Ok(frame);
+                            yield Ok(frame.id(sequenced.id.to_string()));
                         }
-                    }
-                    Ok(LiveEvent::Release(event)) => {
-                        if project_filter.as_ref().is_none_or(|id| *id == event.project_id)
-                            && let Some(frame) = access
-                                .project_event(&pool, &session, &event.project_id, || json_event("release", &event))
-                                .await
-                        {
-                            yield Ok(frame);
-                        }
-                    }
-                    Ok(LiveEvent::Runner(event)) => {
-                        if runners_visible {
-                            yield Ok(json_event("runner", &event));
-                        }
-                    }
-                    Ok(LiveEvent::Resync(reason)) => {
-                        yield Ok(json_event("resync", &EventStreamResync { reason: reason.to_string() }));
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         warn!(skipped, "event stream receiver lagged; asking client to resync");
@@ -678,11 +861,63 @@ mod tests {
         pool
     }
 
-    async fn next_event(rx: &mut broadcast::Receiver<LiveEvent>) -> LiveEvent {
+    async fn next_event(rx: &mut broadcast::Receiver<Sequenced>) -> LiveEvent {
         tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await
             .expect("event within timeout")
             .expect("open channel")
+            .event
+    }
+
+    fn build_event(build_id: &str) -> LiveEvent {
+        LiveEvent::Build(BuildChangedEvent {
+            build_id: build_id.to_string(),
+            project_id: "p1".to_string(),
+            build_number: 1,
+            status: "running".to_string(),
+            updated_at: 0,
+        })
+    }
+
+    fn replayed_ids(replay: Replay) -> Option<Vec<String>> {
+        match replay {
+            Replay::Events(events) => Some(
+                events
+                    .into_iter()
+                    .map(|sequenced| match sequenced.event {
+                        LiveEvent::Build(event) => event.build_id,
+                        other => panic!("unexpected {other:?}"),
+                    })
+                    .collect(),
+            ),
+            Replay::Resync => None,
+        }
+    }
+
+    #[test]
+    fn a_reconnect_replays_what_came_after_its_last_id() {
+        let hub = EventHub::new();
+        let _listener = hub.subscribe();
+        hub.publish(build_event("a"));
+        hub.publish(build_event("b"));
+        hub.publish(build_event("c"));
+        let first = hub.replay_log().recent.front().unwrap().id;
+
+        let (_rx, replay) = hub.resume(first);
+        assert_eq!(replayed_ids(replay).unwrap(), ["b", "c"]);
+        let (_rx, replay) = hub.resume(first + 2);
+        assert!(replayed_ids(replay).unwrap().is_empty());
+        // An id from before this daemon started, or from the future.
+        assert!(replayed_ids(hub.resume(1).1).is_none());
+        assert!(replayed_ids(hub.resume(first + 100).1).is_none());
+
+        // While nobody listened, changes went unseen: even the newest id
+        // must resync.
+        hub.mark_gap();
+        assert!(replayed_ids(hub.resume(first + 2).1).is_none());
+        hub.publish(build_event("d"));
+        let after_gap = hub.replay_log().recent.front().unwrap().id;
+        assert_eq!(replayed_ids(hub.resume(after_gap - 1).1).unwrap(), ["d"]);
     }
 
     #[tokio::test]
@@ -745,6 +980,7 @@ mod tests {
             role: "developer".to_string(),
             expires_at: i64::MAX,
             auth_source: crate::session::AuthSource::Session,
+            token: None,
         };
         let mut access = ProjectAccess {
             readable: HashMap::new(),
@@ -768,11 +1004,13 @@ mod tests {
     fn admission_limits_streams_per_user() {
         let hub = EventHub::new();
         let held: Vec<_> = (0..MAX_STREAMS_PER_USER)
-            .map(|_| hub.acquire("u").expect("admitted"))
+            .map(|_| hub.acquire("u", "u").expect("admitted"))
             .collect();
-        assert!(hub.acquire("u").is_none());
-        assert!(hub.acquire("v").is_some());
+        assert!(hub.acquire("u", "u").is_none());
+        // Another token of the same person has its own allowance.
+        assert!(hub.acquire("u", "token:t1").is_some());
+        assert!(hub.acquire("v", "v").is_some());
         drop(held);
-        assert!(hub.acquire("u").is_some());
+        assert!(hub.acquire("u", "u").is_some());
     }
 }

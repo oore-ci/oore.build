@@ -33,6 +33,7 @@ import type { AuditKind } from './-audit-log-collection'
 
 interface AuditLogSearch {
   actor?: string
+  token?: string
   from?: string
   kind?: Exclude<AuditKind, 'all'>
   page?: number
@@ -56,6 +57,7 @@ function parseSearch(search: SearchInput): AuditLogSearch {
     q: q || undefined,
     kind: searchChoice(search, 'kind', KIND_VALUES),
     actor: searchString(search, 'actor') || undefined,
+    token: searchString(search, 'token') || undefined,
     from: validSearchDate(searchString(search, 'from')),
     to: validSearchDate(searchString(search, 'to')),
     page: Number.isInteger(page) && page > 1 ? page : undefined,
@@ -95,6 +97,7 @@ function AuditLogPage() {
     q: search.q,
     category: search.kind,
     actor_id: search.actor,
+    token_id: search.token,
     from_ts: fromTs,
     to_ts: toTs,
   })
@@ -107,6 +110,7 @@ function AuditLogPage() {
     !!search.q ||
     !!search.kind ||
     !!search.actor ||
+    !!search.token ||
     !!search.from ||
     !!search.to
   const showTrueEmpty =
@@ -137,6 +141,7 @@ function AuditLogPage() {
       q: undefined,
       kind: undefined,
       actor: undefined,
+      token: undefined,
       from: undefined,
       to: undefined,
       page: undefined,
@@ -179,7 +184,9 @@ function AuditLogPage() {
         entries={entries}
         error={auditQuery.error}
         activeFilterCount={
-          Number(!!search.actor) + Number(!!(search.from || search.to))
+          Number(!!search.actor) +
+          Number(!!search.token) +
+          Number(!!(search.from || search.to))
         }
         onClearFilters={clearFilters}
         filters={
@@ -222,6 +229,7 @@ function AuditLogPage() {
           updateSearch({ q: value.trim() || undefined, page: undefined })
         }
         onShowActor={(actor) => updateSearch({ actor, page: undefined })}
+        onShowToken={(token) => updateSearch({ token, page: undefined })}
         onShowApp={(name) => updateSearch({ q: name, page: undefined })}
         page={page}
         pageSize={pageSize}
