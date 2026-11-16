@@ -7,7 +7,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -61,10 +60,6 @@ export default function TrustedProxySettingsDialog({
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Trusted Proxy identity settings</DialogTitle>
-          <DialogDescription>
-            Configure the backend trust contract used when an upstream proxy
-            provides the signed-in user email.
-          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -74,7 +69,13 @@ export default function TrustedProxySettingsDialog({
               name="user_email_header"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>User email header</FormLabel>
+                  <FormLabel
+                    hint={
+                      'Header forwarded by oore-web after the upstream proxy has proven the request.'
+                    }
+                  >
+                    User email header
+                  </FormLabel>
                   <FormControl>
                     <Input
                       placeholder="x-oore-user-email"
@@ -82,10 +83,6 @@ export default function TrustedProxySettingsDialog({
                       disabled={isPending}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Header forwarded by oore-web after the upstream proxy has
-                    proven the request.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -96,7 +93,13 @@ export default function TrustedProxySettingsDialog({
               name="trusted_proxy_cidrs"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Trusted proxy peer CIDRs</FormLabel>
+                  <FormLabel
+                    hint={
+                      'One CIDR per line. Leave blank to accept loopback peers only.'
+                    }
+                  >
+                    Trusted proxy peer CIDRs
+                  </FormLabel>
                   <FormControl>
                     <Textarea
                       rows={4}
@@ -105,10 +108,6 @@ export default function TrustedProxySettingsDialog({
                       disabled={isPending}
                     />
                   </FormControl>
-                  <FormDescription>
-                    One CIDR per line. Leave blank to accept loopback peers
-                    only.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -119,7 +118,13 @@ export default function TrustedProxySettingsDialog({
               name="shared_secret"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Shared secret</FormLabel>
+                  <FormLabel
+                    hint={
+                      'Leave empty to keep the existing secret. Enter a new value only when rotating it.'
+                    }
+                  >
+                    Shared secret
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="password"
@@ -132,10 +137,6 @@ export default function TrustedProxySettingsDialog({
                       disabled={isPending}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Leave empty to keep the existing secret. Enter a new value
-                    only when rotating it.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -149,7 +150,17 @@ export default function TrustedProxySettingsDialog({
                     name="warpgate_ticket"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>iOS install access ticket</FormLabel>
+                        <FormLabel
+                          hint={
+                            settings?.warpgate_ticket_source === 'environment'
+                              ? 'Currently supplied by OORE_WARPGATE_TICKET. Saving a value here stores an encrypted override.'
+                              : settings?.has_warpgate_ticket
+                                ? 'Stored encrypted. Leave empty to keep it; enter a value only to rotate it.'
+                                : 'Optional. Lets the iOS installer fetch the manifest and IPA through Warpgate without an interactive login.'
+                          }
+                        >
+                          iOS install access ticket
+                        </FormLabel>
                         <FormControl>
                           <Input
                             type="password"
@@ -163,13 +174,6 @@ export default function TrustedProxySettingsDialog({
                             disabled={isPending || clearWarpgateTicket}
                           />
                         </FormControl>
-                        <FormDescription>
-                          {settings?.warpgate_ticket_source === 'environment'
-                            ? 'Currently supplied by OORE_WARPGATE_TICKET. Saving a value here stores an encrypted override.'
-                            : settings?.has_warpgate_ticket
-                              ? 'Stored encrypted. Leave empty to keep it; enter a value only to rotate it.'
-                              : 'Optional. Lets the iOS installer fetch the manifest and IPA through Warpgate without an interactive login.'}
-                        </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}

@@ -155,14 +155,14 @@ same compact badge or count treatment; do not repeat the unit in the count.
 Every level of the page can carry help text, and a screen that fills all of
 them reads as an article instead of a settings screen. Each level has one job:
 
-| Level       | Primitive                                | Help allowed                                        | May contain                                                         |
-| ----------- | ---------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
-| Page        | `PageHeader`                             | A description only when the title is an entity name | That entity's identity or status                                    |
-| Section     | `SettingsSection`, `PipelineFormSection` | A `hint`: one sentence behind an info icon          | A rule governing every control: "Running builds are never removed." |
-| Subsection  | `PipelineFormSubsection`                 | A `hint`, same as a section                         |                                                                     |
-| Field       | `FormDescription`                        | Only if label plus placeholder cannot carry it      | Format, unit, limit, consequence                                    |
-| Empty state | `Empty`                                  | One visible sentence, the why                       | Why you would add the first one, with a Learn more link             |
-| Footnote    | Muted paragraph under a surface          | One visible sentence                                | Where it is stored, what overrides what                             |
+| Level       | Primitive                                  | Help allowed                                                              | May contain                                                         |
+| ----------- | ------------------------------------------ | ------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| Page        | `PageHeader`                               | A description only when the title is an entity name                       | That entity's identity or status                                    |
+| Section     | `SettingsSection`, `PipelineFormSection`   | A `hint`: one sentence behind an info icon                                | A rule governing every control: "Running builds are never removed." |
+| Subsection  | `PipelineFormSubsection`                   | A `hint`, same as a section                                               |                                                                     |
+| Field       | `FormLabel hint`, rarely `FormDescription` | A `hint` behind an info icon; visible text only to prevent a real mistake | Format, unit, limit; visible: destructive or security consequence   |
+| Empty state | `Empty`                                    | One visible sentence, the why                                             | Why you would add the first one, with a Learn more link             |
+| Footnote    | Muted paragraph under a surface            | One visible sentence                                                      | Where it is stored, what overrides what                             |
 
 Section and subsection headings never carry visible prose. Help for a heading
 goes in `hint`, which renders an info icon that shows the sentence on hover
@@ -184,6 +184,14 @@ it or move it down to the lowest level that still applies:
    would want the feature, it is an empty state or a docs link. If it is about
    storage or precedence, it is a footnote. Only a rule that governs the whole
    section stays at section level.
+
+Visible help text is the exception. A `FormDescription`, a muted sentence under
+a switch, or a dialog description stays on screen only when skipping it leads
+to a real mistake: something destructive, a security consequence, or live
+state such as a missing secret. Everything else goes behind an info icon with
+`FormLabel`'s `hint` prop, or is deleted. Dialogs need no description when the
+title says what they do. Live counts and status beside a heading render muted
+and at body size, never larger than the heading.
 
 A hint that survives is one sentence of about 90 characters, says what happens
 or what the rule is rather than what the control is for, and never explains

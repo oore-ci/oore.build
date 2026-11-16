@@ -27,7 +27,6 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -304,9 +303,6 @@ export default function RuntimeUpdateDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Update Oore</DialogTitle>
-          <DialogDescription>
-            Review what changed before updating this Oore installation.
-          </DialogDescription>
         </DialogHeader>
 
         {plan.kind === 'ready' ? (

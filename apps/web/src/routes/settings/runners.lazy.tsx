@@ -34,7 +34,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -172,9 +171,6 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Edit runner</DialogTitle>
-          <DialogDescription>
-            Pipelines pick runners by label with <code>runs_on</code>.
-          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -208,7 +204,9 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
               name="labels"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Custom labels</FormLabel>
+                  <FormLabel hint="Pipelines pick runners by label with runs_on.">
+                    Custom labels
+                  </FormLabel>
                   <FormControl>
                     <Input
                       autoFocus={isManaged}
@@ -232,7 +230,9 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
               name="max_concurrent_builds"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Concurrent builds</FormLabel>
+                  <FormLabel hint="Each build needs its own CPU and memory, and VM builds share the Mac's two VM slots.">
+                    Concurrent builds
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="number"
@@ -242,11 +242,6 @@ function EditRunnerDialog({ runner, onClose }: EditRunnerDialogProps) {
                       {...field}
                     />
                   </FormControl>
-                  <Text variant="caption">
-                    How many builds this runner runs at the same time. Each
-                    build needs its own CPU and memory, and VM builds share the
-                    Mac&apos;s two VM slots.
-                  </Text>
                   <FormMessage />
                 </FormItem>
               )}
@@ -362,11 +357,9 @@ function RunnersSettingsPage() {
             offline.
           </AlertDescription>
         </Alert>
-      ) : runnersQuery.data && total > 0 ? (
+      ) : runnersQuery.data && total > 0 && queuedTotal > 0 ? (
         <Text variant="muted">
-          {queuedTotal === 0
-            ? 'No builds are waiting for a runner.'
-            : `${queuedTotal} ${queuedTotal === 1 ? 'build is' : 'builds are'} waiting for a runner.`}
+          {`${queuedTotal} ${queuedTotal === 1 ? 'build is' : 'builds are'} waiting for a runner.`}
           {unmatchedTotal > 0
             ? ` ${unmatchedTotal} ${unmatchedTotal === 1 ? 'needs' : 'need'} labels no online runner has.`
             : ''}

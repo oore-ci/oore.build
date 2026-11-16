@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -12,7 +11,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -42,9 +40,6 @@ export default function ExternalAccessNetworkDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>External access network settings</DialogTitle>
-          <DialogDescription>
-            Configure the public endpoint and allowed frontend origins.
-          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -63,9 +58,6 @@ export default function ExternalAccessNetworkDialog({
                       disabled={isPending || !isOwner}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Must be non-loopback and HTTPS.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -76,7 +68,9 @@ export default function ExternalAccessNetworkDialog({
               name="allowed_origins"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Allowed frontend origins</FormLabel>
+                  <FormLabel hint={'One origin per line (or comma-separated).'}>
+                    Allowed frontend origins
+                  </FormLabel>
                   <FormControl>
                     <Textarea
                       rows={5}
@@ -85,9 +79,6 @@ export default function ExternalAccessNetworkDialog({
                       disabled={isPending || !isOwner}
                     />
                   </FormControl>
-                  <FormDescription>
-                    One origin per line (or comma-separated).
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -98,7 +89,13 @@ export default function ExternalAccessNetworkDialog({
               name="artifact_delivery_url"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Artifact delivery URL (optional)</FormLabel>
+                  <FormLabel
+                    hint={
+                      'Use a separate HTTPS origin when an interactive auth proxy protects the main URL. Expose only Oore’s token-protected artifact delivery paths there.'
+                    }
+                  >
+                    Artifact delivery URL (optional)
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="url"
@@ -107,11 +104,6 @@ export default function ExternalAccessNetworkDialog({
                       disabled={isPending || !isOwner}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Use a separate HTTPS origin when an interactive auth proxy
-                    protects the main URL. Expose only Oore’s token-protected
-                    artifact delivery paths there.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

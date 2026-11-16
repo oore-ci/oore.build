@@ -25,7 +25,6 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -118,7 +117,13 @@ export function PipelineTriggersSection({
               name="branches"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Branch patterns (optional)</FormLabel>
+                  <FormLabel
+                    hint={
+                      'Comma-separated globs for push and pull request events. Leave empty to build every branch.'
+                    }
+                  >
+                    Branch patterns (optional)
+                  </FormLabel>
                   <FormControl>
                     <Input
                       placeholder="main, develop, release/*"
@@ -126,10 +131,6 @@ export function PipelineTriggersSection({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Comma-separated globs for push and pull request events.
-                    Leave empty to build every branch.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -140,7 +141,13 @@ export function PipelineTriggersSection({
                 name="tags"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Tag patterns (optional)</FormLabel>
+                    <FormLabel
+                      hint={
+                        'Comma-separated globs for tag pushes. With branch patterns set and no tag patterns, tag pushes do not build.'
+                      }
+                    >
+                      Tag patterns (optional)
+                    </FormLabel>
                     <FormControl>
                       <Input
                         placeholder="v*, release-*"
@@ -148,10 +155,6 @@ export function PipelineTriggersSection({
                         {...field}
                       />
                     </FormControl>
-                    <FormDescription>
-                      Comma-separated globs for tag pushes. With branch patterns
-                      set and no tag patterns, tag pushes do not build.
-                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -320,7 +323,13 @@ export function PipelineTriggersSection({
             name="max_concurrent"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Max concurrent builds (optional)</FormLabel>
+                <FormLabel
+                  hint={
+                    'Builds over the limit wait in the queue and start in order as running builds finish.'
+                  }
+                >
+                  Max concurrent builds (optional)
+                </FormLabel>
                 <FormControl>
                   <Input
                     type="number"
@@ -330,10 +339,6 @@ export function PipelineTriggersSection({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>
-                  Builds over the limit wait in the queue and start in order as
-                  running builds finish.
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -343,7 +348,13 @@ export function PipelineTriggersSection({
             name="timeout_minutes"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Timeout (minutes)</FormLabel>
+                <FormLabel
+                  hint={
+                    'A build still running after this is marked timed out and stopped. Up to 24 hours.'
+                  }
+                >
+                  Timeout (minutes)
+                </FormLabel>
                 <FormControl>
                   <Input
                     type="number"
@@ -352,10 +363,6 @@ export function PipelineTriggersSection({
                     {...field}
                   />
                 </FormControl>
-                <FormDescription>
-                  A build still running after this is marked timed out and
-                  stopped. Up to 24 hours.
-                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -430,7 +437,7 @@ function PathPatternsField({
       name={name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{label}</FormLabel>
+          <FormLabel hint={description}>{label}</FormLabel>
           <FormControl>
             <Textarea
               placeholder={placeholder}
@@ -439,7 +446,6 @@ function PathPatternsField({
               {...field}
             />
           </FormControl>
-          <FormDescription>{description}</FormDescription>
           <FormMessage />
         </FormItem>
       )}

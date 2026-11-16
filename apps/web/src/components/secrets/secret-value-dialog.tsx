@@ -28,7 +28,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -180,7 +179,18 @@ export function SecretValueDialog({
                 name="name"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Name</FormLabel>
+                    <FormLabel
+                      hint={
+                        <>
+                          Reference it as{' '}
+                          <code className="font-mono">
+                            {`\${{ secrets.${field.value.trim() || 'NAME'} }}`}
+                          </code>
+                        </>
+                      }
+                    >
+                      Name
+                    </FormLabel>
                     <FormControl>
                       <Input
                         autoFocus
@@ -191,12 +201,6 @@ export function SecretValueDialog({
                         {...field}
                       />
                     </FormControl>
-                    <FormDescription>
-                      Reference it as{' '}
-                      <code className="font-mono">
-                        {`\${{ secrets.${field.value.trim() || 'NAME'} }}`}
-                      </code>
-                    </FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -241,9 +245,6 @@ export function SecretValueDialog({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Up to 64 KiB. A Google Play service account JSON key fits.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

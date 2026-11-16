@@ -31,7 +31,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -39,7 +38,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -353,10 +351,6 @@ export function EnvironmentDialog({
           <DialogTitle>
             {isEdit ? `Edit ${environment.name}` : 'Add environment'}
           </DialogTitle>
-          <DialogDescription>
-            Builds are promoted into an environment without being rebuilt.
-            Releases uploaded to its track land in it too.
-          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -534,11 +528,13 @@ export function EnvironmentDialog({
               render={({ field }) => (
                 <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-3">
                   <Stack gap={1}>
-                    <FormLabel>Require approval</FormLabel>
-                    <FormDescription>
-                      Developers can ask to promote; an approver approves before
-                      anything changes in the store.
-                    </FormDescription>
+                    <FormLabel
+                      hint={
+                        'Developers can ask to promote; an approver approves before anything changes in the store.'
+                      }
+                    >
+                      Require approval
+                    </FormLabel>
                   </Stack>
                   <FormControl>
                     <Switch
@@ -595,12 +591,15 @@ export function EnvironmentDialog({
                   name="approver_user_ids"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Named approvers</FormLabel>
-                      <FormDescription>
-                        {approverModeValue === 'named'
-                          ? 'Only these members can approve. Instance admins can too.'
-                          : 'These members can approve as well, whatever their role.'}
-                      </FormDescription>
+                      <FormLabel
+                        hint={
+                          approverModeValue === 'named'
+                            ? 'Only these members can approve. Instance admins can too.'
+                            : 'These members can approve as well, whatever their role.'
+                        }
+                      >
+                        Named approvers
+                      </FormLabel>
                       {membersQuery.isLoading ? (
                         <Spinner />
                       ) : approverCandidates.length === 0 ? (
@@ -668,11 +667,13 @@ export function EnvironmentDialog({
                   render={({ field }) => (
                     <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-3">
                       <Stack gap={1}>
-                        <FormLabel>Phased release</FormLabel>
-                        <FormDescription>
-                          Release over 7 days on Apple&apos;s schedule. Off
-                          releases to everyone once Apple approves it.
-                        </FormDescription>
+                        <FormLabel
+                          hint={
+                            "Release over 7 days on Apple's schedule. Off releases to everyone once Apple approves it."
+                          }
+                        >
+                          Phased release
+                        </FormLabel>
                       </Stack>
                       <FormControl>
                         <Switch
@@ -689,12 +690,13 @@ export function EnvironmentDialog({
                   render={({ field }) => (
                     <FormItem className="flex flex-row items-start justify-between gap-4 rounded-lg border p-3">
                       <Stack gap={1}>
-                        <FormLabel>Submit for review</FormLabel>
-                        <FormDescription>
-                          Submit the version for App Review once a promotion
-                          attaches the build. Off leaves it for you to submit in
-                          App Store Connect.
-                        </FormDescription>
+                        <FormLabel
+                          hint={
+                            'Submit the version for App Review once a promotion attaches the build. Off leaves it for you to submit in App Store Connect.'
+                          }
+                        >
+                          Submit for review
+                        </FormLabel>
                       </Stack>
                       <FormControl>
                         <Switch
@@ -722,7 +724,13 @@ export function EnvironmentDialog({
                   name="steps"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Rollout steps (%)</FormLabel>
+                      <FormLabel
+                        hint={
+                          'A promoted release starts at the first step and ends at 100.'
+                        }
+                      >
+                        Rollout steps (%)
+                      </FormLabel>
                       <FormControl>
                         <Input
                           autoComplete="off"
@@ -731,10 +739,6 @@ export function EnvironmentDialog({
                           {...field}
                         />
                       </FormControl>
-                      <FormDescription>
-                        A promoted release starts at the first step and ends at
-                        100.
-                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

@@ -19,7 +19,6 @@ import { Button } from '@/components/ui/button'
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -152,10 +151,6 @@ export function ProjectSettingsForm({
                   <FormControl>
                     <Input {...field} className="font-mono" />
                   </FormControl>
-                  <FormDescription>
-                    Preselected when you run a build and used to discover
-                    checked-in workflows.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -165,15 +160,9 @@ export function ProjectSettingsForm({
               name="auto_add_pipelines"
               render={({ field }) => (
                 <FormItem className="flex items-center justify-between gap-4 space-y-0">
-                  <Stack gap={0.5}>
-                    <FormLabel>
-                      Add pipelines from the repository automatically
-                    </FormLabel>
-                    <FormDescription>
-                      A new config file on the default branch that no pipeline
-                      uses becomes a pipeline.
-                    </FormDescription>
-                  </Stack>
+                  <FormLabel hint="A new config file on the default branch that no pipeline uses becomes a pipeline.">
+                    Add pipelines from the repository automatically
+                  </FormLabel>
                   <FormControl>
                     <Switch
                       checked={field.value}
@@ -270,10 +259,6 @@ export function ProjectSettingsForm({
                         </Button>
                       </Stack>
                     )}
-                    <FormDescription>
-                      Choosing the source trusts its build commands to run with
-                      the runner account&apos;s macOS permissions.
-                    </FormDescription>
                     {fieldState.isDirty &&
                     currentValues.repository_id &&
                     field.value !== currentValues.repository_id ? (
@@ -287,7 +272,8 @@ export function ProjectSettingsForm({
                             'the selected repository'}{' '}
                           cancels queued or scheduled builds from the old
                           source. Assigned or running builds finish from their
-                          original source.
+                          original source. The new source&apos;s build commands
+                          run with the runner account&apos;s macOS permissions.
                         </AlertDescription>
                       </Alert>
                     ) : null}

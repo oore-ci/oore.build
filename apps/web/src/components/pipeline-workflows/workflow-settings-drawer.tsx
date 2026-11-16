@@ -24,7 +24,6 @@ import {
   Drawer,
   DrawerClose,
   DrawerContent,
-  DrawerDescription,
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
@@ -301,10 +300,6 @@ export function WorkflowSettingsDrawer({
           <DrawerTitle>
             <Mono>{shown?.name}</Mono> settings
           </DrawerTitle>
-          <DrawerDescription>
-            For this pipeline’s builds of the workflow. Anything left to the
-            file follows its signing and publish settings.
-          </DrawerDescription>
         </DrawerHeader>
         <Form {...form}>
           <form
@@ -369,7 +364,13 @@ export function WorkflowSettingsDrawer({
                   name="testflight_groups"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>TestFlight groups</FormLabel>
+                      <FormLabel
+                        hint={
+                          'Names of TestFlight groups, separated by commas. When this workflow uploads to TestFlight, these groups get the build instead of the ones the file or the pipeline name.'
+                        }
+                      >
+                        TestFlight groups
+                      </FormLabel>
                       <FormControl>
                         <Input
                           {...field}
@@ -378,12 +379,6 @@ export function WorkflowSettingsDrawer({
                           autoComplete="off"
                         />
                       </FormControl>
-                      <FormDescription>
-                        Names of TestFlight groups, separated by commas. When
-                        this workflow uploads to TestFlight, these groups get
-                        the build instead of the ones the file or the pipeline
-                        name.
-                      </FormDescription>
                     </FormItem>
                   )}
                 />
@@ -405,7 +400,15 @@ export function WorkflowSettingsDrawer({
                 name="approval"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Approval</FormLabel>
+                    <FormLabel
+                      hint={
+                        canChangeApproval
+                          ? 'Replaces the pipeline’s approval policy for this workflow.'
+                          : 'Only app maintainers and instance admins can change which builds wait for approval.'
+                      }
+                    >
+                      Approval
+                    </FormLabel>
                     <Select
                       value={field.value}
                       onValueChange={(value) =>
@@ -431,11 +434,6 @@ export function WorkflowSettingsDrawer({
                         </SelectGroup>
                       </SelectContent>
                     </Select>
-                    <FormDescription>
-                      {canChangeApproval
-                        ? 'Replaces the pipeline’s approval policy for this workflow.'
-                        : 'Only app maintainers and instance admins can change which builds wait for approval.'}
-                    </FormDescription>
                   </FormItem>
                 )}
               />
