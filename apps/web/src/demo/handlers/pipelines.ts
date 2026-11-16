@@ -23,6 +23,7 @@ import {
   demoSharedKeySummary,
   setDemoSharedKeyUsage,
 } from './store-credentials'
+import { demoAppHasAppStoreKey } from './stores'
 import type { JsonObject } from '@/lib/types'
 import type {
   AppStorePublishConfig,
@@ -135,6 +136,7 @@ const androidSigningInputSchema = z.object({
   store_password: z.string().nullish(),
   key_alias: z.string().nullish(),
   key_password: z.string().nullish(),
+  identity_id: z.string().nullish(),
 })
 const androidSigningRequestSchema =
   z.toZod<UpdatePipelineAndroidSigningRequest>()(
@@ -304,6 +306,7 @@ const appStoreConfigSchema = z.object({
   listing_dir: z.string().nullish(),
   cancel_previous_submission: z.boolean().optional(),
   preflight: z.enum(['auto', 'block', 'warn', 'off']).optional(),
+  upload_with_signing_key: z.boolean().optional(),
 })
 
 const iosSigningSummarySchema = z.object({
@@ -349,7 +352,11 @@ function appStoreResponse(pipelineId: string) {
       phased_release: false,
     },
     updated_at: saved?.updated_at,
-    has_api_key: !!signing.has_api_key || !!signing.shared_api_key_id,
+    has_api_key:
+      (demoAppHasAppStoreKey(pipelineId) &&
+        !saved?.config.upload_with_signing_key) ||
+      !!signing.has_api_key ||
+      !!signing.shared_api_key_id,
     app_store_export:
       (signing.enabled ?? false) && signing.export_method === 'app_store',
   }
@@ -877,7 +884,7 @@ export const pipelineHandlers = [
     }
     if (parsed.data.enabled && !current.has_api_key) {
       return invalidPublishConfig(
-        'App Store publishing needs an App Store Connect API key in iOS signing.',
+        "Connect App Store Connect in the app's Stores, or add an API key in iOS signing, before publishing",
       )
     }
     demoAppStoreConfigs.set(id, {

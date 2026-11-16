@@ -477,10 +477,18 @@ u7FtNIKhMcPaYJ6YVeHr1zsO6PJMj5yCh1gv5ufc+cP0Yj4BubQIax4E
             .unwrap();
         for statement in [
             "CREATE TABLE users (id TEXT PRIMARY KEY)",
-            "CREATE TABLE pipelines (id TEXT PRIMARY KEY)",
+            // Every pipeline here belongs to the app `p1`; generated, so
+            // `INSERT INTO pipelines VALUES ('id')` still works.
+            "CREATE TABLE pipelines (id TEXT PRIMARY KEY, \
+             project_id TEXT GENERATED ALWAYS AS ('p1') VIRTUAL)",
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT)",
+            "CREATE TABLE app_store_release_links \
+             (pipeline_id TEXT, bundle_id TEXT, created_at INTEGER)",
             include_str!("../migrations/014_pipeline_ios_signing.sql"),
             include_str!("../migrations/043_pipeline_publish.sql"),
             include_str!("../migrations/055_app_store_connect_keys.sql"),
+            include_str!("../migrations/100_project_store_connections.sql"),
+            "INSERT INTO projects VALUES ('p1', 'App')",
             "INSERT INTO pipelines VALUES ('pl1'), ('pl2')",
         ] {
             sqlx::raw_sql(statement).execute(&pool).await.unwrap();

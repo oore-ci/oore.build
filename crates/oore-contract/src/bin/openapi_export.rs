@@ -167,6 +167,14 @@ use utoipa::{
         operations::get_pipeline_publish_readiness,
         operations::update_pipeline_google_play_publish,
         operations::test_pipeline_google_play_credentials,
+        // ── App Stores ──
+        operations::get_project_stores,
+        operations::update_project_google_play_connection,
+        operations::delete_project_google_play_connection,
+        operations::test_project_google_play_connection,
+        operations::update_project_app_store_connection,
+        operations::delete_project_app_store_connection,
+        operations::test_project_app_store_connection,
         // ── Store Credentials ──
         operations::list_app_store_connect_keys,
         operations::create_app_store_connect_key,
@@ -530,6 +538,14 @@ use utoipa::{
         oore_contract::RunnerRetryArtifactsResponse,
         oore_contract::PublishStore,
         oore_contract::RunnerPublishResult,
+        // App Stores
+        oore_contract::ProjectGooglePlayConnection,
+        oore_contract::ProjectAppStoreConnection,
+        oore_contract::ProjectStoreOverride,
+        oore_contract::ProjectStoresResponse,
+        oore_contract::UpdateProjectGooglePlayConnectionRequest,
+        oore_contract::UpdateProjectAppStoreConnectionRequest,
+        oore_contract::AppStoreConnectionTestResponse,
         // Store Credentials
         oore_contract::AppStoreConnectKeySummary,
         oore_contract::ListAppStoreConnectKeysResponse,
@@ -835,6 +851,7 @@ use utoipa::{
         (name = "Project Members", description = "Per-project role assignments for granular RBAC."),
         (name = "Pipelines", description = "Pipeline configuration — build platforms, commands, triggers, concurrency."),
         (name = "Pipeline Publishing", description = "Store publishing settings. The runner uploads from its own host after a successful build."),
+        (name = "App Stores", description = "Google Play and App Store Connect, connected once per app. The app's pipelines upload with these connections and only pick a track."),
         (name = "Store Credentials", description = "App Store Connect API keys shared by every pipeline of the instance. Private keys are encrypted at rest and never returned."),
         (name = "Secrets", description = "Write-only secrets scoped to the instance, a project or a pipeline. Values are encrypted at rest, referenced as ${{ secrets.NAME }} and never returned."),
         (name = "Pipeline Signing", description = "Code signing configuration — Android keystores, iOS certificates/profiles."),
@@ -2481,6 +2498,114 @@ mod operations {
         )
     )]
     pub(super) fn test_pipeline_google_play_credentials() {}
+
+    // ── App Stores ──
+
+    /// Get the app's store connections
+    ///
+    /// The Google Play and App Store Connect connections the app's pipelines upload with, and the pipelines that keep their own credentials instead. Requires project read access.
+    #[utoipa::path(get, path = "/v1/projects/{project_id}/stores", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store connections", body = ProjectStoresResponse),
+            (status = 404, description = "App not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_project_stores() {}
+
+    /// Connect Google Play
+    ///
+    /// Sets the service account secret and package the app's pipelines upload with. Requires the manage pipelines project permission.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/stores/google-play", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        request_body = UpdateProjectGooglePlayConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store connections", body = ProjectStoresResponse),
+            (status = 400, description = "Invalid secret name or package", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "App not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_project_google_play_connection() {}
+
+    /// Disconnect Google Play
+    ///
+    /// Refused while a pipeline of the app uploads to Google Play with the app's connection. Requires the manage pipelines project permission.
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/stores/google-play", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store connections", body = ProjectStoresResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "App not found", body = ApiError),
+            (status = 409, description = "Pipelines upload with this connection", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_project_google_play_connection() {}
+
+    /// Test a Google Play connection
+    ///
+    /// Checks the named service account key against Google Play, as the pipeline check does, without saving the settings. Requires the manage pipelines project permission.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/stores/google-play/test", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        request_body = UpdateProjectGooglePlayConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Check result", body = GooglePlayCredentialsTestResponse),
+            (status = 400, description = "Invalid request", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "App not found", body = ApiError),
+        )
+    )]
+    pub(super) fn test_project_google_play_connection() {}
+
+    /// Connect App Store Connect
+    ///
+    /// Sets the stored App Store Connect key and bundle ID the app's pipelines upload with. Requires the manage pipelines project permission.
+    #[utoipa::path(put, path = "/v1/projects/{project_id}/stores/app-store", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        request_body = UpdateProjectAppStoreConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store connections", body = ProjectStoresResponse),
+            (status = 400, description = "Unknown key or invalid bundle ID", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "App not found", body = ApiError),
+        )
+    )]
+    pub(super) fn update_project_app_store_connection() {}
+
+    /// Disconnect App Store Connect
+    ///
+    /// Pipelines fall back to the key in their iOS signing settings. Requires the manage pipelines project permission.
+    #[utoipa::path(delete, path = "/v1/projects/{project_id}/stores/app-store", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Store connections", body = ProjectStoresResponse),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "App not found", body = ApiError),
+        )
+    )]
+    pub(super) fn delete_project_app_store_connection() {}
+
+    /// Test an App Store Connect connection
+    ///
+    /// Signs a token with the key and looks the bundle ID up in App Store Connect, without saving the settings. A rejected key or a missing app is reported with `ok: false`. Requires the manage pipelines project permission.
+    #[utoipa::path(post, path = "/v1/projects/{project_id}/stores/app-store/test", tag = "App Stores",
+        params(("project_id" = String, Path, description = "App ID")),
+        request_body = UpdateProjectAppStoreConnectionRequest,
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Check result", body = AppStoreConnectionTestResponse),
+            (status = 400, description = "Invalid request", body = ApiError),
+            (status = 403, description = "Permission denied", body = ApiError),
+            (status = 404, description = "App not found", body = ApiError),
+        )
+    )]
+    pub(super) fn test_project_app_store_connection() {}
 
     // ── Store Credentials ──
 

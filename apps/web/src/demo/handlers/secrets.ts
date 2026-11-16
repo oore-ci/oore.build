@@ -14,6 +14,7 @@ import {
 import { getDemoPersonaFromRequest, getDemoProjectRole } from '../personas'
 import { ago, PIPELINE_IDS, PROJECT_IDS } from '../seed'
 import { demoState } from '../state'
+import { demoAppPlaySecret } from './stores'
 
 // One set of resolvers serves all three secret scopes, so these match the
 // daemon routes directly instead of using one generated handler per scope.
@@ -51,7 +52,8 @@ const demoPlayConfigs = new Map<
     {
       config: {
         enabled: true,
-        service_account_secret: 'PLAY_SERVICE_ACCOUNT',
+        // Follows the app's Google Play connection.
+        service_account_secret: '',
         track: 'production',
         rollout_percent: 5,
         draft: false,
@@ -91,7 +93,7 @@ function pipelineProjectId(pipelineId: string) {
 }
 
 // Anyone with a role on the project can list its secret names.
-function requireDemoProjectRead(request: Request, projectId: string) {
+export function requireDemoProjectRead(request: Request, projectId: string) {
   const persona = getDemoPersonaFromRequest(request)
   if (persona.role === 'owner' || persona.role === 'admin') return null
   return getDemoProjectRole(persona, projectId)
@@ -243,7 +245,7 @@ function playResponse(pipelineId: string): GooglePlayPublishResponse {
     config: saved?.config,
     updated_at: saved?.updated_at,
     service_account_secret_present: secretVisible(
-      saved?.config.service_account_secret,
+      saved?.config.service_account_secret || demoAppPlaySecret(pipelineId),
       pipelineId,
     ),
     last_credentials_check: demoPlayChecks.get(pipelineId),
@@ -311,7 +313,8 @@ function playCredentialsTest(
 
 const playConfigSchema = z.object({
   enabled: z.boolean(),
-  service_account_secret: z.string().min(1),
+  // Empty follows the app's Google Play connection.
+  service_account_secret: z.string(),
   package_name: z.string().nullish(),
   track: z.string().min(1),
   rollout_percent: z.number().nullish(),
@@ -357,6 +360,19 @@ export const secretHandlersList = [
       if (!parsed.success) {
         return HttpResponse.json(
           { error: parsed.error.message, code: 'invalid_publish_config' },
+          { status: 400 },
+        )
+      }
+      if (
+        !parsed.data.service_account_secret.trim() &&
+        !demoAppPlaySecret(pipelineId)
+      ) {
+        return HttpResponse.json(
+          {
+            error:
+              "service_account_secret is required until the app's Google Play store is connected",
+            code: 'invalid_publish_config',
+          },
           { status: 400 },
         )
       }

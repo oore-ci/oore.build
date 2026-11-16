@@ -9746,6 +9746,488 @@
         ]
       }
     },
+    "/v1/projects/{project_id}/stores": {
+      "get": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Get the app's store connections",
+        "description": "The Google Play and App Store Connect connections the app's pipelines upload with, and the pipelines that keep their own credentials instead. Requires project read access.",
+        "operationId": "get_project_stores",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStoresResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/stores/app-store": {
+      "put": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Connect App Store Connect",
+        "description": "Sets the stored App Store Connect key and bundle ID the app's pipelines upload with. Requires the manage pipelines project permission.",
+        "operationId": "update_project_app_store_connection",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectAppStoreConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Store connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStoresResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown key or invalid bundle ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Disconnect App Store Connect",
+        "description": "Pipelines fall back to the key in their iOS signing settings. Requires the manage pipelines project permission.",
+        "operationId": "delete_project_app_store_connection",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStoresResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/stores/app-store/test": {
+      "post": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Test an App Store Connect connection",
+        "description": "Signs a token with the key and looks the bundle ID up in App Store Connect, without saving the settings. A rejected key or a missing app is reported with `ok: false`. Requires the manage pipelines project permission.",
+        "operationId": "test_project_app_store_connection",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectAppStoreConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppStoreConnectionTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/stores/google-play": {
+      "put": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Connect Google Play",
+        "description": "Sets the service account secret and package the app's pipelines upload with. Requires the manage pipelines project permission.",
+        "operationId": "update_project_google_play_connection",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectGooglePlayConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Store connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStoresResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid secret name or package",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Disconnect Google Play",
+        "description": "Refused while a pipeline of the app uploads to Google Play with the app's connection. Requires the manage pipelines project permission.",
+        "operationId": "delete_project_google_play_connection",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Store connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectStoresResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Pipelines upload with this connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/projects/{project_id}/stores/google-play/test": {
+      "post": {
+        "tags": [
+          "App Stores"
+        ],
+        "summary": "Test a Google Play connection",
+        "description": "Checks the named service account key against Google Play, as the pipeline check does, without saving the settings. Requires the manage pipelines project permission.",
+        "operationId": "test_project_google_play_connection",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "description": "App ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProjectGooglePlayConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GooglePlayCredentialsTestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Permission denied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "App not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
     "/v1/public/setup-status": {
       "get": {
         "tags": [
@@ -17256,6 +17738,34 @@
           }
         }
       },
+      "AppStoreConnectionTestResponse": {
+        "type": "object",
+        "description": "Outcome of an App Store Connect connection test. A failed test is a\nnormal answer, with Apple's reason in `message`.",
+        "required": [
+          "ok",
+          "message",
+          "checked_at"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "checked_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "message": {
+            "type": "string",
+            "description": "What passed, or the exact failure."
+          },
+          "ok": {
+            "type": "boolean"
+          }
+        }
+      },
       "AppStoreDestination": {
         "type": "string",
         "description": "Where an App Store Connect upload goes once Apple finishes processing it.",
@@ -17308,7 +17818,7 @@
       },
       "AppStorePublishConfig": {
         "type": "object",
-        "description": "App Store publishing settings for a pipeline, stored as the `app_store`\npublish target. Uploads use the App Store Connect API key from the\npipeline's iOS signing settings and require the `app_store` export method.",
+        "description": "App Store publishing settings for a pipeline, stored as the `app_store`\npublish target. Uploads use the app's App Store Connect connection (or,\nwithout one or with `upload_with_signing_key`, the API key from the\npipeline's iOS signing settings) and require the `app_store` export method.",
         "required": [
           "enabled",
           "testflight_groups",
@@ -17382,6 +17892,10 @@
               "type": "string"
             },
             "description": "TestFlight group names. Used when `destination` is `testflight`."
+          },
+          "upload_with_signing_key": {
+            "type": "boolean",
+            "description": "Upload with the API key in this pipeline's iOS signing settings\ninstead of the app's App Store Connect connection."
           },
           "uses_non_exempt_encryption": {
             "type": "boolean",
@@ -21557,7 +22071,7 @@
       },
       "GooglePlayPublishConfig": {
         "type": "object",
-        "description": "Per-pipeline Google Play upload settings. Credentials are referenced by\nsecret name and never stored here.",
+        "description": "Per-pipeline Google Play upload settings. Credentials are referenced by\nsecret name and never stored here. An empty `service_account_secret` uses\nthe app's Google Play connection.",
         "required": [
           "service_account_secret",
           "track"
@@ -21591,7 +22105,7 @@
               "string",
               "null"
             ],
-            "description": "Expected application id. When omitted, the AAB's package is used."
+            "description": "Expected application id. When omitted, the app's Google Play\nconnection's package is used, then the AAB's package."
           },
           "preflight": {
             "$ref": "#/components/schemas/PublishPreflight",
@@ -21630,7 +22144,7 @@
           },
           "service_account_secret": {
             "type": "string",
-            "description": "Name of the secret holding the service account JSON key."
+            "description": "Name of the secret holding the service account JSON key. Empty uses\nthe app's Google Play connection."
           },
           "track": {
             "type": "string",
@@ -24627,6 +25141,40 @@
           }
         }
       },
+      "ProjectAppStoreConnection": {
+        "type": "object",
+        "description": "An app's App Store Connect connection: a stored API key and the app's\nbundle ID.",
+        "required": [
+          "key",
+          "updated_at"
+        ],
+        "properties": {
+          "bundle_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "key": {
+            "$ref": "#/components/schemas/AppStoreConnectKeySummary"
+          },
+          "last_check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/AppStoreConnectionTestResponse",
+                "description": "The latest connection test, while the key is unchanged."
+              }
+            ]
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "ProjectBuildInsights": {
         "type": "object",
         "required": [
@@ -24767,6 +25315,46 @@
           "track": {
             "type": "string",
             "description": "Play track (`internal`, `closed`, `open`, `production` or a custom\ntrack), or the App Store release track a store upload records."
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ProjectGooglePlayConnection": {
+        "type": "object",
+        "description": "An app's Google Play connection: the service account key its pipelines\nupload with, and the app's package.",
+        "required": [
+          "service_account_secret",
+          "service_account_secret_present",
+          "updated_at"
+        ],
+        "properties": {
+          "last_check": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/GooglePlayCredentialsTestResponse",
+                "description": "The latest connection test, while the key it checked is still the\none the secret name resolves to."
+              }
+            ]
+          },
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_account_secret": {
+            "type": "string",
+            "description": "Name of the secret holding the service account JSON key, resolved in\nthe app's scope, then the instance's."
+          },
+          "service_account_secret_present": {
+            "type": "boolean",
+            "description": "Whether that secret exists in the app or the instance."
           },
           "updated_at": {
             "type": "integer",
@@ -24955,6 +25543,71 @@
           "testers": {
             "type": "boolean",
             "description": "Someone has viewer access to the app, as testers do."
+          }
+        }
+      },
+      "ProjectStoreOverride": {
+        "type": "object",
+        "description": "A pipeline of the app that uploads with its own credentials instead of\nthe app's connection.",
+        "required": [
+          "pipeline_id",
+          "pipeline_name",
+          "store",
+          "detail"
+        ],
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "What it uses instead, such as the secret name."
+          },
+          "pipeline_id": {
+            "type": "string"
+          },
+          "pipeline_name": {
+            "type": "string"
+          },
+          "store": {
+            "$ref": "#/components/schemas/PublishStore"
+          }
+        }
+      },
+      "ProjectStoresResponse": {
+        "type": "object",
+        "description": "`GET /v1/projects/{project_id}/stores`",
+        "required": [
+          "project_id",
+          "overrides"
+        ],
+        "properties": {
+          "app_store": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProjectAppStoreConnection"
+              }
+            ]
+          },
+          "google_play": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ProjectGooglePlayConnection"
+              }
+            ]
+          },
+          "overrides": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectStoreOverride"
+            },
+            "description": "Pipelines that keep their own credentials."
+          },
+          "project_id": {
+            "type": "string"
           }
         }
       },
@@ -29437,6 +30090,26 @@
           }
         }
       },
+      "UpdateProjectAppStoreConnectionRequest": {
+        "type": "object",
+        "description": "`PUT /v1/projects/{project_id}/stores/app-store`",
+        "required": [
+          "app_store_connect_key_id"
+        ],
+        "properties": {
+          "app_store_connect_key_id": {
+            "type": "string",
+            "description": "A stored App Store Connect key, from `GET /v1/app-store-connect-keys`."
+          },
+          "bundle_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "UpdateProjectEnvironmentRequest": {
         "type": "object",
         "description": "Changes to an environment. The key and store are fixed once created.",
@@ -29494,6 +30167,25 @@
             ]
           }
         }
+      },
+      "UpdateProjectGooglePlayConnectionRequest": {
+        "type": "object",
+        "description": "`PUT /v1/projects/{project_id}/stores/google-play`",
+        "required": [
+          "service_account_secret"
+        ],
+        "properties": {
+          "package_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "service_account_secret": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "UpdateProjectMemberRequest": {
         "type": "object",
@@ -30271,6 +30963,10 @@
     {
       "name": "Pipeline Publishing",
       "description": "Store publishing settings. The runner uploads from its own host after a successful build."
+    },
+    {
+      "name": "App Stores",
+      "description": "Google Play and App Store Connect, connected once per app. The app's pipelines upload with these connections and only pick a track."
     },
     {
       "name": "Store Credentials",

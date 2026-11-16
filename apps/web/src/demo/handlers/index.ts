@@ -20,6 +20,7 @@ import { auditLogHandlers } from './audit-logs'
 import { apiTokenHandlers } from './api-tokens'
 import { secretHandlersList } from './secrets'
 import { storeCredentialHandlers } from './store-credentials'
+import { storeHandlers } from './stores'
 import { signingHandlers } from './signing'
 import { personalHandlers } from './personal'
 import { releaseFreezeHandlers } from './release-freezes'
@@ -49,6 +50,7 @@ export const allHandlers = [
   ...apiTokenHandlers,
   ...secretHandlersList,
   ...storeCredentialHandlers,
+  ...storeHandlers,
   ...signingHandlers,
   ...personalHandlers,
   ...testerHandlers,
