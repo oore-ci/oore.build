@@ -9,7 +9,6 @@ import { SettingsSurfaceSeparator } from '@/components/settings/settings-section
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -182,7 +181,18 @@ export function PipelineBasicsSection({
               name="flutter_version"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Flutter version (optional)</FormLabel>
+                  <FormLabel
+                    hint={
+                      <>
+                        Oore uses <span className="font-mono">.fvmrc</span> when
+                        present, then this value, then stable. VM builds use the
+                        image for that version; host builds use the runner's
+                        installed Flutter.
+                      </>
+                    }
+                  >
+                    Flutter version (optional)
+                  </FormLabel>
                   <FormControl>
                     <Input
                       placeholder="Empty uses .fvmrc or stable"
@@ -190,12 +200,6 @@ export function PipelineBasicsSection({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Oore uses <span className="font-mono">.fvmrc</span> when
-                    present, then this value, then stable. VM builds use the
-                    image for that version; host builds use the runner's
-                    installed Flutter.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -206,7 +210,26 @@ export function PipelineBasicsSection({
               name="build_number_offset"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Build number offset (optional)</FormLabel>
+                  <FormLabel
+                    hint={
+                      <>
+                        Only for a new store number on every build. By default
+                        the store number is the{' '}
+                        <span className="font-mono">+N</span> in{' '}
+                        <span className="font-mono">pubspec.yaml</span>, bumped
+                        for each release. To number every build instead, pass{' '}
+                        <span className="font-mono">
+                          --build-number=$OORE_VERSION_CODE
+                        </span>{' '}
+                        to <span className="font-mono">flutter build</span> and
+                        set this above the store&apos;s highest number;{' '}
+                        <span className="font-mono">OORE_VERSION_CODE</span> is
+                        the build number plus this offset.
+                      </>
+                    }
+                  >
+                    Build number offset (optional)
+                  </FormLabel>
                   <FormControl>
                     <Input
                       inputMode="numeric"
@@ -215,19 +238,6 @@ export function PipelineBasicsSection({
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>
-                    Only for a new store number on every build. By default the
-                    store number is the <span className="font-mono">+N</span> in{' '}
-                    <span className="font-mono">pubspec.yaml</span>, bumped for
-                    each release. To number every build instead, pass{' '}
-                    <span className="font-mono">
-                      --build-number=$OORE_VERSION_CODE
-                    </span>{' '}
-                    to <span className="font-mono">flutter build</span> and set
-                    this above the store&apos;s highest number;{' '}
-                    <span className="font-mono">OORE_VERSION_CODE</span> is the
-                    build number plus this offset.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

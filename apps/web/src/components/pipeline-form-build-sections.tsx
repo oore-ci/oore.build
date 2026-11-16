@@ -21,7 +21,6 @@ import {
 } from '@/components/ui/collapsible'
 import {
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -225,12 +224,6 @@ export function PipelineBuildSection({
           </CollapsibleTrigger>
           <CollapsibleContent>
             <Stack gap={4} className="pt-3">
-              {argumentFields.length > 0 ? (
-                <Text variant="muted">
-                  Each line is appended to the platform&apos;s default Flutter
-                  build command.
-                </Text>
-              ) : null}
               {argumentFields.map(([name, label]) => (
                 <FormField
                   key={name}
@@ -316,7 +309,6 @@ export function PipelineBuildSection({
                   {...field}
                 />
               </FormControl>
-              <FormDescription>One KEY=VALUE per line.</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -358,10 +350,6 @@ export function PipelineBuildSection({
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                One glob per line, relative to the repository root. Empty uses
-                the platform defaults.
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -394,7 +382,9 @@ function RunnerSubsection() {
         name="isolation"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Isolation</FormLabel>
+            <FormLabel hint={ISOLATION_EFFECTS[field.value]}>
+              Isolation
+            </FormLabel>
             <Select
               value={field.value}
               onValueChange={field.onChange}
@@ -415,7 +405,6 @@ function RunnerSubsection() {
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <FormDescription>{ISOLATION_EFFECTS[field.value]}</FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -425,7 +414,23 @@ function RunnerSubsection() {
         name="runs_on"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Runner labels (optional)</FormLabel>
+            <FormLabel
+              hint={
+                <>
+                  Comma-separated. A build waits for a runner that has every
+                  label. Empty means <span className="font-mono">macos</span>.
+                  {knownLabels ? (
+                    <>
+                      {' '}
+                      Connected runners report:{' '}
+                      <span className="font-mono">{knownLabels}</span>.
+                    </>
+                  ) : null}
+                </>
+              }
+            >
+              Runner labels (optional)
+            </FormLabel>
             <FormControl>
               <Input
                 placeholder="macos, xcode-16"
@@ -433,17 +438,6 @@ function RunnerSubsection() {
                 {...field}
               />
             </FormControl>
-            <FormDescription>
-              Comma-separated. A build waits for a runner that has every label.
-              Empty means <span className="font-mono">macos</span>.
-              {knownLabels ? (
-                <>
-                  {' '}
-                  Connected runners report:{' '}
-                  <span className="font-mono">{knownLabels}</span>.
-                </>
-              ) : null}
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}
@@ -470,7 +464,7 @@ function CommandField({
       name={name}
       render={({ field }) => (
         <FormItem>
-          <FormLabel>{label}</FormLabel>
+          <FormLabel hint={description}>{label}</FormLabel>
           <FormControl>
             <Textarea
               placeholder={placeholder}
@@ -478,9 +472,6 @@ function CommandField({
               {...field}
             />
           </FormControl>
-          {description ? (
-            <FormDescription>{description}</FormDescription>
-          ) : null}
           <FormMessage />
         </FormItem>
       )}

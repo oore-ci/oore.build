@@ -163,10 +163,7 @@ function NotificationSettingsPage() {
   return (
     <PageLayout>
       <PageMeta title="Your notifications" noindex />
-      <PageHeader
-        title="Your notifications"
-        description="What reaches you, and how. Channels under Settings > Notifications still post for the whole team."
-      />
+      <PageHeader title="Your notifications" />
       {!data ? (
         <Skeleton className="h-96 w-full" />
       ) : (
@@ -177,9 +174,6 @@ function NotificationSettingsPage() {
                 <Row gap={4} className="items-start justify-between">
                   <Stack gap={0.5} className="min-w-0">
                     <Label>Builds you start</Label>
-                    <Text variant="muted">
-                      Builds you run from Oore, the CLI or the API.
-                    </Text>
                   </Stack>
                   <Select
                     value={data.preferences.my_builds}

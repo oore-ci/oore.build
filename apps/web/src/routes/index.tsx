@@ -54,8 +54,6 @@ import { useListNavigation } from '@/hooks/use-list-navigation'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
 import { Text } from '@/components/layout/text'
-import { useBuildScope } from '@/stores/build-scope-store'
-import { BuildScopeToggle } from '@/components/build-scope-toggle'
 
 const SetupChecklist = lazy(() => import('@/components/setup-checklist'))
 const ReleaseBoard = lazy(() =>
@@ -408,10 +406,9 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
     },
   )
 
-  const buildScope = useBuildScope()
   const recentBuildsQuery = useBuilds(
-    { limit: 50, mine: buildScope.scope === 'mine' || undefined },
-    { select: selectDashboardBuilds, enabled: buildScope.resolved },
+    { limit: 50 },
+    { select: selectDashboardBuilds },
   )
   const activeBuilds = recentBuildsQuery.data?.active ?? []
   const recentCompletedBuilds = recentBuildsQuery.data?.recentCompleted ?? []
@@ -451,7 +448,6 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
   if (
     projectsQuery.isLoading ||
     recentBuildsQuery.isLoading ||
-    !buildScope.resolved ||
     runnersQuery.isLoading
   ) {
     return (
@@ -517,17 +513,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
                 })
               : undefined
           }
-          actions={
-            !hasProjects ? undefined : (
-              <>
-                <BuildScopeToggle
-                  scope={buildScope.scope}
-                  onChange={buildScope.setScope}
-                />
-                {homeRunBuild}
-              </>
-            )
-          }
+          actions={hasProjects ? homeRunBuild : undefined}
         />
 
         {!projectsQuery.isLoading &&
@@ -542,9 +528,7 @@ function ConfiguredDashboard({ runtimeMode }: { runtimeMode: RuntimeMode }) {
         ) : null}
 
         {hasProjects &&
-        (guidedProjectId ||
-          (buildScope.scope === 'all' &&
-            recentBuildsQuery.data?.builds.length === 0)) ? (
+        (guidedProjectId || recentBuildsQuery.data?.builds.length === 0) ? (
           <Suspense fallback={<Skeleton className="h-16 w-full" />}>
             <SetupChecklist
               projectId={guidedProjectId ?? projects[0].id}

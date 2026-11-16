@@ -1,18 +1,10 @@
 import { useId } from 'react'
-import { HugeiconsIcon } from '@hugeicons/react'
-import { InformationCircleIcon } from '@hugeicons/core-free-icons'
-
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
+import { InfoHint } from '@/components/ui/info-hint'
 import { Separator } from '@/components/ui/separator'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
-import { stackVariants } from '@/lib/recipes'
+import { stackVariants, textVariants } from '@/lib/recipes'
 
 export function SettingsSurface({
   className,
@@ -63,11 +55,7 @@ export function warnLongHint(component: string, hint?: string) {
   )
 }
 
-/**
- * One sentence of help behind an info icon beside a heading. It opens on
- * hover and on keyboard focus, so the sentence is there when someone wants
- * it and the heading row stays one line otherwise.
- */
+/** One sentence of help behind an info icon beside a heading. */
 export function SectionHint({
   children,
   label,
@@ -76,26 +64,7 @@ export function SectionHint({
   /** The heading the hint belongs to, for the icon's accessible name. */
   label: string
 }) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="-my-1 text-muted-foreground"
-          />
-        }
-      >
-        <HugeiconsIcon icon={InformationCircleIcon} />
-        <span className="sr-only">About {label}</span>
-      </TooltipTrigger>
-      <TooltipContent side="top" align="start" className="text-pretty">
-        {children}
-      </TooltipContent>
-    </Tooltip>
-  )
+  return <InfoHint label={label}>{children}</InfoHint>
 }
 
 /** The heading row shared by sections and subsections. */
@@ -128,7 +97,14 @@ export function SectionHeading({
         </Heading>
         {hint ? <SectionHint label={title}>{hint}</SectionHint> : null}
         {meta ? (
-          <span className="ms-0.5 inline-flex items-center gap-2">{meta}</span>
+          <span
+            className={cn(
+              textVariants({ variant: 'muted' }),
+              'ms-0.5 inline-flex flex-wrap items-center gap-x-1.5 gap-y-1',
+            )}
+          >
+            {meta}
+          </span>
         ) : null}
       </div>
       {status ? (

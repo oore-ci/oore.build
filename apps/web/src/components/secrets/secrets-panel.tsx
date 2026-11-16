@@ -26,6 +26,7 @@ import {
 } from '@/components/settings/settings-section'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { InfoHint } from '@/components/ui/info-hint'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,8 +55,8 @@ import {
 } from '@/components/ui/item'
 import { Skeleton } from '@/components/ui/skeleton'
 import { SecretValueDialog } from './secret-value-dialog'
+import { Row } from '@/components/layout/row'
 import { Stack } from '@/components/layout/stack'
-import { Text } from '@/components/layout/text'
 
 const SCOPE_LABEL = {
   instance: 'Instance',
@@ -312,13 +313,13 @@ export function SecretsPanel({
 
       {visibleInherited.length > 0 ? (
         <Stack gap={3}>
-          <Stack gap={1}>
+          <Row gap={1}>
             <h3 className="text-sm font-medium">{inheritedHeading}</h3>
-            <Text variant="muted">
-              Builds here can use these too. Manage them where they are stored;
-              a secret above with the same name overrides them.
-            </Text>
-          </Stack>
+            <InfoHint label={inheritedHeading}>
+              Builds here can use these too. A secret above with the same name
+              overrides them.
+            </InfoHint>
+          </Row>
           <RowList>
             {visibleInherited.map((secret) => {
               const overridden = ownNames.has(secret.name)

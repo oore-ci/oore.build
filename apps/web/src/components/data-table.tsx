@@ -133,10 +133,13 @@ export function DataTableColumnHeader<
 }
 
 export function DataTableSelectFilter({
+  contentClassName = 'w-44',
   onValueChange,
   options,
   value,
 }: {
+  /** Widen the menu when the options are long, such as email addresses. */
+  contentClassName?: string
   onValueChange: (value: string) => void
   options: Readonly<Record<string, string>>
   value: string
@@ -147,7 +150,7 @@ export function DataTableSelectFilter({
         {options[value] ?? value}
         <HugeiconsIcon icon={ArrowDown01Icon} aria-hidden />
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-44">
+      <DropdownMenuContent align="end" className={contentClassName}>
         <DropdownMenuRadioGroup value={value} onValueChange={onValueChange}>
           {Object.entries(options).map(([optionValue, label]) => (
             <DropdownMenuRadioItem key={optionValue} value={optionValue}>

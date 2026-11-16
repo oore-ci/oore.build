@@ -336,7 +336,13 @@ function IosSigningIdentityFields({
         name="ios_signing_bundle_ids"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>Bundle identifiers</FormLabel>
+            <FormLabel
+              hint={
+                'Main bundle first, then optional extension bundle IDs (one per line or comma-separated).'
+              }
+            >
+              Bundle identifiers
+            </FormLabel>
             <FormControl>
               <Textarea
                 placeholder={'com.example.app\ncom.example.app.share-extension'}
@@ -345,10 +351,6 @@ function IosSigningIdentityFields({
                 {...field}
               />
             </FormControl>
-            <FormDescription>
-              Main bundle first, then optional extension bundle IDs (one per
-              line or comma-separated).
-            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

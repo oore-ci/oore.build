@@ -6550,15 +6550,65 @@ pub struct RetentionCleanupSummaryResponse {
 
 // ── Audit Logs ──────────────────────────────────────────────────
 
+/// The kind of activity an audit entry records. The audit log filters on it.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditLogCategory {
+    /// Sign-ins, users, roles, app members and API tokens.
+    Access,
+    /// Builds, install links, testers, releases and promotions.
+    Builds,
+    /// Apps, pipelines, signing, runners, sources and instance settings.
+    #[default]
+    Settings,
+    /// Housekeeping Oore runs on its own, such as cleanups.
+    System,
+}
+
+impl AuditLogCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Access => "access",
+            Self::Builds => "builds",
+            Self::Settings => "settings",
+            Self::System => "system",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct AuditLogEntry {
     pub id: i64,
     pub actor_id: Option<String>,
     pub actor_email: Option<String>,
+    /// The actor's display name, when they have one.
+    #[serde(default)]
+    pub actor_name: Option<String>,
     pub action: String,
+    #[serde(default)]
+    pub category: AuditLogCategory,
     pub resource_type: String,
     pub resource_id: Option<String>,
     pub details: Option<String>,
+    /// The app the entry is about, when it still exists.
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_name: Option<String>,
+    /// The pipeline the entry is about, when it still exists.
+    #[serde(default)]
+    pub pipeline_id: Option<String>,
+    #[serde(default)]
+    pub pipeline_name: Option<String>,
+    /// The build the entry is about, when it still exists.
+    #[serde(default)]
+    pub build_id: Option<String>,
+    #[serde(default)]
+    pub build_number: Option<i64>,
+    /// Current names of the records this entry refers to, keyed by the ids
+    /// found in `resource_id` and `details`. Deleted records are absent.
+    #[serde(default)]
+    pub names: std::collections::BTreeMap<String, String>,
     pub created_at: i64,
 }
 
@@ -6566,6 +6616,24 @@ pub struct AuditLogEntry {
 pub struct ListAuditLogsResponse {
     pub entries: Vec<AuditLogEntry>,
     pub total: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AuditLogActivityDay {
+    /// Calendar day in the caller's time zone, `YYYY-MM-DD`.
+    pub date: String,
+    pub count: i64,
+}
+
+/// Audit activity over the most recent days, oldest day first.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct AuditLogActivityResponse {
+    pub days: Vec<AuditLogActivityDay>,
+    pub total: i64,
+    /// People who did at least one thing in the window.
+    pub actors: i64,
+    /// Entries that record something blocked or failed.
+    pub problems: i64,
 }
 
 // ── Tests ──────────────────────────────────────────────────────

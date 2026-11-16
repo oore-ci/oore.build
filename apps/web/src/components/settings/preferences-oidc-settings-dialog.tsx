@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -14,7 +13,6 @@ import {
 import {
   Form,
   FormControl,
-  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -49,13 +47,6 @@ export default function OidcSettingsDialog({
               ? 'Update OIDC provider'
               : 'Configure OIDC for External Access'}
           </DialogTitle>
-          <DialogDescription>
-            Owner-only. This updates runtime OIDC settings used by External
-            Access sign-in.
-            {oidcConfig?.has_client_secret ? (
-              <> Leave the secret field empty to keep the existing secret.</>
-            ) : null}
-          </DialogDescription>
         </DialogHeader>
 
         <Form {...form}>
@@ -77,10 +68,6 @@ export default function OidcSettingsDialog({
                       className="w-full"
                     />
                   </FormControl>
-                  <FormDescription>
-                    Pick a common provider or enter a custom issuer URL.
-                    Template entries must be edited before saving.
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -109,7 +96,15 @@ export default function OidcSettingsDialog({
               name="client_secret"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Client secret (optional)</FormLabel>
+                  <FormLabel
+                    hint={
+                      oidcConfig?.has_client_secret
+                        ? 'Leave empty to keep the existing secret. Enter a new value to rotate.'
+                        : 'Leave empty when the provider uses a public client.'
+                    }
+                  >
+                    Client secret (optional)
+                  </FormLabel>
                   <FormControl>
                     <Input
                       type="password"
@@ -122,11 +117,6 @@ export default function OidcSettingsDialog({
                       disabled={isSaving}
                     />
                   </FormControl>
-                  <FormDescription>
-                    {oidcConfig?.has_client_secret
-                      ? 'Leave empty to keep the existing secret. Enter a new value to rotate.'
-                      : 'Leave empty when the provider uses a public client.'}
-                  </FormDescription>
                   <FormMessage />
                 </FormItem>
               )}

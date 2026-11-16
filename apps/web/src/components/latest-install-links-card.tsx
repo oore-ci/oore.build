@@ -191,9 +191,6 @@ export function LatestInstallLinksCard({
         <Row gap={3} className="justify-between pb-3">
           <div className="min-w-0">
             <h3 className="text-sm font-medium">Latest-build links</h3>
-            <Text variant="caption">
-              One link that always installs the newest build.
-            </Text>
           </div>
           {canWrite ? (
             <Button

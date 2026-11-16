@@ -4,7 +4,6 @@ import { createFileRoute, useSearch } from '@tanstack/react-router'
 import { searchChoice, searchNumber, searchString } from '@/lib/search-input'
 import type { SearchInput } from '@/lib/search-input'
 
-import type { SortDirection } from '@/components/data-table-features'
 import { DataTableSelectFilter } from '@/components/data-table'
 import {
   DateRangeFilter,
@@ -20,69 +19,45 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { useAuditLogs } from '@/hooks/use-audit-logs'
+import { useAuditLogActivity, useAuditLogs } from '@/hooks/use-audit-logs'
+import { useUsers } from '@/hooks/use-auth'
 import { usePageClamp } from '@/hooks/use-page-clamp'
 import {
   getActiveInstanceOrRedirect,
   requireInstanceRoleOrRedirect,
 } from '@/lib/instance-context'
 import { PageMeta } from '@/lib/seo'
-import { AuditLogCollection } from './-audit-log-collection'
-import type { AuditSort } from './-audit-log-collection'
+import { AuditLogActivity } from './-audit-log-activity'
+import { AUDIT_KINDS, AuditLogCollection } from './-audit-log-collection'
+import type { AuditKind } from './-audit-log-collection'
 
 interface AuditLogSearch {
-  direction?: SortDirection
+  actor?: string
   from?: string
+  kind?: Exclude<AuditKind, 'all'>
   page?: number
   pageSize?: 20 | 50 | 100
   q?: string
-  resource?: string
-  sort?: AuditSort
   to?: string
 }
 
-const RESOURCE_TYPE_OPTIONS = {
-  all: 'All resources',
-  user: 'User',
-  build: 'Build',
-  project: 'App',
-  pipeline: 'Pipeline',
-  integration: 'Source',
-  instance_settings: 'Settings',
-  runner: 'Runner',
-  artifact: 'Artifact',
-  auth: 'Auth',
-} satisfies Record<string, string>
+const ACTIVITY_DAYS = 14
 
-const AUDIT_SORT_VALUES = new Set<AuditSort>([
-  'created_at',
-  'actor_email',
-  'action',
-  'resource_type',
-])
+const KIND_VALUES = new Set(
+  AUDIT_KINDS.map((kind) => kind.value).filter((kind) => kind !== 'all'),
+)
 
 function parseSearch(search: SearchInput): AuditLogSearch {
   const page = searchNumber(search, 'page')
   const pageSize = searchNumber(search, 'pageSize')
   const q = searchString(search, 'q')?.trim() ?? ''
-  const resourceValue = searchString(search, 'resource')
-  const resource =
-    resourceValue &&
-    resourceValue !== 'all' &&
-    resourceValue in RESOURCE_TYPE_OPTIONS
-      ? resourceValue
-      : undefined
-  const sort = searchChoice(search, 'sort', AUDIT_SORT_VALUES)
-  const direction = searchString(search, 'direction')
 
   return {
     q: q || undefined,
-    resource,
+    kind: searchChoice(search, 'kind', KIND_VALUES),
+    actor: searchString(search, 'actor') || undefined,
     from: validSearchDate(searchString(search, 'from')),
     to: validSearchDate(searchString(search, 'to')),
-    sort,
-    direction:
-      direction === 'asc' || direction === 'desc' ? direction : undefined,
     page: Number.isInteger(page) && page > 1 ? page : undefined,
     pageSize: pageSize === 50 || pageSize === 100 ? pageSize : undefined,
   }
@@ -107,8 +82,6 @@ function AuditLogPage() {
   const search = useSearch({ from: '/settings/audit-log' })
   const page = search.page ?? 1
   const pageSize = search.pageSize ?? 20
-  const sort = search.sort ?? 'created_at'
-  const direction = search.direction ?? 'desc'
   const fromTs = search.from
     ? Math.floor(new Date(`${search.from}T00:00:00`).getTime() / 1000)
     : undefined
@@ -119,20 +92,34 @@ function AuditLogPage() {
   const auditQuery = useAuditLogs({
     limit: pageSize,
     offset: (page - 1) * pageSize,
-    resource_type: search.resource,
-    action: search.q,
+    q: search.q,
+    category: search.kind,
+    actor_id: search.actor,
     from_ts: fromTs,
     to_ts: toTs,
-    sort,
-    direction,
   })
+  const activityQuery = useAuditLogActivity(ACTIVITY_DAYS)
+  const usersQuery = useUsers()
 
   const entries = auditQuery.data?.entries ?? []
   const total = auditQuery.data?.total ?? 0
   const hasFilters =
-    !!search.q || !!search.resource || !!search.from || !!search.to
+    !!search.q ||
+    !!search.kind ||
+    !!search.actor ||
+    !!search.from ||
+    !!search.to
   const showTrueEmpty =
     !auditQuery.isLoading && !auditQuery.error && total === 0 && !hasFilters
+
+  const people = Object.fromEntries([
+    ['all', 'Everyone'],
+    ...(usersQuery.data?.users ?? []).map((user) => [
+      user.id,
+      user.display_name || user.email,
+    ]),
+    ['system', 'Oore'],
+  ])
 
   function updateSearch(updates: Partial<AuditLogSearch>) {
     void navigate({
@@ -148,24 +135,32 @@ function AuditLogPage() {
   function clearFilters() {
     updateSearch({
       q: undefined,
-      resource: undefined,
+      kind: undefined,
+      actor: undefined,
       from: undefined,
       to: undefined,
       page: undefined,
     })
   }
 
-  function handleSortChange(nextSort: AuditSort, next: SortDirection) {
-    updateSearch({ sort: nextSort, direction: next, page: undefined })
-  }
-
   return (
-    <PageLayout width="wide" fill>
+    <PageLayout width="wide">
       <PageMeta title="Audit log" noindex />
       <PageHeader title="Audit log" />
 
+      {showTrueEmpty || activityQuery.error ? null : (
+        <AuditLogActivity
+          activity={activityQuery.data}
+          selectedDay={
+            search.from && search.from === search.to ? search.from : undefined
+          }
+          onSelectDay={(date) =>
+            updateSearch({ from: date, to: date, page: undefined })
+          }
+        />
+      )}
+
       <AuditLogCollection
-        direction={direction}
         emptyState={
           showTrueEmpty ? (
             <Empty className="border bg-card">
@@ -184,17 +179,18 @@ function AuditLogPage() {
         entries={entries}
         error={auditQuery.error}
         activeFilterCount={
-          Number(!!search.resource) + Number(!!(search.from || search.to))
+          Number(!!search.actor) + Number(!!(search.from || search.to))
         }
         onClearFilters={clearFilters}
         filters={
           <>
             <DataTableSelectFilter
-              value={search.resource ?? 'all'}
-              options={RESOURCE_TYPE_OPTIONS}
+              value={search.actor ?? 'all'}
+              options={people}
+              contentClassName="w-64"
               onValueChange={(value) =>
                 updateSearch({
-                  resource: value && value !== 'all' ? value : undefined,
+                  actor: value && value !== 'all' ? value : undefined,
                   page: undefined,
                 })
               }
@@ -211,6 +207,13 @@ function AuditLogPage() {
         isFiltered={hasFilters}
         isLoading={auditQuery.isLoading}
         isRefreshing={auditQuery.isFetching && !auditQuery.isLoading}
+        kind={search.kind ?? 'all'}
+        onKindChange={(kind) =>
+          updateSearch({
+            kind: kind === 'all' ? undefined : kind,
+            page: undefined,
+          })
+        }
         onPageChange={(nextPage) =>
           updateSearch({ page: nextPage > 1 ? nextPage : undefined })
         }
@@ -218,11 +221,11 @@ function AuditLogPage() {
         onSearch={(value) =>
           updateSearch({ q: value.trim() || undefined, page: undefined })
         }
-        onSortChange={handleSortChange}
+        onShowActor={(actor) => updateSearch({ actor, page: undefined })}
+        onShowApp={(name) => updateSearch({ q: name, page: undefined })}
         page={page}
         pageSize={pageSize}
         query={search.q ?? ''}
-        sort={sort}
         total={total}
       />
     </PageLayout>
