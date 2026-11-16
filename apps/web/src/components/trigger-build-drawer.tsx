@@ -422,7 +422,6 @@ function defaults(
     commit_sha: '',
     workflow: '',
     changelog: undefined,
-    store_notes: '',
   }
 }
 
@@ -743,7 +742,6 @@ export default function TriggerBuildDrawer({
           commit_sha: commitSha,
           trigger_ref: branch,
           changelog,
-          store_notes: data.store_notes?.trim() || undefined,
           workflow,
           platforms: buildPlatforms(availablePlatforms, data.platforms),
           rehearsal: rehearsal || undefined,
@@ -1218,9 +1216,7 @@ export default function TriggerBuildDrawer({
               />
               {selectedPipelineId ? (
                 <TriggerBuildStoreSection
-                  form={form}
                   pipelineId={selectedPipelineId}
-                  changelogMarkdown={changelogPreviewQuery.data?.markdown}
                   enabled={open}
                   filePublishes={chosenWorkflow?.publishes ?? []}
                 />

@@ -27,6 +27,8 @@ struct PlayTarget {
     service_account_json: Zeroizing<String>,
     package_name: String,
     version_code: i64,
+    /// The Play language the pipeline's notes are written in.
+    notes_language: String,
 }
 
 /// A pipeline's Google Play settings with the service account key they name.
@@ -100,6 +102,7 @@ impl PlayReleaseStoreClient {
             service_account_json,
             package_name,
             version_code,
+            notes_language: config.release_notes_locale,
         })
     }
 
@@ -137,6 +140,9 @@ impl PlayReleaseStoreClient {
             &oore_google_play::play_track_name(target.track),
             play.version_code,
             target.fraction,
+            target
+                .release_notes
+                .map(|notes| (notes, play.notes_language.as_str())),
         )
         .await
     }
@@ -231,6 +237,8 @@ async fn promote_on_edit(
     to_track: &str,
     version_code: i64,
     fraction: Option<f64>,
+    // The version's notes and the Play language to send them under.
+    notes: Option<(&oore_contract::VersionReleaseNotes, &str)>,
 ) -> anyhow::Result<()> {
     let staged = async {
         let from = edits.get_track(from_track).await?;
@@ -247,9 +255,18 @@ async fn promote_on_edit(
             version_codes: vec![version_code],
             status,
             user_fraction,
-            release_notes: template
-                .as_ref()
-                .map_or_default(|release| release.release_notes.clone()),
+            release_notes: match notes {
+                Some((notes, language)) => promoted_play_notes(
+                    notes,
+                    language,
+                    template
+                        .as_ref()
+                        .map(|release| release.release_notes.as_slice()),
+                ),
+                None => template
+                    .as_ref()
+                    .map_or_default(|release| release.release_notes.clone()),
+            },
             in_app_update_priority: template.and_then(|release| release.in_app_update_priority),
         };
         edits.update_track(to_track, &release).await
@@ -451,7 +468,7 @@ mod tests {
     async fn a_refused_promotion_deletes_the_edit() {
         let http = reqwest::Client::new();
         let (edits, server) = open_edit(&http, vec![OPEN_EDIT, INTERNAL, REFUSED, DELETED]).await;
-        let error = promote_on_edit(&edits, "internal", "alpha", 22, Some(0.1))
+        let error = promote_on_edit(&edits, "internal", "alpha", 22, Some(0.1), None)
             .await
             .unwrap_err();
         assert!(
@@ -469,7 +486,7 @@ mod tests {
         let http = reqwest::Client::new();
         let (edits, server) =
             open_edit(&http, vec![OPEN_EDIT, INTERNAL, (200, "{}"), (200, "{}")]).await;
-        promote_on_edit(&edits, "internal", "production", 22, Some(0.1))
+        promote_on_edit(&edits, "internal", "production", 22, Some(0.1), None)
             .await
             .unwrap();
         let seen = server.await.unwrap();
@@ -549,5 +566,69 @@ mod tests {
             observation(&[release(ReleaseStatus::Halted, &[22], Some(0.1))], 22),
             StoreObservation::Halted
         );
+    }
+}
+
+/// Play's longest release notes per language.
+const PLAY_NOTES_CHARS: usize = 500;
+
+/// The version's notes for a Play promotion: its default text in the
+/// pipeline's notes language, replacing that language's notes on the source
+/// track and keeping the others.
+fn promoted_play_notes(
+    notes: &oore_contract::VersionReleaseNotes,
+    language: &str,
+    template: Option<&[oore_google_play::LocalizedText]>,
+) -> Vec<oore_google_play::LocalizedText> {
+    let mut out: Vec<oore_google_play::LocalizedText> = template
+        .unwrap_or_default()
+        .iter()
+        .filter(|note| note.language != language)
+        .cloned()
+        .collect();
+    let text: String = notes.text.trim().chars().take(PLAY_NOTES_CHARS).collect();
+    if !text.is_empty() {
+        out.insert(
+            0,
+            oore_google_play::LocalizedText {
+                language: language.to_string(),
+                text,
+            },
+        );
+    }
+    out
+}
+
+#[cfg(test)]
+mod promoted_notes_tests {
+    use super::*;
+
+    #[test]
+    fn the_version_notes_replace_their_language_only() {
+        let notes = oore_contract::VersionReleaseNotes {
+            project_id: "p".into(),
+            version_name: "2.5.1".into(),
+            text: "Faster sync".into(),
+            locales: Vec::new(),
+            source: oore_contract::ReleaseNotesSource::Manual,
+            source_path: None,
+            drafted_since: None,
+            updated_at: 0,
+            updated_by: None,
+        };
+        let template = vec![
+            oore_google_play::LocalizedText {
+                language: "en-US".into(),
+                text: "Old".into(),
+            },
+            oore_google_play::LocalizedText {
+                language: "de-DE".into(),
+                text: "Alt".into(),
+            },
+        ];
+        let out = promoted_play_notes(&notes, "en-US", Some(&template));
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "Faster sync");
+        assert_eq!(out[1].language, "de-DE");
     }
 }

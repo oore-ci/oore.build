@@ -60,12 +60,16 @@ it before you can publish updates.
    **Android command override**, enter:
 
    ```bash
-   flutter build appbundle --release --build-number=$OORE_VERSION_CODE
+   flutter build appbundle --release
    ```
 
    Oore's default Android command builds an APK. This command builds the App
-   Bundle that Google Play needs instead. `$OORE_VERSION_CODE` gives every
-   build a higher version code than the last, which Google Play requires.
+   Bundle that Google Play needs instead. The version code comes from the
+   number after `+` in `pubspec.yaml`'s `version`, such as `12` in
+   `2.5.1+12`. Google Play needs a higher one for each upload, so bump it in
+   a commit for each store release. QA builds of one release can share it.
+   To give every build a new number instead, see
+   [Version codes](/reference/config/oore-yaml#version-codes).
 
 5. Select **Create pipeline**.
 

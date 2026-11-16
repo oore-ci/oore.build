@@ -469,6 +469,7 @@ export function ProjectEnvironmentsTab({
           onOpenChange={(open) => {
             if (!open) setPromoting(undefined)
           }}
+          canEditNotes={canManage}
           canPromoteDirectly={canManage}
           environments={environments}
           projectId={projectId}

@@ -97,9 +97,9 @@ const RELEASE_TYPES = {
   draft: 'Draft',
 } as const
 
+// "none" is no longer offered: a version without notes sends none anyway.
 const RELEASE_NOTES = {
-  none: 'None',
-  changelog: 'Build changelog',
+  changelog: 'The version’s release notes',
   repo_files: 'Files in the repository',
 } as const
 
@@ -241,7 +241,8 @@ function toFormValues(
         ? 'staged'
         : 'full',
     rollout_percent: percent != null && percent < 100 ? String(percent) : '5',
-    release_notes: config?.release_notes ?? 'changelog',
+    release_notes:
+      config?.release_notes === 'repo_files' ? 'repo_files' : 'changelog',
     release_notes_locale: config?.release_notes_locale ?? 'en-US',
     release_notes_dir: config?.release_notes_dir ?? '',
     listing_dir: config?.listing_dir ?? '',
@@ -314,7 +315,7 @@ function describeEffect(values: EffectValues) {
         : 'and released to everyone on that track'
   const notes =
     values.release_notes === 'changelog'
-      ? ` The build changelog becomes the ${values.release_notes_locale || 'en-US'} release notes.`
+      ? ` The version’s release notes go with it in ${values.release_notes_locale || 'en-US'}.`
       : values.release_notes === 'repo_files'
         ? ` Release notes come from ${values.release_notes_dir || 'a repository directory'}.`
         : ''
@@ -673,11 +674,9 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
                 </SelectContent>
               </Select>
               <FormDescription>
-                {field.value === 'none'
-                  ? 'Users see no “What’s new” text for this release.'
-                  : field.value === 'changelog'
-                    ? 'The build changelog, shortened to Play’s 500-character limit.'
-                    : 'One <locale>.txt file per language, such as en-US.txt.'}
+                {field.value === 'repo_files'
+                  ? 'One <locale>.txt file per language, such as en-US.txt.'
+                  : 'Written once per app version on the build page, or read from a changelog in .oore.yaml. Play shows the first 500 characters; a version without notes sends none.'}
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -689,7 +688,7 @@ function ReleaseFields({ form }: { form: UseFormReturn<FormValues> }) {
             name="release_notes_locale"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Language</FormLabel>
+                <FormLabel>Language of the notes</FormLabel>
                 <FormControl>
                   <Input className="font-mono" placeholder="en-US" {...field} />
                 </FormControl>

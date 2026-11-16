@@ -34,9 +34,6 @@ commands:
 platform_build_args:
   android:
     - '--split-per-abi'
-    - '--build-number=$OORE_VERSION_CODE'
-
-build_number_offset: 4000
 
 env:
   - key: BUILD_FLAVOR
@@ -126,12 +123,35 @@ are scrubbed from repository command stages.
 
 ## Version codes
 
-Every build gets `OORE_VERSION_CODE`, which is the app build number plus
-`build_number_offset`. The app build number starts at 1 and has no relation
-to the Google Play `versionCode` or Apple `CFBundleVersion` an app already
-shipped, so set the offset above the highest version code the store holds
-before the first upload. Pass the value to Flutter with
-`--build-number=$OORE_VERSION_CODE`.
+Oore never changes an app's version code unless a build command asks it to.
+There are two ways to number builds.
+
+**From `pubspec.yaml` (the default).** The store version code is the number
+after `+` in `version`, such as `12` in `2.5.1+12`. Bump it in a commit for
+each store release. QA builds of one release can share a number, and Oore's
+own build number (#41, #42) tells them apart on the install page and in
+tester emails. When a store refuses a number it already has, Oore says to
+bump `pubspec.yaml`.
+
+**A new number on every build.** Every build gets `OORE_VERSION_CODE`, which
+is Oore's build number plus `build_number_offset`. Oore's build number starts
+at 1 and has no relation to the Google Play `versionCode` or Apple
+`CFBundleVersion` an app already shipped, so set the offset above the
+highest version code the store holds before the first upload. Pass the value
+to Flutter:
+
+```yaml
+platform_build_args:
+  android:
+    - '--build-number=$OORE_VERSION_CODE'
+  ios:
+    - '--build-number=$OORE_VERSION_CODE'
+
+build_number_offset: 4000
+```
+
+Either way, a build shows the version name and number the built app carries,
+read from the App Bundle or the signed IPA.
 
 The offset must be between 0 and 2,099,999,999, and a build fails before its
 commands run when the sum exceeds 2,100,000,000, the highest version code

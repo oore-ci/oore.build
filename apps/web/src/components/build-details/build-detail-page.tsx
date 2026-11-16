@@ -389,7 +389,6 @@ export function BuildDetailPage({
             branch: buildToRerun.branch ?? '',
             workflow: buildToRerun.workflow ?? '',
             changelog: buildToRerun.changelog ?? undefined,
-            store_notes: buildToRerun.store_notes ?? '',
           }
         : undefined,
     [buildToRerun],
@@ -1121,6 +1120,7 @@ export function BuildDetailPage({
             tests={testSummary ?? undefined}
             analysis={analysisCounts ?? undefined}
             retention={data?.retention}
+            releaseNotes={data?.release_notes}
             canShare={canManageShareLinks}
             onOpenTab={setActiveTab}
           />

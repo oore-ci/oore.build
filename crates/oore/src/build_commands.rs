@@ -16,7 +16,7 @@ use crate::{
 };
 
 /// Where to reach the daemon and how to sign in, shared by these commands.
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 pub(crate) struct ApiConnectionArgs {
     #[arg(long, env = "OORE_DAEMON_URL")]
     daemon_url: Option<String>,
@@ -50,8 +50,10 @@ pub(crate) struct BuildRunArgs {
     #[arg(long = "platform", value_name = "PLATFORM")]
     platforms: Vec<String>,
 
-    /// What's new in this release, sent to Google Play and the App Store
-    /// instead of the pipeline's release notes.
+    /// Release notes for the app version this build makes. They become the
+    /// version's notes, shared by its other builds and sent to testers,
+    /// Google Play and the App Store, unless the repository's CHANGELOG.md
+    /// already has them. `oore notes set` changes them later.
     #[arg(long, value_name = "TEXT")]
     notes: Option<String>,
 

@@ -287,6 +287,7 @@ export const demoBuilds: Array<Build> = [
     project_id: PROJECT_IDS.flutterShop,
     pipeline_id: PIPELINE_IDS.shopAndroid,
     build_number: 141,
+    version_name: '2.4.0',
     status: 'succeeded',
     trigger_type: 'webhook',
     trigger_event: 'push',

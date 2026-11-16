@@ -61,7 +61,8 @@ rotation.
 3. Under **Credentials**, choose the secret for **Service account key**.
 4. Under **Release**, choose the **Track** and the **Rollout**:
    **Full rollout**, **Staged rollout** with an **Initial rollout (%)**, or
-   **Draft**. Choose the **Release notes** source.
+   **Draft**. **Release notes** sends the version's release notes in the
+   **Language of the notes**, or **Files in the repository** from a folder.
 5. Under **Advanced**, enter the app's application ID in **Expected package**,
    and choose **Pre-flight checks**: whether Google Play's validation of the
    release stops the upload, only warns, or is skipped.
@@ -102,17 +103,16 @@ the named secret exists in a scope this pipeline can see.
 | `package_name`           | AAB     | Expected application id. When set, a bundle for a different package fails the upload.                                                                                       |
 | `rollout_percent`        | `100`   | Initial staged rollout. Below 100 creates an in-progress release for that share of users. The internal track does not support staged rollouts.                              |
 | `draft`                  | `false` | Create a draft release instead of rolling out.                                                                                                                              |
-| `release_notes`          | `none`  | `none`, `changelog` (the build changelog) or `repo_files`.                                                                                                                  |
-| `release_notes_locale`   | `en-US` | Language for changelog release notes.                                                                                                                                       |
+| `release_notes`          | `none`  | `changelog` (the app version's release notes) or `repo_files`. `none` behaves like `changelog`: a version without notes sends none.                                         |
+| `release_notes_locale`   | `en-US` | Language the version's release notes are sent under.                                                                                                                        |
 | `release_notes_dir`      |         | For `repo_files`: a repository directory with one `<locale>.txt` file per language, such as `release-notes/en-US.txt`.                                                      |
 | `upload_mapping`         | `true`  | Upload `build/app/outputs/mapping/<variant>/mapping.txt` when the build produced it.                                                                                        |
 | `in_app_update_priority` |         | In-app update priority, 0 to 5.                                                                                                                                             |
 | `preflight`              | `auto`  | What a failed `edits.validate` check does before the commit: `auto`, `block`, `warn` or `off`. `auto` blocks once the app has had a release on Play, and warns before that. |
 
-Release notes longer than Play's 500-character limit are shortened. Notes
-typed in **What's new in this release** when a build starts replace these
-notes for that build, under `release_notes_locale`; see
-[Notes for one release](/build/distribute/app-store#notes-for-one-release).
+Release notes longer than Play's 500-character limit are shortened. The
+build's list of commits and their authors never goes to Play; see
+[Release notes and changes](/concepts/release-notes).
 
 ## 3. Test the credentials
 
@@ -154,10 +154,11 @@ After the build, signing and artifact steps succeed, the runner adds a
 2. Exchanges the service account key for an access token.
 3. Reads the version codes Play already holds and stops if the bundle's
    `versionCode` is not higher than the highest one on the target track, or
-   was already uploaded. The error names both numbers. Set
-   `build_number_offset` and build with `--build-number=$OORE_VERSION_CODE` to
-   start above the store; see the
-   [`.oore.yaml` reference](/reference/config/oore-yaml#version-codes).
+   was already uploaded. The error names both numbers and says how to fix it:
+   bump the number after `+` in `pubspec.yaml`, or raise
+   `build_number_offset` when the build passes
+   `--build-number=$OORE_VERSION_CODE`; see
+   [Version codes](/reference/config/oore-yaml#version-codes).
 4. Opens a Play edit, uploads the bundle and `mapping.txt`, sets the track
    release with the configured status and rollout, and commits the edit.
 
@@ -269,9 +270,10 @@ fixing access, choose **Check stores** in Store health on Insights to read the s
 
 **The Google Play upload fails because the version code is not higher**
 
-The message names both numbers. Set **Build number offset** above the
-highest version code on Google Play, and pass
-`--build-number=$OORE_VERSION_CODE` to Flutter.
+The message names both numbers. Bump the number after `+` in
+`pubspec.yaml`'s `version` above the highest one on Google Play, in a
+commit, and run a new build. If the pipeline passes
+`--build-number=$OORE_VERSION_CODE`, raise **Build number offset** instead.
 
 **The Google Play upload fails with a Play API error**
 

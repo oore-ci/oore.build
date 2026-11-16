@@ -26,6 +26,7 @@ import type {
   TrustedProxySettingsPublic,
   User,
   UserRole,
+  VersionReleaseNotes,
 } from '@oore/client/models'
 import type { IntegrationWithStatus } from '@/lib/integration-status'
 import type { NotificationChannel } from '@/lib/notification-channels'
@@ -37,6 +38,7 @@ import { demoBuildLogs } from './data/build-logs'
 import { demoBuildTests } from './data/build-tests'
 import { demoBuildFeedback } from './data/build-feedback'
 import { demoBuildEvents, demoBuilds } from './data/builds'
+import { demoReleaseNotes } from './data/release-notes'
 import {
   demoInstallations,
   demoIntegrations,
@@ -135,6 +137,8 @@ interface DemoState {
     Record<string, Record<string, Array<RepositoryWorkflowPreview>>>
   >
   builds: Array<Build>
+  /** Release notes, one set per project and app version. */
+  releaseNotes: Array<VersionReleaseNotes>
   buildEvents: Partial<Record<string, Array<BuildEvent>>>
   buildLogs: Partial<Record<string, Array<BuildLogChunk>>>
   buildTests: Partial<Record<string, BuildTestResultsResponse>>
@@ -868,6 +872,7 @@ export function createDemoState(
     },
     builds,
     buildEvents: clone(demoBuildEvents),
+    releaseNotes: clone(demoReleaseNotes),
     releases: clone(demoReleases),
     releaseHistory: clone(demoReleaseHistory),
     environments: clone(demoEnvironments),
@@ -962,6 +967,7 @@ export function createDemoState(
     state.repositoryWorkflows = {}
     state.repositoryWorkflowBranches = {}
     state.builds = []
+    state.releaseNotes = []
     state.buildEvents = {}
     state.buildLogs = {}
     state.buildTests = {}

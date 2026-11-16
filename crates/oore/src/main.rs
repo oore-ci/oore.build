@@ -41,6 +41,7 @@ mod install_lock;
 mod install_manifest;
 mod installer;
 mod managed_services;
+mod notes_commands;
 mod pipeline_credentials;
 mod setup_journey;
 mod uninstaller;
@@ -150,6 +151,8 @@ enum Commands {
     Pipeline(PipelineArgs),
     /// Start a build of a pipeline
     Build(BuildArgs),
+    /// Read and write the release notes of an app version
+    Notes(notes_commands::NotesArgs),
     /// Print the installed oore version
     Version,
     /// Update oore and oored to the latest release
@@ -13432,6 +13435,11 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(build_commands::handle_pipeline_readiness(args))?;
             }
         },
+        Commands::Notes(args) => {
+            let runtime =
+                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+            runtime.block_on(notes_commands::handle_notes(args))?;
+        }
         Commands::Build(build) => match build.command {
             BuildSubcommand::Run(args) => {
                 let runtime =
