@@ -9,6 +9,8 @@ import {
   parseRolloutSteps,
   playTrackStagesRollouts,
   rolloutPolicySummary,
+  trackNextAction,
+  trackRows,
 } from './environments'
 
 describe('parseRolloutSteps', () => {
@@ -158,5 +160,81 @@ describe('playTrackStagesRollouts', () => {
     for (const track of ['internal', 'closed', 'alpha', 'qa-team']) {
       expect(playTrackStagesRollouts(track)).toBe(false)
     }
+  })
+})
+
+describe('trackRows and trackNextAction', () => {
+  const env = (id, track, position, extra = {}) => ({
+    id,
+    name: id,
+    store: 'google_play',
+    track,
+    position,
+    promotable: true,
+    approval_required: false,
+    ...extra,
+  })
+  const release = (id, track, state) => ({
+    id,
+    store: 'google_play',
+    track,
+    state,
+    created_at: 1,
+    allowed_actions: [],
+  })
+  const primary = (r) =>
+    r.state === 'rolling' ? 'halt' : r.state === 'halted' ? 'resume' : null
+
+  test('lists set-up tracks in order, then store tracks without setup', () => {
+    const rows = trackRows(
+      [env('beta', 'open', 2), env('internal', 'internal', 1)],
+      [
+        {
+          key: 'google_play:custom',
+          store: 'google_play',
+          track: 'custom',
+          out: null,
+          coming: [],
+        },
+        {
+          key: 'google_play:open',
+          store: 'google_play',
+          track: 'open',
+          out: release('r1', 'open', 'complete'),
+          coming: [],
+        },
+      ],
+      [{ id: 'p', state: 'pending', environment_id: 'internal' }],
+    )
+    expect(rows.map((row) => row.key)).toEqual([
+      'google_play:internal',
+      'google_play:open',
+      'google_play:custom',
+    ])
+    expect(rows[0].pending?.id).toBe('p')
+    expect(rows[1].out?.id).toBe('r1')
+    expect(rows[2].environment).toBeUndefined()
+  })
+
+  test('approve leads, then resume or halt, then promote', () => {
+    const pending = { id: 'p', can_decide: true }
+    const rolling = release('r', 'production', 'rolling')
+    expect(
+      trackNextAction({ out: rolling, coming: [], pending }, true, primary),
+    ).toEqual({ kind: 'approve', promotion: pending })
+    expect(
+      trackNextAction(
+        { out: rolling, coming: [], pending: { id: 'q', can_decide: false } },
+        true,
+        primary,
+      ),
+    ).toEqual({ kind: 'release', release: rolling })
+    const done = release('d', 'internal', 'complete')
+    expect(trackNextAction({ out: done, coming: [] }, true, primary)).toEqual({
+      kind: 'promote',
+    })
+    expect(trackNextAction({ out: done, coming: [] }, false, primary)).toBe(
+      null,
+    )
   })
 })
