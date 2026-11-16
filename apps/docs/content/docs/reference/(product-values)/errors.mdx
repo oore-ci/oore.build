@@ -115,6 +115,8 @@ API sends. CI fails when it is stale.
 | `gitlab_unreachable`                          | `502`               | yes   | GitLab cannot be reached from the daemon. Check its network.                                                     |
 | `http_client_error`                           | `500`               | yes   |                                                                                                                  |
 | `id_token_verification_error`                 | `502`               | yes   |                                                                                                                  |
+| `idempotency_in_progress`                     | `409`               | no    |                                                                                                                  |
+| `idempotency_key_reused`                      | `409`               | no    |                                                                                                                  |
 | `identity_in_use`                             | `409`               | no    |                                                                                                                  |
 | `incomplete_signing_profile`                  | `400`, `500`        | yes   |                                                                                                                  |
 | `insufficient_role`                           | `403`               | no    | Your instance role does not allow this. Ask the owner or an admin.                                               |
@@ -133,6 +135,7 @@ API sends. CI fails when it is stale.
 | `invalid_filename`                            | `400`               | no    |                                                                                                                  |
 | `invalid_git_request`                         | `400`               | no    |                                                                                                                  |
 | `invalid_host`                                | `500`               | yes   |                                                                                                                  |
+| `invalid_idempotency_key`                     | `400`               | no    |                                                                                                                  |
 | `invalid_input`                               | `400`, `409`        | no    | Fix the value named in the message and send the request again.                                                   |
 | `invalid_keystore`                            | `400`               | no    |                                                                                                                  |
 | `invalid_labels`                              | `400`               | no    |                                                                                                                  |

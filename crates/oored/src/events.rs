@@ -562,8 +562,7 @@ pub async fn stream_events(
         authorization,
         project_id,
         runners_visible,
-        receiver,
-        replay,
+        (receiver, replay),
         admission,
     );
     let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL));
@@ -699,8 +698,7 @@ fn event_stream(
     authorization: StreamAuthorization,
     project_filter: Option<String>,
     mut runners_visible: bool,
-    mut receiver: broadcast::Receiver<Sequenced>,
-    replay: Option<Replay>,
+    (mut receiver, replay): (broadcast::Receiver<Sequenced>, Option<Replay>),
     admission: StreamAdmission,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
