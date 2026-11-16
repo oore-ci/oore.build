@@ -1,0 +1,222 @@
+---
+title: 'Connect your agent (MCP)'
+status: preview
+description: 'Let Claude Code, Cursor, VS Code and other MCP clients read builds, explain failures and run builds through Oore.'
+---
+
+Oore has an [MCP](https://modelcontextprotocol.io) server built into the
+daemon at `/mcp`. An agent connected to it can list your apps and builds,
+explain why a build failed, read logs, start a build and wait for it, and send
+a build to testers. There is nothing to install: the server is part of every
+Oore instance and always matches its version.
+
+The agent acts with an API token. It can do what the token allows and nothing
+more: every tool call is an ordinary API request, with the same permission
+checks and audit log entries.
+
+## What you need
+
+- Instance owner access, to turn the server on.
+- An [API token](/team/api-tokens) for the agent.
+- Your Oore address, such as `https://oore.example.com`. Below it is
+  `<OORE_URL>`.
+
+## 1. Turn on the MCP server
+
+The server is off on a new instance, and `/mcp` answers `404` while it is off.
+An instance owner opens **Settings** › **General**, and under **AI agents**
+turns on **MCP server**. Other people see the switch but cannot change it.
+Turning it off again cuts off every connected agent at once, and the audit log
+records both changes.
+
+## 2. Create a token for the agent
+
+Open **Settings** › **API tokens** and create a token named for the agent,
+such as `claude-code-laptop`. Give it the smallest role that covers what the
+agent should do: **QA viewer** to read, **Developer** to run builds. See
+[API tokens](/team/api-tokens).
+
+Keep the token out of your repository. The examples below read it from the
+`OORE_TOKEN` environment variable:
+
+```bash
+export OORE_TOKEN='<TOKEN>'
+```
+
+## 3. Connect your client
+
+### Claude Code
+
+```bash
+claude mcp add --transport http oore <OORE_URL>/mcp \
+  --header "Authorization: Bearer $OORE_TOKEN"
+```
+
+To share the setup with everyone working on an app, commit `.mcp.json` at the
+root of the app's repository. Claude Code fills in `${OORE_TOKEN}` from each
+person's environment:
+
+```json
+{
+  "mcpServers": {
+    "oore": {
+      "type": "http",
+      "url": "<OORE_URL>/mcp",
+      "headers": { "Authorization": "Bearer ${OORE_TOKEN}" }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add the server to `.cursor/mcp.json` in the repository, or to
+`~/.cursor/mcp.json` for every project:
+
+```json
+{
+  "mcpServers": {
+    "oore": {
+      "url": "<OORE_URL>/mcp",
+      "headers": { "Authorization": "Bearer ${env:OORE_TOKEN}" }
+    }
+  }
+}
+```
+
+### VS Code
+
+Add `.vscode/mcp.json`. VS Code asks for the token once and stores it
+securely:
+
+```json
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "oore-token",
+      "description": "Oore API token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "oore": {
+      "type": "http",
+      "url": "<OORE_URL>/mcp",
+      "headers": { "Authorization": "Bearer ${input:oore-token}" }
+    }
+  }
+}
+```
+
+### Other clients
+
+Any client that speaks Streamable HTTP works: the URL is `<OORE_URL>/mcp` and
+every request carries `Authorization: Bearer <TOKEN>`. Oore follows MCP
+revision `2026-07-28` (stateless, one POST per request) and also serves
+clients on older revisions.
+
+### Clients that start a local command
+
+Some clients can only start a program and talk to it over standard input and
+output. [`oore mcp`](/reference/cli/oore-mcp) bridges that to the daemon:
+
+```json
+{
+  "mcpServers": {
+    "oore": {
+      "command": "oore",
+      "args": ["mcp"],
+      "env": { "OORE_URL": "<OORE_URL>", "OORE_TOKEN": "<TOKEN>" }
+    }
+  }
+}
+```
+
+Use `["mcp", "--read-only"]` to offer the agent only the tools that change
+nothing.
+
+## Tools
+
+Read tools change nothing:
+
+| Tool                           | What it does                                                             |
+| ------------------------------ | ------------------------------------------------------------------------ |
+| `list_apps`                    | Apps you can see, with IDs and platforms.                                |
+| `list_pipelines`               | An app's pipelines and whether their `.oore.yaml` is usable.             |
+| `list_builds`                  | Recent builds, by app, pipeline, status, branch or commit.               |
+| `get_build`                    | One build with its steps, commit and store outcome.                      |
+| `get_build_logs`               | Log lines, by step or search, newest last, with a size cap.              |
+| `diagnose_build`               | Why a build failed: step, exit code, cause, fix, log tail, failed tests. |
+| `wait_for_build`               | Waits up to about 50 seconds, then says whether to ask again.            |
+| `list_artifacts`               | Files a build produced.                                                  |
+| `get_install_link`             | A short-lived install link for an artifact.                              |
+| `list_releases`, `get_release` | Store releases and what can be done next.                                |
+| `get_store_readiness`          | Whether a pipeline can publish, and what blocks it.                      |
+| `validate_pipeline_file`       | Checks the text of an `.oore.yaml`.                                      |
+| `list_workflows`               | Workflows a pipeline can run at a branch or commit.                      |
+| `list_tester_groups`           | Tester groups a build can be sent to.                                    |
+
+Build tools need a role that may run builds. QA viewers do not see them:
+
+| Tool                       | What it does                                                       |
+| -------------------------- | ------------------------------------------------------------------ |
+| `run_build`                | Starts a build of a pipeline, by app and pipeline name or ID.      |
+| `cancel_build`             | Stops a queued or running build.                                   |
+| `rerun_build`              | Builds the same commit and settings again.                         |
+| `retry_step`               | Runs an earlier build again from one step, such as a store upload. |
+| `set_release_notes`        | Saves an app version's release notes.                              |
+| `share_build_with_testers` | Sends a build to a tester group.                                   |
+
+Apps and pipelines can be given by name or ID. Results are kept small: builds
+leave out their full configuration, and log tools say when lines were left
+out and how to read more. A failed call answers with the API's error `code`,
+its HTTP `status` and a `hint`.
+
+The server also offers the [`.oore.yaml` version 2
+reference](/reference/config/oore-yaml-v2) as a resource, and a **Diagnose this
+build** prompt that walks the agent through `diagnose_build` and the logs.
+
+## Verify the connection
+
+Ask the agent "Which Oore apps can you see?". It should call `list_apps` and
+name your apps. Then try "Why did the last Android build fail?".
+
+From a terminal, the server answers a tool list with your token:
+
+```bash
+curl -sS <OORE_URL>/mcp \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H 'MCP-Protocol-Version: 2025-11-25' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+## Troubleshooting
+
+**`404 Not Found` from `/mcp`**
+
+The MCP server is off. An instance owner turns it on in **Settings** ›
+**General** › **AI agents**.
+
+**`401` and `invalid_session`**
+
+The token is wrong, expired or revoked. Create a new one.
+
+**`403` and `origin_not_allowed`**
+
+The request came from a web page on another address. Browsers may only call
+`/mcp` from the Oore instance's own address. Desktop agents send no `Origin`
+and are not affected.
+
+**A tool answers `404` for an app or build you expect**
+
+The token's owner is not a member of that app. Add them in the app's
+**Members**, or use a token of someone who is.
+
+## Next step
+
+- [API tokens](/team/api-tokens): create, limit and revoke tokens.
+- [`.oore.yaml` version 2](/reference/config/oore-yaml-v2): the pipeline file
+  an agent writes.
