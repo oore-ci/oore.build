@@ -35,7 +35,11 @@ use sqlx::{Row, SqlitePool};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 
+mod api_command;
 mod build_commands;
+mod build_logs;
+mod cli_contract;
+mod command_tree;
 mod init_command;
 mod install_lock;
 mod install_manifest;
@@ -43,6 +47,7 @@ mod installer;
 mod managed_services;
 mod notes_commands;
 mod pipeline_credentials;
+mod project_commands;
 mod setup_journey;
 mod uninstaller;
 mod update_supervisor;
@@ -94,10 +99,16 @@ struct DoctorReport {
 #[derive(Debug, Parser)]
 #[command(name = "oore")]
 #[command(about = "oore operator CLI")]
+#[command(after_long_help = cli_contract::EXIT_CODES_HELP)]
 struct Cli {
     /// Control color in human-readable output.
     #[arg(long, global = true, value_enum, default_value_t = CliColorMode::Auto)]
     color: CliColorMode,
+
+    /// Extra header for every API request, as 'Name: value'. Repeat for
+    /// several. Added after the ones in OORE_HTTP_HEADERS (one per line).
+    #[arg(long = "header", global = true, value_name = "NAME: VALUE")]
+    headers: Vec<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -128,7 +139,7 @@ enum Commands {
     #[command(hide = true)]
     BootstrapGuard(BootstrapGuardArgs),
     /// Remove this Oore installation
-    Uninstall(uninstaller::UninstallArgs),
+    Uninstall(WithJson<uninstaller::UninstallArgs>),
     /// Configure this device and finish first-run setup
     Setup(Box<SetupArgs>),
     /// Create a short-lived frontend pairing invitation
@@ -146,15 +157,26 @@ enum Commands {
     /// Check the host and selected build-platform toolchains
     Doctor(DoctorArgs),
     /// Write a starter .oore.yaml for the Flutter app in a folder
-    Init(init_command::InitArgs),
+    Init(WithJson<init_command::InitArgs>),
     /// Validate repository pipeline files and list a pipeline's workflows
     Pipeline(PipelineArgs),
-    /// Start a build of a pipeline
+    /// List, start, follow and explain builds
     Build(BuildArgs),
+    /// List the apps you can see
+    Project(ProjectArgs),
+    /// Download a build file
+    Artifact(build_commands::ArtifactArgs),
+    /// Call any Oore API operation, by method and path or by operation ID
+    Api(api_command::ApiArgs),
+    /// Print every command and flag, for scripts and agents
+    #[command(name = "commands")]
+    CommandTree(command_tree::CommandsArgs),
+    /// Print a shell completion script
+    Completions(command_tree::CompletionsArgs),
     /// Read and write the release notes of an app version
     Notes(notes_commands::NotesArgs),
     /// Print the installed oore version
-    Version,
+    Version(JsonFlag),
     /// Update oore and oored to the latest release
     Update(UpdateArgs),
     #[command(hide = true)]
@@ -176,6 +198,10 @@ struct InstallArgs {
     /// Use one local release archive. This option is for release acceptance.
     #[arg(long, hide = true, value_name = "ARCHIVE")]
     staged_archive: Option<PathBuf>,
+
+    /// Print the result as JSON on stdout; progress goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -813,6 +839,9 @@ struct BackupCreateArgs {
     /// Destination .tar.gz file.
     #[arg(long)]
     output: PathBuf,
+    /// Print the result as JSON on stdout.
+    #[arg(long)]
+    json: bool,
     /// Path to the SQLite state file.
     #[arg(long, env = "OORE_SETUP_STATE_FILE")]
     state_file: Option<String>,
@@ -829,6 +858,9 @@ struct BackupVerifyArgs {
     /// Backup .tar.gz file.
     #[arg(long)]
     input: PathBuf,
+    /// Print the result as JSON on stdout.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -836,6 +868,13 @@ struct BackupRestoreArgs {
     /// Backup .tar.gz file.
     #[arg(long)]
     input: PathBuf,
+    /// Replace the live state without asking. Needed when there is no
+    /// terminal.
+    #[arg(long)]
+    yes: bool,
+    /// Print the result as JSON on stdout.
+    #[arg(long)]
+    json: bool,
     /// Path to the SQLite state file to restore.
     #[arg(long, env = "OORE_SETUP_STATE_FILE")]
     state_file: Option<String>,
@@ -876,6 +915,20 @@ enum PipelineSubcommand {
     /// Check what would stop the pipeline's next store upload. Exits 2 when
     /// something blocks it.
     Readiness(build_commands::PipelineReadinessArgs),
+    /// List pipelines, of one app or of every app.
+    List(project_commands::PipelineListArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProjectArgs {
+    #[command(subcommand)]
+    command: ProjectSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectSubcommand {
+    /// List apps, with the ID first.
+    List(project_commands::ProjectListArgs),
 }
 
 #[derive(Debug, Args)]
@@ -892,6 +945,25 @@ enum BuildSubcommand {
     /// Exits 1 when the build does not succeed, and 3 with --store when the
     /// store blocks, rejects or fails its release.
     Watch(build_commands::BuildWatchArgs),
+    /// List builds, newest first, with the ID first.
+    List(build_commands::BuildListArgs),
+    /// Show one build: status, commit, version and steps.
+    Show(build_commands::BuildIdArgs),
+    /// Print a build's log, or follow it with -f.
+    Logs(build_logs::BuildLogsArgs),
+    /// Explain why a build failed: the step, the likely cause and fix, the
+    /// failed tests and the last lines of the log.
+    Why(build_logs::BuildWhyArgs),
+    /// Stop a queued or running build.
+    Cancel(build_commands::BuildIdArgs),
+    /// Start a new build of the same commit and settings.
+    Rerun(build_commands::BuildIdArgs),
+    /// Run one step of a finished build again, such as a store upload.
+    RetryStep(build_commands::BuildRetryStepArgs),
+    /// List the files a build made.
+    Artifacts(build_commands::BuildIdArgs),
+    /// Print a link to install the build on a phone.
+    InstallLink(build_commands::BuildInstallLinkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -909,6 +981,9 @@ struct PipelineValidateArgs {
     pipeline: Option<String>,
     #[command(flatten)]
     connection: build_commands::ApiConnectionArgs,
+    /// Print `{"path", "valid", "notices"}` as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -941,6 +1016,10 @@ struct PipelineMigrateArgs {
     /// Print no file; fail while PATH is still version 1.
     #[arg(long)]
     check: bool,
+    /// Print `{"path", "migrated", "yaml", "written_to", "warnings", "notes"}`
+    /// as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 fn read_pipeline_config(path: &Path) -> anyhow::Result<oore_contract::RepositoryConfig> {
@@ -1187,6 +1266,10 @@ struct UpdateArgs {
 
     #[arg(long, hide = true)]
     deferred_status_file: Option<PathBuf>,
+
+    /// Print the result as JSON on stdout; progress goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1382,12 +1465,14 @@ struct SetupTokenArgs {
 
 #[derive(Debug, Args)]
 struct StatusArgs {
-    #[arg(long, env = "OORE_DAEMON_URL")]
+    /// Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, then the saved
+    /// login.
+    #[arg(long = "url", visible_alias = "daemon-url", env = "OORE_URL")]
     daemon_url: Option<String>,
 
-    /// Session token for authenticated status details.
-    /// If omitted, falls back to OORE_SESSION_TOKEN or stored CLI config.
-    #[arg(long, env = "OORE_SESSION_TOKEN")]
+    /// API or session token for authenticated status details. Falls back to
+    /// OORE_TOKEN, OORE_SESSION_TOKEN, then the saved login.
+    #[arg(long, env = "OORE_TOKEN")]
     token: Option<String>,
 
     #[arg(long, default_value = "false")]
@@ -1396,10 +1481,13 @@ struct StatusArgs {
 
 #[derive(Debug, Args)]
 struct LoginArgs {
-    #[arg(long, env = "OORE_DAEMON_URL")]
+    /// Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, then the saved
+    /// login.
+    #[arg(long = "url", visible_alias = "daemon-url", env = "OORE_URL")]
     daemon_url: Option<String>,
 
-    /// Import an existing session token and validate it against /v1/users/me.
+    /// Import an existing API or session token and validate it against
+    /// /v1/users/me.
     #[arg(long)]
     token: Option<String>,
 
@@ -1449,9 +1537,9 @@ enum RunnerSubcommand {
     /// Install and start the runner as a boot-time macOS service
     InstallService(RunnerServiceArgs),
     /// Rotate this device's managed local runner token
-    RotateToken,
+    RotateToken(JsonFlag),
     /// Stop and remove the managed macOS runner service
-    UninstallService,
+    UninstallService(JsonFlag),
     /// Show or change runner settings such as the cache size and VM image
     Config(RunnerConfigArgs),
 }
@@ -1463,6 +1551,9 @@ struct RunnerConfigArgs {
     /// Path to the runner config file. Defaults to the installed runner's.
     #[arg(long, global = true)]
     config: Option<String>,
+    /// Print the result as JSON on stdout.
+    #[arg(long, global = true)]
+    json: bool,
 }
 
 #[derive(Debug, Subcommand)]
@@ -1494,6 +1585,10 @@ struct RunnerRegisterArgs {
     /// Auth session token for registration
     #[arg(long, env = "OORE_SESSION_TOKEN")]
     token: String,
+
+    /// Print the result as JSON on stdout; progress goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1523,6 +1618,10 @@ struct RunnerServiceArgs {
     /// Managed runner name (defaults to hostname)
     #[arg(long)]
     name: Option<String>,
+
+    /// Print the result as JSON on stdout; progress goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1547,11 +1646,35 @@ enum ConfigSubcommand {
 struct ConfigSetArgs {
     key: String,
     value: String,
+    /// Print what was saved as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
 struct ConfigGetArgs {
     key: String,
+    /// Print the value as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+/// `--json` for a command that has no other flags.
+#[derive(Debug, Args)]
+struct JsonFlag {
+    /// Print the result as JSON on stdout.
+    #[arg(long)]
+    json: bool,
+}
+
+/// A command from another file, with `--json` added.
+#[derive(Debug, Args)]
+struct WithJson<T: Args> {
+    #[command(flatten)]
+    args: T,
+    /// Print the result as JSON on stdout; progress goes to stderr.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1856,7 +1979,7 @@ fn resolve_daemon_url(cli_value: Option<&str>) -> anyhow::Result<String> {
         return Ok(v);
     }
 
-    if let Some(v) = read_env_trimmed("OORE_DAEMON_URL") {
+    if let Some(v) = read_env_trimmed("OORE_URL").or_else(|| read_env_trimmed("OORE_DAEMON_URL")) {
         return Ok(v);
     }
 
@@ -1890,7 +2013,9 @@ fn resolve_session_token(
         return Ok(Some(v));
     }
 
-    if let Some(v) = read_env_trimmed("OORE_SESSION_TOKEN") {
+    if let Some(v) =
+        read_env_trimmed("OORE_TOKEN").or_else(|| read_env_trimmed("OORE_SESSION_TOKEN"))
+    {
         return Ok(Some(v));
     }
 
@@ -3139,7 +3264,7 @@ fn open_browser(url: &str) -> bool {
 }
 
 fn endpoint_http_client_builder(endpoint: &str) -> reqwest::ClientBuilder {
-    let builder = reqwest::Client::builder();
+    let builder = reqwest::Client::builder().default_headers(cli_contract::extra_headers());
     let bypass_system_proxies = url::Url::parse(endpoint).ok().is_some_and(|url| {
         matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some_and(|host| {
@@ -9490,6 +9615,7 @@ async fn handle_runner_rotate_token() -> anyhow::Result<()> {
 
     handle_runner_install_service_inner(
         RunnerServiceArgs {
+            json: false,
             config: None,
             managed_local: true,
             daemon_url: Some(current.daemon_url.clone()),
@@ -11309,6 +11435,7 @@ impl UpdateServiceControl for LiveUpdateServiceControl<'_> {
                 .to_string();
             handle_runner_install_service_inner(
                 RunnerServiceArgs {
+                    json: false,
                     config: Some(config),
                     managed_local: false,
                     daemon_url: Some(self.daemon_url.to_string()),
@@ -11350,6 +11477,7 @@ impl UpdateServiceControl for LiveUpdateServiceControl<'_> {
     ) -> anyhow::Result<()> {
         handle_runner_install_service_inner(
             RunnerServiceArgs {
+                json: false,
                 config: None,
                 managed_local: true,
                 daemon_url: Some(self.daemon_url.to_string()),
@@ -12530,6 +12658,7 @@ async fn supervise_update_request(install_root: &Path, request_file: &Path) -> a
         }
     };
     let result = handle_deferred_update(UpdateArgs {
+        json: false,
         check: false,
         force: false,
         channel: None,
@@ -13315,18 +13444,94 @@ fn handle_bootstrap_guard(args: BootstrapGuardArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+fn main() -> std::process::ExitCode {
+    let json = cli_contract::json_requested(std::env::args_os());
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => return std::process::ExitCode::from(report_usage_error(&error, json)),
+    };
+    let code = match cli_contract::init_extra_headers(&cli.headers).and_then(|()| run(cli)) {
+        Ok(()) => cli_contract::exit::OK,
+        Err(error) => cli_contract::report_failure(&error, json),
+    };
+    std::process::ExitCode::from(code)
+}
+
+/// Prints help and version as usual, and any other parse failure as a usage
+/// error with exit code 64 (clap's own 2 means "blocked" here).
+fn report_usage_error(error: &clap::Error, json: bool) -> u8 {
+    use clap::error::ErrorKind;
+    if matches!(
+        error.kind(),
+        ErrorKind::DisplayHelp
+            | ErrorKind::DisplayVersion
+            | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+    ) {
+        let _ = error.print();
+        return if error.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
+            cli_contract::exit::USAGE
+        } else {
+            cli_contract::exit::OK
+        };
+    }
+    if json {
+        let message = error.kind().to_string();
+        let detail = error.to_string();
+        let detail = detail
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches("error: ")
+            .to_string();
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "error": if detail.is_empty() { message } else { detail },
+                "code": "usage",
+                "status": null,
+                "exit_code": cli_contract::exit::USAGE,
+                "hint": "Run the command with --help to see its flags.",
+            })
+        );
+    } else {
+        let _ = error.print();
+    }
+    cli_contract::exit::USAGE
+}
+
+/// Runs a command that reports in prose as it goes. With `--json` the prose
+/// goes to stderr and stdout gets `{"ok": true, "command": ...}` at the end.
+fn prose_command(
+    json: bool,
+    command: &str,
+    work: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    cli_contract::with_stdout_on_stderr(json, work)?;
+    if json {
+        cli_contract::print_json(&serde_json::json!({ "ok": true, "command": command }))?;
+    }
+    Ok(())
+}
+
+/// Runs one command's future on a fresh runtime.
+fn block_on<F: std::future::Future<Output = anyhow::Result<()>>>(future: F) -> anyhow::Result<()> {
+    tokio::runtime::Runtime::new()
+        .context("failed to create tokio runtime")?
+        .block_on(future)
+}
+
+fn run(cli: Cli) -> anyhow::Result<()> {
     let terminal = Terminal::new(cli.color.into());
 
     match cli.command {
         Commands::Install(args) => {
-            let runtime =
-                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-            runtime.block_on(handle_install(args, terminal))?;
+            let json = args.json;
+            prose_command(json, "install", || block_on(handle_install(args, terminal)))?;
         }
         Commands::BootstrapGuard(args) => handle_bootstrap_guard(args)?,
-        Commands::Uninstall(args) => uninstaller::handle(args, terminal)?,
+        Commands::Uninstall(command) => prose_command(command.json, "uninstall", || {
+            uninstaller::handle(command.args, terminal)
+        })?,
         Commands::Setup(mut setup) => match setup.command.take() {
             Some(SetupSubcommand::Init(args)) => {
                 let runtime =
@@ -13369,9 +13574,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Runner(runner) => match runner.command {
             RunnerSubcommand::Register(args) => {
-                let runtime =
-                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_runner_register(args, false))?;
+                prose_command(args.json, "runner register", || {
+                    block_on(handle_runner_register(args, false))
+                })?;
             }
             RunnerSubcommand::Start(args) => {
                 // Before the runtime starts any thread: settings become
@@ -13382,36 +13587,42 @@ fn main() -> anyhow::Result<()> {
                 runtime.block_on(handle_runner_start(args))?;
             }
             RunnerSubcommand::InstallService(args) => {
-                let runtime =
-                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_runner_install_service_direct(args))?;
+                prose_command(args.json, "runner install-service", || {
+                    block_on(handle_runner_install_service_direct(args))
+                })?;
             }
-            RunnerSubcommand::RotateToken => {
-                let runtime =
-                    tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-                runtime.block_on(handle_runner_rotate_token())?;
+            RunnerSubcommand::RotateToken(flag) => {
+                prose_command(flag.json, "runner rotate-token", || {
+                    block_on(handle_runner_rotate_token())
+                })?;
             }
-            RunnerSubcommand::UninstallService => handle_runner_uninstall_service_direct()?,
-            RunnerSubcommand::Config(args) => handle_runner_config(args)?,
+            RunnerSubcommand::UninstallService(flag) => {
+                prose_command(flag.json, "runner uninstall-service", || {
+                    handle_runner_uninstall_service_direct()
+                })?;
+            }
+            RunnerSubcommand::Config(args) => {
+                prose_command(args.json, "runner config", || handle_runner_config(args))?;
+            }
         },
         Commands::Config(config) => match config.command {
             ConfigSubcommand::Set(args) => {
                 if !config_key_supported(&args.key) {
-                    eprintln!(
-                        "Unsupported config key '{}'. Supported keys: {}, {}",
+                    return Err(cli_contract::CliError::usage(format!(
+                        "unsupported config key '{}'; supported keys: {}, {}",
                         args.key, CONFIG_KEY_DAEMON_URL, CONFIG_KEY_SESSION_TOKEN
-                    );
-                    std::process::exit(2);
+                    ))
+                    .into());
                 }
                 handle_config_set(args)?;
             }
             ConfigSubcommand::Get(args) => {
                 if !config_key_supported(&args.key) {
-                    eprintln!(
-                        "Unsupported config key '{}'. Supported keys: {}, {}",
+                    return Err(cli_contract::CliError::usage(format!(
+                        "unsupported config key '{}'; supported keys: {}, {}",
                         args.key, CONFIG_KEY_DAEMON_URL, CONFIG_KEY_SESSION_TOKEN
-                    );
-                    std::process::exit(2);
+                    ))
+                    .into());
                 }
                 handle_config_get(args)?;
             }
@@ -13419,7 +13630,16 @@ fn main() -> anyhow::Result<()> {
         Commands::Doctor(args) => {
             run_doctor_checks(args)?;
         }
-        Commands::Init(args) => init_command::handle_init(args)?,
+        Commands::Init(command) => {
+            if command.args.print {
+                // The file itself is the output.
+                init_command::handle_init(command.args)?;
+            } else {
+                prose_command(command.json, "init", || {
+                    init_command::handle_init(command.args)
+                })?;
+            }
+        }
         Commands::Pipeline(pipeline) => match pipeline.command {
             PipelineSubcommand::Validate(args) => handle_pipeline_validate(args)?,
             PipelineSubcommand::Plan(args) => handle_pipeline_plan(args)?,
@@ -13433,6 +13653,9 @@ fn main() -> anyhow::Result<()> {
                 let runtime =
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(build_commands::handle_pipeline_readiness(args))?;
+            }
+            PipelineSubcommand::List(args) => {
+                block_on(project_commands::handle_pipeline_list(args))?;
             }
         },
         Commands::Notes(args) => {
@@ -13451,11 +13674,55 @@ fn main() -> anyhow::Result<()> {
                     tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
                 runtime.block_on(build_commands::handle_build_watch(args))?;
             }
+            BuildSubcommand::List(args) => block_on(build_commands::handle_build_list(args))?,
+            BuildSubcommand::Show(args) => block_on(build_commands::handle_build_show(args))?,
+            BuildSubcommand::Logs(args) => block_on(build_logs::handle_build_logs(args))?,
+            BuildSubcommand::Why(args) => block_on(build_logs::handle_build_why(args))?,
+            BuildSubcommand::Cancel(args) => block_on(build_commands::handle_build_cancel(args))?,
+            BuildSubcommand::Rerun(args) => block_on(build_commands::handle_build_rerun(args))?,
+            BuildSubcommand::RetryStep(args) => {
+                block_on(build_commands::handle_build_retry_step(args))?;
+            }
+            BuildSubcommand::Artifacts(args) => {
+                block_on(build_commands::handle_build_artifacts(args))?;
+            }
+            BuildSubcommand::InstallLink(args) => {
+                block_on(build_commands::handle_build_install_link(args))?;
+            }
         },
-        Commands::Version => {
+        Commands::Project(project) => match project.command {
+            ProjectSubcommand::List(args) => {
+                block_on(project_commands::handle_project_list(args))?;
+            }
+        },
+        Commands::Artifact(artifact) => match artifact.command {
+            build_commands::ArtifactSubcommand::Download(args) => {
+                block_on(build_commands::handle_artifact_download(args))?;
+            }
+        },
+        Commands::Api(args) => block_on(api_command::handle_api(args))?,
+        Commands::CommandTree(args) => {
+            command_tree::handle_commands(args, <Cli as clap::CommandFactory>::command())?;
+        }
+        Commands::Completions(args) => {
+            command_tree::handle_completions(args, <Cli as clap::CommandFactory>::command());
+        }
+        Commands::Version(flag) => {
             let install_root = resolve_install_root()?;
             let binary = env!("CARGO_PKG_VERSION");
-            match read_trimmed_file(&install_root.join("VERSION")) {
+            let installed = read_trimmed_file(&install_root.join("VERSION"));
+            if flag.json {
+                cli_contract::print_json(&serde_json::json!({
+                    "version": installed.as_deref().unwrap_or(binary),
+                    "binary": binary,
+                    "installed": installed,
+                    "consistent": installed
+                        .as_deref()
+                        .is_none_or(|installed| installed_version_matches_binary(installed, binary)),
+                }))?;
+                return Ok(());
+            }
+            match installed {
                 Some(installed) => {
                     println!("{installed}");
                     if !installed_version_matches_binary(&installed, binary) {
@@ -13468,9 +13735,8 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Update(args) => {
-            let runtime =
-                tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-            runtime.block_on(handle_update(args))?;
+            let json = args.json;
+            prose_command(json, "update", || block_on(handle_update(args)))?;
         }
         Commands::UpdateSupervisor(args) => {
             let runtime =
@@ -13478,9 +13744,21 @@ fn main() -> anyhow::Result<()> {
             runtime.block_on(handle_update_supervisor(args))?;
         }
         Commands::Backup(args) => match args.command {
-            BackupSubcommand::Create(args) => backup_create(args)?,
-            BackupSubcommand::Verify(args) => backup_verify(args)?,
-            BackupSubcommand::Restore(args) => backup_restore(args)?,
+            BackupSubcommand::Create(args) => {
+                prose_command(args.json, "backup create", || backup_create(args))?;
+            }
+            BackupSubcommand::Verify(args) => {
+                prose_command(args.json, "backup verify", || backup_verify(args))?;
+            }
+            BackupSubcommand::Restore(args) => {
+                if !args.prepare_only {
+                    cli_contract::require_yes_without_terminal(
+                        args.yes,
+                        "Restoring a backup replaces this device's Oore state, and",
+                    )?;
+                }
+                prose_command(args.json, "backup restore", || backup_restore(args))?;
+            }
         },
     }
 
@@ -13490,6 +13768,78 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Commands that print no result to parse: a long-running service, a
+    /// shell script, the MCP stdio bridge, and the hidden helpers updates
+    /// call.
+    const NO_JSON: [&str; 5] = [
+        "oore runner start",
+        "oore completions",
+        "oore mcp",
+        "oore bootstrap-guard",
+        "oore update-supervisor",
+    ];
+
+    fn leaves(command: &clap::Command, path: String, out: &mut Vec<(String, clap::Command)>) {
+        let subcommands: Vec<_> = command
+            .get_subcommands()
+            .filter(|sub| sub.get_name() != "help")
+            .collect();
+        if subcommands.is_empty() {
+            out.push((path, command.clone()));
+            return;
+        }
+        for sub in subcommands {
+            leaves(sub, format!("{path} {}", sub.get_name()), out);
+        }
+    }
+
+    #[test]
+    fn every_command_takes_json() {
+        use clap::CommandFactory;
+        let mut command = Cli::command();
+        command.build();
+        let mut all = Vec::new();
+        leaves(&command, "oore".to_string(), &mut all);
+        assert!(all.len() > 40, "found {} commands", all.len());
+        let missing: Vec<&str> = all
+            .iter()
+            .filter(|(path, _)| !NO_JSON.contains(&path.as_str()))
+            .filter(|(_, command)| !command.get_arguments().any(|arg| arg.get_id() == "json"))
+            .map(|(path, _)| path.as_str())
+            .collect();
+        assert!(missing.is_empty(), "commands without --json: {missing:?}");
+    }
+
+    #[test]
+    fn connection_flags_take_the_shared_names() {
+        let cli = Cli::try_parse_from([
+            "oore", "build", "list", "--url", "http://x", "--token", "t", "--header", "A: b",
+        ])
+        .unwrap();
+        assert_eq!(cli.headers, ["A: b"]);
+        let old = Cli::try_parse_from(["oore", "status", "--daemon-url", "http://x"]).unwrap();
+        let Commands::Status(args) = old.command else {
+            panic!("parsed another command");
+        };
+        assert_eq!(args.daemon_url.as_deref(), Some("http://x"));
+    }
+
+    #[test]
+    fn the_reference_page_matches_the_cli() {
+        use clap::CommandFactory;
+        let page = command_tree::markdown(Cli::command());
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/docs/content/docs/reference/cli/commands.mdx"
+        );
+        let committed = std::fs::read_to_string(path).unwrap_or_default();
+        assert!(
+            committed == page,
+            "apps/docs/content/docs/reference/cli/commands.mdx is out of date; run \
+             `cargo run -p oore -- commands --markdown > apps/docs/content/docs/reference/cli/commands.mdx`"
+        );
+    }
 
     async fn key_check_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()

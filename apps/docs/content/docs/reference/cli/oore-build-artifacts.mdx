@@ -1,0 +1,32 @@
+---
+title: '`oore build artifacts`, `install-link` and `artifact download`'
+status: implemented
+description: 'List the files a build made, download one, or get a link to install the app on a phone.'
+---
+
+```text
+oore build artifacts <BUILD_ID> [--json]
+oore build install-link <BUILD_ID> [--platform android|ios] [--json]
+oore artifact download <ARTIFACT_ID> -o <PATH> [--json]
+```
+
+`oore build artifacts` lists the build's files with their ID, name, type
+(`apk`, `aab`, `ipa`, `app` or `generic`), size and state.
+
+`oore build install-link` makes an install link for the build's APK, IPA or
+both, as **Install** in the web UI does. Open it on the phone, or send it to a
+tester. Links expire; `--json` prints `expires_at`.
+
+```text
+$ oore build install-link bld_9c1e
+app-release.apk (android): https://oore.example.com/install/a/3c9f...
+Runner.ipa (ios): https://oore.example.com/install/i/7d21...
+```
+
+`oore artifact download` fetches a short-lived download link for one file
+and writes it to `-o PATH`, or to standard output with `-o -`.
+
+```bash
+id=$(oore build artifacts bld_9c1e --json | jq -r '.artifacts[] | select(.artifact_type=="aab") | .id')
+oore artifact download "$id" -o app-release.aab
+```

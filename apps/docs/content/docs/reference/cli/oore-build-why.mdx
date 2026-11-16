@@ -1,0 +1,57 @@
+---
+title: '`oore build why`'
+status: implemented
+description: 'Explain a failed build: the step, the likely cause and fix, the failed tests and the last lines of the step.'
+---
+
+```text
+oore build why <BUILD_ID> [--tail N] [--json]
+```
+
+```text
+$ oore build why bld_9c1e
+Build #48 failed in step Build Android (exit 1)
+
+Cause: The runner ran out of disk space.
+Fix: Free space on the runner, or lower how long build files are kept.
+Line: java.io.IOException: No space left on device
+
+Last 40 lines of the step:
+  ...
+```
+
+It prints the failed step and its exit code, the likely cause and fix Oore
+found in the log, the failed tests with their first message line, the last
+lines of the failed step (40 by default, `--tail` up to 200), and the build's
+page.
+
+With `--json`, it prints the shape of `GET /v1/builds/{build_id}/diagnosis`:
+
+```json
+{
+  "build_id": "bld_9c1e",
+  "build_number": 48,
+  "status": "failed",
+  "failed_step": {
+    "name": "build-android",
+    "label": "Build Android",
+    "exit_code": 1
+  },
+  "hint": {
+    "cause": "...",
+    "fix": "...",
+    "line": "...",
+    "category": "disk",
+    "sequence": 812
+  },
+  "log_tail": ["..."],
+  "log_tail_truncated": true,
+  "failed_tests": [{ "name": "login works", "message": "Expected true" }],
+  "failed_tests_total": 1,
+  "url": "https://oore.example.com/builds/bld_9c1e"
+}
+```
+
+On a daemon without that endpoint, `oore` builds the same answer from the
+build, its failure hint, its test results and its log; `url` is then left
+out. A build that did not fail says so and exits `0`.
