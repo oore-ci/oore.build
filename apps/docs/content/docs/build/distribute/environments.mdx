@@ -1,75 +1,79 @@
 ---
-title: 'Promote builds between environments'
+title: 'Promote builds between tracks'
 status: implemented
-description: 'Define internal, beta and production environments on an app and promote a tested Google Play or TestFlight build between them without rebuilding it.'
+description: 'Set up internal, beta and production tracks on an app and promote a tested Google Play or TestFlight build between them without rebuilding it.'
 ---
 
-An environment names where an app's releases go: a store, a track, the
-staged rollout for releases promoted into it, and whether a promotion needs an
+A track names where an app's releases go: a store destination, the staged
+rollout for releases promoted into it, and whether a promotion needs an
 approval, and from whom. A build that passed internal testing is promoted to
 beta or production as the same version code, or, on the App Store, as the
 same TestFlight build. Nothing is rebuilt or uploaded again, so what users
 get is exactly what testers checked.
 
-Apps without environments keep working as before: each pipeline's
+The API and the CLI call a track an **environment**
+(`/environments`, `environment_id`). The web app calls it a track.
+
+Apps without tracks keep working as before: each pipeline's
 publish settings decide where its uploads go.
 
 ## What you need
 
 - App maintainer, instance admin, or instance owner access to add
-  environments and to promote. Developers can ask for a promotion into an
-  environment that requires approval. Who approves is set per environment;
+  tracks and to promote. Developers can ask for a promotion into a
+  track that requires approval. Who approves is set per track;
   by default it is any maintainer.
-- Google Play publishing set up on the pipeline that builds the app. See
+- Google Play connected on the app's **Stores** tab. See
   [Publish to Google Play](/build/distribute/google-play). Promotion uses the
   same service account, from the daemon host.
 - A first upload of the build to a Play track, such as internal testing.
-- For the App Store: App Store publishing to TestFlight set up on the
-  pipeline. See [Publish to the App Store](/build/distribute/app-store).
-  Promotion uses the pipeline's App Store Connect API key, from the daemon
-  host. The build needs a TestFlight release that testers already have.
+- For the App Store: App Store Connect connected on the app's **Stores** tab,
+  and App Store publishing to TestFlight set up on the pipeline. See
+  [Publish to the App Store](/build/distribute/app-store). The build needs a
+  TestFlight release that testers already have.
 
-## 1. Add environments
+## 1. Add tracks
 
-On the app, open the **Environments** tab and select **Add environment**.
-Set **Name**, **Key**, **Store**, and **Track**, turn on **Require approval**
-where someone must sign off (see [Choose who approves](#choose-who-approves)),
-and set the rollout. Add them in promotion
-order, for example:
+On the app, open the **Stores** tab. Under **Google Play** or **App Store
+Connect**, select **Add track**. Set **Name**, **Key** and where it goes
+(**Play track** on Google Play), turn on **Require approval** where someone
+must sign off (see [Choose who approves](#choose-who-approves)), and set the
+rollout. Select **Edit** on a track to change it in place. Add them in
+promotion order, for example:
 
-| Name       | Key          | Track        | Approval | Rollout                           |
+| Name       | Key          | Play track   | Approval | Rollout                           |
 | ---------- | ------------ | ------------ | -------- | --------------------------------- |
 | Internal   | `internal`   | `internal`   | Off      | Full release                      |
 | Beta       | `beta`       | `open`       | On       | 50%, then 100% after 12 hours     |
 | Production | `production` | `production` | On       | 1, 5, 20, 50, 100% every 24 hours |
 
-The key is fixed once created; configuration files will refer to
-environments by key. Each store and track belongs to at most one environment.
-Google Play runs staged rollouts only on the production and open testing
-tracks. On internal, closed and custom tracks a promotion is always a full
-release, so Oore refuses a staged rollout policy for those environments when
-you save them, instead of Play refusing it in the middle of a promotion.
+The key is fixed once created; configuration files will refer to tracks by key.
+Each store destination belongs to at most one track. Google Play runs staged
+rollouts only on the production and open testing tracks. On internal, closed
+and custom tracks a promotion is always a full release, so Oore refuses a
+staged rollout policy for those tracks when you save them, instead of Play
+refusing it in the middle of a promotion.
 
-App Store environments use the store **App Store** and one of two kinds of
-track:
+App Store Connect tracks go to one of two places (**Goes to**):
 
-| Name       | Key          | Track                | Approval | Rollout                        |
+| Name       | Key          | Goes to              | Approval | Rollout                        |
 | ---------- | ------------ | -------------------- | -------- | ------------------------------ |
 | TestFlight | `testflight` | `Internal` (a group) | Off      | None                           |
 | External   | `external`   | `External` (a group) | Off      | None                           |
 | App Store  | `app-store`  | `app_store`          | On       | Phased release, or all at once |
 
-- A **TestFlight group** track is the group's name as App Store Connect shows
+- A **TestFlight group** is the group's name as App Store Connect shows
   it. Several groups are separated by `, `, the same way an upload records
   them. TestFlight has no staged rollout, so the rollout policy is not used.
-- The **`app_store`** track is the app's App Store version. Turn on
-  **Phased release** to release over seven days on Apple's schedule (1, 2, 5,
-  10, 20, 50, 100%); off releases to everyone once Apple approves the version.
-  From the API, a rollout policy with more than one step turns on phased
-  release; Oore's steps and interval do not change Apple's schedule. Turn on
-  **Submit for review** (`submit_for_review`) to submit the version for App
-  Review after the build is attached; otherwise it waits for you to submit it
-  in App Store Connect. Submit for review is only available on this track.
+- **App Store version** (`app_store` in the API) is the app's App Store
+  version. Turn on **Phased release** to release over seven days on Apple's
+  schedule (1, 2, 5, 10, 20, 50, 100%); off releases to everyone once Apple
+  approves the version. From the API, a rollout policy with more than one
+  step turns on phased release; Oore's steps and interval do not change
+  Apple's schedule. Turn on **Submit for review** (`submit_for_review`) to
+  submit the version for App Review after the build is attached; otherwise it
+  waits for you to submit it in App Store Connect. Submit for review is only
+  available here.
 
 From the API, use
 [Create environment](/openapi/operations/create_project_environment):
@@ -92,26 +96,30 @@ curl -X POST "$OORE_URL/v1/projects/$PROJECT_ID/environments" \
   }'
 ```
 
-A release that a pipeline uploads to an environment's track lands in that
-environment, so the first upload to `internal` shows under **Internal**.
+A release that a pipeline uploads to a track's store destination lands in
+that track, so the first upload to `internal` shows under **Internal**.
 For now that upload keeps the pipeline's own rollout policy; the
-environment's policy applies to releases promoted into it.
+track's policy applies to releases promoted into it.
 
-Once an environment has releases, its track is fixed. To move to another
-track, add a new environment.
+Once a track has releases, where it goes is fixed. To go somewhere else, add
+a new track.
 
 ## 2. Promote a build
 
-1. Select **Promote** on the environment that holds the build.
-2. In **Promote to**, choose the target environment. The list shows only
-   environments in the store the build was released to.
+The app's **Releases** tab lists every track with the version it has and one
+next action: **Promote**, **Approve**, **Halt** or **Resume**. Other release
+actions sit in the menu beside it.
+
+1. Select **Promote** on the track that holds the build.
+2. In **Promote to**, choose the target track. The list shows only
+   tracks in the store the build was released to.
 3. In **Reason**, say why, such as `QA signed off on 2.4.0`.
 4. Select **Promote**. When the target requires approval, the button reads
    **Ask to promote** and the promotion waits for an approver.
 
 On Google Play, the daemon assigns the release's version code to the target
 track in one Play edit, keeping its release name and notes, then records a
-release with the target environment's rollout policy. The rollout monitor
+release with the target track's rollout policy. The rollout monitor
 raises it on schedule and halts it on a crash-rate breach like any other
 release.
 
@@ -128,12 +136,12 @@ distribution makes:
   lets you edit. Create the version and prepare its metadata in App Store
   Connect first. Promotion sets "What's New" to the app version's release
   notes when it has some; otherwise App Store Connect keeps what it has. The
-  promote dialog shows the notes, with **Edit**. Phased release is turned on or off from the environment,
-  and the version is submitted for review when the environment says so. The
+  promote dialog shows the notes, with **Edit**. Phased release is turned on or off from the track,
+  and the version is submitted for review when the track says so. The
   release shows **In review**, then follows App Review and phased release in
   App Store Connect.
 
-Promotions into the App Store version are serialised per environment, and
+Promotions into the App Store version are serialised per track, and
 only one build at a time can hold the version: while another build's release
 is in review or releasing on it, a second build is refused.
 
@@ -154,8 +162,8 @@ dialog shows why. See [Troubleshooting](#troubleshooting).
 
 ## 3. Approve a promotion
 
-When the target environment requires approval, the promotion waits under
-**Waiting for approval** and nothing changes in the store. Each waiting
+When the target track requires approval, the promotion waits under
+**Waiting for approval** on the **Releases** tab, the track shows **Approve**, and nothing changes in the store. Each waiting
 promotion says who can approve it. One of them selects **Approve** to make the
 store change, or **Reject** to drop it. The approval is the release's
 approval, so the new release does not wait again.
@@ -163,7 +171,7 @@ approval, so the new release does not wait again.
 ### Choose who approves
 
 By default any app maintainer approves. To narrow or widen that, edit the
-environment and, with **Require approval** on, set:
+track on the **Stores** tab and, with **Require approval** on, set:
 
 - **Who can approve**: Maintainers, Developers and maintainers, or Only named
   approvers.
@@ -175,10 +183,11 @@ only named approvers, other maintainers cannot approve or reject; they get
 `403 permission_denied`. Instance owners and admins can always approve.
 Approvals are interactive: an API token cannot approve or reject a promotion,
 whatever its role, and gets `403 permission_denied`. Maintainers can still
-edit the environment, including its approvers, and the audit log records each
+edit the track, including its approvers, and the audit log records each
 change.
 
-From the API, set `approvers` when you create or update the environment. It
+From the API, set `approvers` when you create or update the environment
+(the track). It
 replaces the whole set; leaving it out, or sending `null`, keeps the current
 set, and `{}` goes back to any maintainer (so does `"role": "maintainer"` with
 nobody named). Only app members who are developers or maintainers can be
@@ -198,27 +207,26 @@ maintainer approves again.
 The person who asked for a promotion can approve it when they are an
 approver. The `promotion_approved` audit entry records `self_approval`,
 `decided_as` (`maintainer`, `approver_role`, `named_approver` or
-`instance_admin`) and the environment's approvers at that moment.
+`instance_admin`) and the track's approvers at that moment.
 
 Approval applies to promotions only. A maintainer who records a release
 directly with [Create release](/openapi/operations/create_release)
-(`POST /v1/releases`) on an environment's track does not go through the
-environment's approval.
+(`POST /v1/releases`) on a track's store destination does not go through
+the track's approval.
 
-Deleting an environment rejects its promotions that are waiting for approval,
+Deleting a track rejects its promotions that are waiting for approval,
 with the reason `environment deleted` in the audit log.
 
 ## Verify the result
 
-- The environment shows the promoted version, marked **Promoted**, and its
+- On the **Releases** tab, the track shows the promoted version and its
   rollout.
 - **Recent promotions** lists the promotion with who approved it. A failed
   promotion shows its error there.
 - Play Console shows the version code on the target track. For the App
   Store, App Store Connect shows the build in the TestFlight group, or
   attached to the App Store version.
-- The app's **Releases** tab shows the version under **Where each version
-  is** on the target track, and under **Versions** with every store it went
+- **Versions** on the same tab lists the version with every store it went
   to. Each release opens its own page with its history and controls.
 - The audit log has `promotion_requested`, `promotion_approved` and
   `promotion_completed` entries, and a `release_created` entry for the new
@@ -226,29 +234,30 @@ with the reason `environment deleted` in the audit log.
 
 ## Troubleshooting
 
-### **Promote** is missing on an environment
+### **Promote** is missing on a track
 
-Promotion moves a build toward environments listed after it, in the same
-store. **Promote** shows only when the environment has a release that is
-rolling out, paused, or complete, and a later environment in the same store
-can take it. Developers see it only toward an environment that requires
-approval.
+Promotion moves a build toward tracks listed after it, in the same
+store. **Promote** shows only when the track has a release that is
+rolling out, paused, or complete, and a later track in the same store
+can take it. Developers see it only toward a track that requires
+approval. A track shows one action at a time: a waiting approval, a halt or
+a resume comes before **Promote**.
 
 ### The dialog says the build already has a release there
 
-A build cannot be promoted into an environment where it already has a
+A build cannot be promoted into a track where it already has a
 release, unless that release failed.
 
 ### The dialog says a promotion is already waiting for approval
 
-Someone already asked to promote this build there. One of the environment's
+Someone already asked to promote this build there. One of the track's
 approvers approves or rejects it under **Waiting for approval**.
 
 ### Approve says only certain people can approve
 
-The environment names its approvers. The message and the waiting promotion
+The track names its approvers. The message and the waiting promotion
 say who they are. Ask one of them, or have a maintainer change the
-environment's approvers.
+track's approvers.
 
 ### An App Store promotion fails
 
@@ -263,7 +272,7 @@ Store Connect:
 | `version_mismatch`            | The editable version has another version string, such as 1.3.0 for a 1.2.0 build. Oore never renames it; change it in App Store Connect. |
 | `version_not_editable`        | The version for this version string is in review or live, so no other build can be attached.                                             |
 | `version_held_by_other_build` | Another build's release is in review or releasing on this version. Wait until it finishes or fails.                                      |
-| `testflight_group_not_found`  | App Store Connect has no TestFlight group with the environment's track name.                                                             |
+| `testflight_group_not_found`  | App Store Connect has no TestFlight group with the track's group name.                                                                   |
 
 Other App Store Connect errors fail the promotion with `502 store_rejected`.
 A step may already have happened, such as attaching the build. The calls are
@@ -286,7 +295,7 @@ Store version for release. Follow the review in App Store Connect.
   TestFlight only; an App Store version is not promoted further.
 - A promotion into the App Store never creates or renames an App Store
   version. Uploads that publish straight to the App Store do.
-- Per-environment notification channels, QA groups and secrets are not
+- Per-track notification channels, QA groups and secrets are not
   configurable yet.
 
 ## Next step

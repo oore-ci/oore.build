@@ -95,7 +95,7 @@ function trackChoice(store: string, track: string, typing: boolean) {
 function trackHelp(store: string, track: string) {
   const value = track.trim()
   if (store === 'google_play') {
-    if (!value) return 'Where on Google Play this environment releases to.'
+    if (!value) return 'Where on Google Play this track releases to.'
     return isPlayTrack(value)
       ? PLAY_TRACKS[value].effect
       : 'A custom closed testing track you created in Play Console, by its exact name.'
@@ -137,7 +137,7 @@ const environmentFormSchema = z
         `Names can be at most ${ENVIRONMENT_NAME_MAX_LENGTH} characters.`,
       ),
     store: z.enum(['google_play', 'app_store']),
-    track: z.string().trim().min(1, 'Choose a track.'),
+    track: z.string().trim().min(1, 'Choose where this track goes.'),
     approval_required: z.boolean(),
     approver_mode: z.enum(['maintainer', 'developer', 'named']),
     approver_user_ids: z.array(z.string()),
@@ -179,12 +179,13 @@ type EnvironmentFormValues = z.infer<typeof environmentFormSchema>
 
 function defaultValues(
   environment: ProjectEnvironment | undefined,
+  store: ProjectEnvironment['store'] | undefined,
 ): EnvironmentFormValues {
   const policy = environment?.rollout_policy
   return {
     key: environment?.key ?? '',
     name: environment?.name ?? '',
-    store: environment?.store ?? 'google_play',
+    store: environment?.store ?? store ?? 'google_play',
     track: environment?.track ?? '',
     approval_required: environment?.approval_required ?? false,
     approver_mode: approverMode(environment?.approvers),
@@ -206,17 +207,22 @@ function numberOrUndefined(value: string) {
   return value === '' ? undefined : Number(value)
 }
 
-/** Add an environment, or edit one when `environment` is set. */
+/**
+ * Add a track (an environment in the API), or edit one when `environment`
+ * is set. A `store` fixes the store, as the Stores tab opens it per store.
+ */
 export function EnvironmentDialog({
   environment,
   onOpenChange,
   open,
   projectId,
+  store: fixedStore,
 }: {
   environment?: ProjectEnvironment
   onOpenChange: (open: boolean) => void
   open: boolean
   projectId: string
+  store?: ProjectEnvironment['store']
 }) {
   const isEdit = environment !== undefined
   // The daemon keeps the track of an environment that has releases.
@@ -226,7 +232,7 @@ export function EnvironmentDialog({
   const mutation = isEdit ? updateMutation : createMutation
   const form = useForm<EnvironmentFormValues>({
     resolver: zodResolver(environmentFormSchema),
-    values: defaultValues(environment),
+    values: defaultValues(environment, fixedStore),
   })
   // Picking "Custom track" or "TestFlight group" shows a text field.
   const [typingTrack, setTypingTrack] = useState(false)
@@ -297,7 +303,7 @@ export function EnvironmentDialog({
       form.setError('root', {
         message: getApiErrorMessage(err, {
           environment_exists:
-            'Another environment already uses this key, or this store and track.',
+            'Another track already uses this key, or this store track.',
         }),
       })
     if (environment) {
@@ -349,7 +355,11 @@ export function EnvironmentDialog({
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
-            {isEdit ? `Edit ${environment.name}` : 'Add environment'}
+            {isEdit
+              ? `Edit ${environment.name}`
+              : fixedStore
+                ? `Add ${RELEASE_STORE_LABEL[fixedStore]} track`
+                : 'Add track'}
           </DialogTitle>
         </DialogHeader>
 
@@ -369,7 +379,7 @@ export function EnvironmentDialog({
                       <Input
                         autoFocus
                         autoComplete="off"
-                        placeholder="Production"
+                        placeholder="Beta"
                         {...field}
                       />
                     </FormControl>
@@ -388,7 +398,7 @@ export function EnvironmentDialog({
                         autoComplete="off"
                         spellCheck={false}
                         className="font-mono"
-                        placeholder="production"
+                        placeholder="beta"
                         disabled={isEdit}
                         {...field}
                       />
@@ -400,44 +410,46 @@ export function EnvironmentDialog({
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-              <FormField
-                control={form.control}
-                name="store"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Store</FormLabel>
-                    <Select
-                      value={field.value}
-                      onValueChange={(next) => {
-                        if (next === 'google_play' || next === 'app_store') {
-                          field.onChange(next)
-                          setTypingTrack(false)
-                          form.setValue('track', '', { shouldDirty: true })
-                          clearSubmitUnlessAppStoreVersion(next, '')
-                        }
-                      }}
-                      items={RELEASE_STORE_LABEL}
-                      disabled={isEdit}
-                    >
-                      <FormControl>
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {Object.entries(RELEASE_STORE_LABEL).map(
-                          ([value, label]) => (
-                            <SelectItem key={value} value={value}>
-                              {label}
-                            </SelectItem>
-                          ),
-                        )}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+              {fixedStore ? null : (
+                <FormField
+                  control={form.control}
+                  name="store"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Store</FormLabel>
+                      <Select
+                        value={field.value}
+                        onValueChange={(next) => {
+                          if (next === 'google_play' || next === 'app_store') {
+                            field.onChange(next)
+                            setTypingTrack(false)
+                            form.setValue('track', '', { shouldDirty: true })
+                            clearSubmitUnlessAppStoreVersion(next, '')
+                          }
+                        }}
+                        items={RELEASE_STORE_LABEL}
+                        disabled={isEdit}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.entries(RELEASE_STORE_LABEL).map(
+                            ([value, label]) => (
+                              <SelectItem key={value} value={value}>
+                                {label}
+                              </SelectItem>
+                            ),
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
               <FormField
                 control={form.control}
                 name="track"
@@ -451,7 +463,9 @@ export function EnvironmentDialog({
                     choice === 'custom' || choice === 'testflight'
                   return (
                     <FormItem>
-                      <FormLabel>Track</FormLabel>
+                      <FormLabel>
+                        {store === 'google_play' ? 'Play track' : 'Goes to'}
+                      </FormLabel>
                       <Select
                         value={choice}
                         items={choices}
@@ -471,7 +485,13 @@ export function EnvironmentDialog({
                       >
                         <FormControl>
                           <SelectTrigger className="w-full">
-                            <SelectValue placeholder="Choose a track" />
+                            <SelectValue
+                              placeholder={
+                                store === 'google_play'
+                                  ? 'Choose a Play track'
+                                  : 'Choose where'
+                              }
+                            />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -518,7 +538,7 @@ export function EnvironmentDialog({
             </div>
             <Text className="-mt-2">
               {trackLocked
-                ? 'This environment has releases, so its track is fixed. Add a new environment for another track.'
+                ? 'This track has releases, so where it goes is fixed. Add a new track to go somewhere else.'
                 : trackHelp(store, track)}
             </Text>
 
@@ -823,7 +843,7 @@ export function EnvironmentDialog({
                 {mutation.isPending ? (
                   <Spinner data-icon="inline-start" />
                 ) : null}
-                {isEdit ? 'Save changes' : 'Add environment'}
+                {isEdit ? 'Save changes' : 'Add track'}
               </Button>
             </DialogFooter>
           </form>

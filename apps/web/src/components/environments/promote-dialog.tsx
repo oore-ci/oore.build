@@ -48,7 +48,7 @@ const PROMOTION_ERRORS = {
 }
 
 /**
- * Promote the build behind `release` from `source` into another environment.
+ * Promote the build behind `release` from `source` into another track.
  * The daemon reuses the version the store already has; nothing is rebuilt.
  */
 export function PromoteDialog({
@@ -160,7 +160,7 @@ export function PromoteDialog({
               items={items}
             >
               <SelectTrigger id="promote-target" className="w-full">
-                <SelectValue placeholder="No environment to promote to" />
+                <SelectValue placeholder="No track to promote to" />
               </SelectTrigger>
               <SelectContent>
                 {targets.map((environment) => (
