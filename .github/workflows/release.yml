@@ -330,67 +330,86 @@ jobs:
           if-no-files-found: error
 
   # Linux gets the CLI only (the cli-only profile), linked statically against
-  # musl so it runs in any distribution or container. GitHub-hosted runners
-  # build it, so the macOS runners carry no extra work.
+  # musl so it runs in any distribution or container. Both architectures are
+  # cross-built on the self-hosted Linux runner with Zig as the C compiler and
+  # linker, so the job needs no root access and no arm64 machine.
   rust-linux:
-    name: Build Linux CLI (${{ matrix.arch }})
+    name: Build Linux CLI
     needs: source
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-          - arch: x86_64
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
+    timeout-minutes: 60
+    env:
+      ZIG_VERSION: 0.14.1
+      ZIG_SHA256: 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+      CARGO_ZIGBUILD_VERSION: 0.24.1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.source.outputs.commit }}
 
-      - name: Install musl tools
+      - name: Install Rust
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends musl-tools
-
-      - name: Install pinned Rust toolchain
-        run: |
+          set -euo pipefail
+          if ! command -v rustup > /dev/null 2>&1 && [[ ! -x "$HOME/.cargo/bin/rustup" ]]; then
+            curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
           if [[ -f rust-toolchain.toml ]]; then
             rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
           fi
+          rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
-      - name: Setup Rust target
-        run: rustup target add "${{ matrix.target }}"
+      - name: Install Zig and cargo-zigbuild
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/linux-cli-tools"
+          mkdir -p "$tools"
+          curl -fsSL -o "$tools/zig.tar.xz" \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          printf '%s  %s\n' "$ZIG_SHA256" "$tools/zig.tar.xz" | sha256sum --check --strict
+          tar -xJf "$tools/zig.tar.xz" -C "$tools"
+          echo "$tools/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          cargo install --locked --root "$tools/cargo" "cargo-zigbuild@${CARGO_ZIGBUILD_VERSION}"
+          echo "$tools/cargo/bin" >> "$GITHUB_PATH"
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           cache-bin: false
           cache-on-failure: true
           cache-workspace-crates: true
-          key: ${{ matrix.target }}
+          key: linux-musl
 
       - name: Build Linux CLI
         run: |
           set -euo pipefail
-          cargo build --release -p oore --target "${{ matrix.target }}" --locked
-          binary="target/${{ matrix.target }}/release/oore"
-          file "$binary"
-          file "$binary" | grep -Eq 'static(ally|-pie) linked' || {
-            echo 'The Linux CLI is not statically linked.' >&2
-            exit 1
-          }
-          "$binary" --help > /dev/null
-          mkdir -p dist/rust
-          cp "$binary" dist/rust/oore
+          for pair in arm64:aarch64-unknown-linux-musl x86_64:x86_64-unknown-linux-musl; do
+            arch="${pair%%:*}"
+            target="${pair#*:}"
+            cargo zigbuild --release -p oore --target "$target" --locked
+            binary="target/$target/release/oore"
+            file "$binary"
+            file "$binary" | grep -Eq 'static(ally|-pie) linked' || {
+              echo "The $arch Linux CLI is not statically linked." >&2
+              exit 1
+            }
+            mkdir -p "dist/rust-linux/$arch"
+            cp "$binary" "dist/rust-linux/$arch/oore"
+          done
+          # The runner is x86_64, so only that build can run here.
+          dist/rust-linux/x86_64/oore --help > /dev/null
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: rust-linux-${{ matrix.arch }}-${{ needs.source.outputs.commit }}
-          path: dist/rust
+          name: rust-linux-arm64-${{ needs.source.outputs.commit }}
+          path: dist/rust-linux/arm64
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-linux-x86_64-${{ needs.source.outputs.commit }}
+          path: dist/rust-linux/x86_64
           if-no-files-found: error
 
   release:
