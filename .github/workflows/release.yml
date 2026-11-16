@@ -93,7 +93,7 @@ jobs:
   acceptance:
     name: Hermetic release acceptance
     needs: source
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -149,7 +149,7 @@ jobs:
   deploy:
     name: Deploy Pages
     needs: [source, acceptance, release, publish-release]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -284,7 +284,7 @@ jobs:
   rust:
     name: Build Rust (${{ matrix.arch }})
     needs: source
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -332,7 +332,7 @@ jobs:
   release:
     name: Build release assets
     needs: [source, acceptance, rust]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 45
     permissions:
       actions: read
@@ -777,7 +777,7 @@ jobs:
   release-index:
     name: Build release index
     needs: [source, publish-release]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 15
     permissions:
       actions: read
@@ -863,7 +863,7 @@ jobs:
   deploy-installer:
     name: Deploy signed installer
     needs: [source, sign-release-index]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 20
     permissions:
       actions: read
@@ -983,7 +983,7 @@ jobs:
   deploy-release-index:
     name: Deploy release index
     needs: [source, sign-release-index, deploy-installer]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 20
     permissions:
       actions: read
