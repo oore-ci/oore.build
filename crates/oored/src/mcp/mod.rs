@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::body::Body;
-use axum::extract::{ConnectInfo, FromRequestParts, Request, State};
+use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::any;
@@ -40,9 +40,9 @@ use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, Stream
 use tower::ServiceExt;
 
 use crate::AppState;
-use crate::extractors::AuthUser;
+use crate::extractors::authenticate_bearer;
 use crate::session::SessionInfo;
-use crate::util::api_err;
+use crate::util::{api_err, extract_bearer};
 
 use client::ApiClient;
 
@@ -142,6 +142,17 @@ fn origin_allowed(headers: &axum::http::HeaderMap) -> bool {
         || origin_authority.strip_suffix(default_port) == Some(host.as_str())
 }
 
+fn unauthorized(rejection: (StatusCode, axum::Json<oore_contract::ApiError>)) -> Response {
+    let mut response = rejection.into_response();
+    if response.status() == StatusCode::UNAUTHORIZED {
+        response.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            HeaderValue::from_static("Bearer realm=\"oore\""),
+        );
+    }
+    response
+}
+
 async fn entry(State(state): State<McpState>, request: Request) -> Response {
     if !mcp_enabled(&state.app.db).await {
         return api_err(StatusCode::NOT_FOUND, "not_found", "Not found").into_response();
@@ -156,16 +167,27 @@ async fn entry(State(state): State<McpState>, request: Request) -> Response {
     }
 
     let (mut parts, body) = request.into_parts();
-    let session = match AuthUser::from_request_parts(&mut parts, &state.app).await {
-        Ok(AuthUser(session)) => session,
-        Err(rejection) => {
-            let mut response = rejection.into_response();
-            response.headers_mut().insert(
-                header::WWW_AUTHENTICATE,
-                HeaderValue::from_static("Bearer realm=\"oore\""),
-            );
-            return response;
+    // Resolve the credential here rather than through `AuthUser`: `/mcp`
+    // sits outside the API's request-scope layer, and its tool calls go
+    // back through that layer, where a token's limits apply.
+    let resolved = match extract_bearer(&parts.headers) {
+        Some(token) => authenticate_bearer(&state.app, token).await,
+        None => Err(api_err(
+            StatusCode::UNAUTHORIZED,
+            "missing_auth",
+            "Authorization header required",
+        )),
+    };
+    let session = match resolved {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            return unauthorized(api_err(
+                StatusCode::UNAUTHORIZED,
+                "invalid_session",
+                "Invalid or expired token",
+            ));
         }
+        Err(rejection) => return unauthorized(rejection),
     };
     parts.extensions.insert(Caller { session });
     let request = Request::from_parts(parts, body);
