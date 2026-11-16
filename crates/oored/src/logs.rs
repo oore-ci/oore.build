@@ -71,7 +71,11 @@ const STREAM_TOKEN_TTL_SECS: i64 = 300;
 const MAX_OUTSTANDING_STREAM_TOKENS: usize = 256;
 const MAX_OUTSTANDING_STREAM_TOKENS_PER_USER: usize = 16;
 const MAX_OUTSTANDING_STREAM_TOKENS_PER_BUILD: usize = 32;
-const MAX_ACTIVE_STREAMS_PER_USER: usize = 4;
+/// Live log streams per caller: per API token, or per person for browser
+/// and CLI sign-ins.
+pub(crate) const MAX_ACTIVE_STREAMS_PER_USER: usize = 4;
+/// Live log streams of one person across their sign-ins and tokens.
+pub(crate) const MAX_ACTIVE_STREAMS_PER_PERSON: usize = 12;
 const MAX_ACTIVE_STREAMS_PER_BUILD: usize = 16;
 const MAX_ACTIVE_STREAMS_GLOBAL: usize = 128;
 
@@ -96,6 +100,7 @@ struct StreamTokenEntry {
 struct StreamState {
     tokens: HashMap<String, StreamTokenEntry>,
     active_by_user: HashMap<String, usize>,
+    active_by_key: HashMap<String, usize>,
     active_by_build: HashMap<String, usize>,
     active_total: usize,
 }
@@ -184,11 +189,18 @@ impl StreamTokenStore {
             .filter(|entry| entry.authorization.expires_at > now)
     }
 
-    fn acquire(&self, user_id: &str, build_id: &str) -> Result<StreamAdmission, ()> {
+    fn acquire(
+        &self,
+        user_id: &str,
+        limit_key: &str,
+        build_id: &str,
+    ) -> Result<StreamAdmission, ()> {
         let mut state = self.lock();
         if state.active_total >= MAX_ACTIVE_STREAMS_GLOBAL
-            || state.active_by_user.get(user_id).copied().unwrap_or(0)
+            || state.active_by_key.get(limit_key).copied().unwrap_or(0)
                 >= MAX_ACTIVE_STREAMS_PER_USER
+            || state.active_by_user.get(user_id).copied().unwrap_or(0)
+                >= MAX_ACTIVE_STREAMS_PER_PERSON
             || state.active_by_build.get(build_id).copied().unwrap_or(0)
                 >= MAX_ACTIVE_STREAMS_PER_BUILD
         {
@@ -198,12 +210,17 @@ impl StreamTokenStore {
         state.active_total += 1;
         *state.active_by_user.entry(user_id.to_string()).or_default() += 1;
         *state
+            .active_by_key
+            .entry(limit_key.to_string())
+            .or_default() += 1;
+        *state
             .active_by_build
             .entry(build_id.to_string())
             .or_default() += 1;
         Ok(StreamAdmission {
             state: self.state.clone(),
             user_id: user_id.to_string(),
+            limit_key: limit_key.to_string(),
             build_id: build_id.to_string(),
         })
     }
@@ -218,6 +235,7 @@ impl StreamTokenStore {
 struct StreamAdmission {
     state: Arc<Mutex<StreamState>>,
     user_id: String,
+    limit_key: String,
     build_id: String,
 }
 
@@ -229,6 +247,7 @@ impl Drop for StreamAdmission {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.active_total -= 1;
         decrement_count(&mut state.active_by_user, &self.user_id);
+        decrement_count(&mut state.active_by_key, &self.limit_key);
         decrement_count(&mut state.active_by_build, &self.build_id);
     }
 }
@@ -378,6 +397,15 @@ pub(crate) async fn require_build_log_read(
     build_id: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
     let project_id = load_build_project_id(pool, build_id).await?;
+    // Log streams outlive the request scope, so apply the token's app list
+    // from the session itself.
+    if !session.allows_project(&project_id) {
+        return Err(api_err(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "Build not found",
+        ));
+    }
     let effective = resolve_effective_project_role(
         pool,
         &session.user_id,
@@ -411,6 +439,7 @@ pub(crate) async fn load_current_stream_session(
                 role: row.get("role"),
                 expires_at: row.get("expires_at"),
                 auth_source: AuthSource::Session,
+                token: None,
             }))
         }
         AuthSource::ApiToken => {
@@ -871,7 +900,7 @@ pub async fn stream_build_logs(
     Path(build_id): Path<String>,
     Query(sse_query): Query<SseTokenQuery>,
     headers: axum::http::HeaderMap,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<ApiError>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<ApiError>)> {
     // Authenticate: ?token= accepts ONLY short-lived stream tokens (never session tokens).
     // Authorization header accepts full session tokens for non-browser clients (curl, etc.).
     // This prevents long-lived session tokens from appearing in URL query strings.
@@ -932,16 +961,19 @@ pub async fn stream_build_logs(
 
     let pool = state.db.clone();
     let session = require_current_stream_authorization(&pool, &authorization, &build_id).await?;
-    let admission = state
-        .stream_tokens
-        .acquire(&session.user_id, &build_id)
-        .map_err(|_| {
-            api_err(
-                StatusCode::TOO_MANY_REQUESTS,
-                "stream_limit",
-                "Too many active log streams",
-            )
-        })?;
+    let Ok(admission) =
+        state
+            .stream_tokens
+            .acquire(&session.user_id, &session.limit_key(), &build_id)
+    else {
+        return Ok(crate::util::limit_reached_response(
+            "stream_limit",
+            format!(
+                "Too many live log streams: at most {MAX_ACTIVE_STREAMS_PER_USER} per API token or browser sign-in, {MAX_ACTIVE_STREAMS_PER_PERSON} per person and {MAX_ACTIVE_STREAMS_PER_BUILD} per build. Close a stream or read the logs with GET /v1/builds/{{build_id}}/logs."
+            ),
+            5,
+        ));
+    };
 
     // Check for Last-Event-ID header for reconnection support
     let last_event_id: i64 = headers
@@ -962,7 +994,9 @@ pub async fn stream_build_logs(
         build_state_events,
     );
 
-    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    Ok(Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response())
 }
 
 /// Produce an event-driven SSE stream with bounded recovery polling.

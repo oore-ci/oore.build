@@ -39,7 +39,15 @@ type Row = [
   details?: Readonly<Record<string, DetailValue>>,
   /** Details the daemon writes as plain words instead of JSON. */
   note?: string,
+  /** The API token the actor acted through, by demo token id. */
+  token?: keyof typeof TOKENS,
 ]
+
+/** Demo API tokens that show up in the log, matching `makeApiTokens`. */
+const TOKENS = {
+  'token-demo-002': 'Release automation',
+  'token-demo-003': 'Local CLI',
+} as const
 
 const { owner, admin, developer, qaViewer } = USER_IDS
 
@@ -88,6 +96,21 @@ const started = (
   },
 ]
 
+const withToken = (row: Row, token: keyof typeof TOKENS): Row => {
+  const [secondsAgo, actor, action, resourceType, resourceId, details, note] =
+    row
+  return [
+    secondsAgo,
+    actor,
+    action,
+    resourceType,
+    resourceId,
+    details,
+    note,
+    token,
+  ]
+}
+
 // The same actions and details the daemon writes, newest first.
 const ROWS: Array<Row> = [
   [
@@ -99,13 +122,16 @@ const ROWS: Array<Row> = [
     { failed_checks: [], ready: true },
   ],
   signIn(9 * MINUTE, owner),
-  started(
-    22 * MINUTE,
-    developer,
-    BUILD_IDS.running1,
-    PROJECT_IDS.flutterShop,
-    PIPELINE_IDS.shopAndroid,
-    142,
+  withToken(
+    started(
+      22 * MINUTE,
+      developer,
+      BUILD_IDS.running2,
+      PROJECT_IDS.nativePayments,
+      PIPELINE_IDS.paymentsAll,
+      47,
+    ),
+    'token-demo-003',
   ),
   [
     48 * MINUTE,
@@ -141,6 +167,8 @@ const ROWS: Array<Row> = [
     'build',
     BUILD_IDS.succeeded1,
     { group_id: 'grp-demo-qa', recipients: 12 },
+    undefined,
+    'token-demo-002',
   ],
   [
     2.5 * HOUR,
@@ -157,7 +185,7 @@ const ROWS: Array<Row> = [
     'api_token',
     'tok-demo-ci-deploy',
     undefined,
-    'name=ci-deploy, role=developer, prefix=oore_7f3a',
+    'name=ci-deploy, role=developer, prefix=oore_7f3a91c2, abilities=read build',
   ],
   cleanup(5 * HOUR),
   [
@@ -435,12 +463,14 @@ const ROWS: Array<Row> = [
 
 export const demoAuditLogs: Array<AuditLogEntry> = ROWS.map(
   (
-    [secondsAgo, actor, action, resourceType, resourceId, details, note],
+    [secondsAgo, actor, action, resourceType, resourceId, details, note, token],
     index,
   ) => ({
     id: ROWS.length - index,
     actor_id: actor,
     actor_email: actor ? (EMAILS.get(actor) ?? null) : null,
+    token_id: token ?? null,
+    token_name: token ? TOKENS[token] : null,
     action,
     resource_type: resourceType,
     resource_id: resourceId,

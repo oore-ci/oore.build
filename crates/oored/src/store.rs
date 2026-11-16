@@ -376,9 +376,11 @@ pub async fn write_audit_log(
     details: Option<&str>,
 ) -> anyhow::Result<()> {
     let now = now_unix();
+    // The API token the request signed in with, when it used one.
+    let grant = crate::session::current_grant();
     sqlx::query(
-        "INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, details, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO audit_logs (actor_id, action, resource_type, resource_id, details, created_at, token_id, token_name) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(actor_id)
     .bind(action)
@@ -386,6 +388,8 @@ pub async fn write_audit_log(
     .bind(resource_id)
     .bind(details)
     .bind(now)
+    .bind(grant.as_ref().map(|g| g.id.clone()))
+    .bind(grant.as_ref().map(|g| g.name.clone()))
     .execute(pool)
     .await
     .context("failed to write audit log")?;

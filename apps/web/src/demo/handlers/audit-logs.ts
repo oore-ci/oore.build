@@ -148,6 +148,7 @@ export const auditLogHandlers = [
     const limit = Math.min(Number(params.get('limit')) || 50, 200)
     const offset = Number(params.get('offset')) || 0
     const actorId = params.get('actor_id')
+    const tokenId = params.get('token_id')
     const query = params.get('q')?.trim()
     const kind = params.get('category')
     const fromTs = Number(params.get('from_ts')) || undefined
@@ -161,6 +162,7 @@ export const auditLogHandlers = [
             (actorId === 'system'
               ? !entry.actor_id
               : entry.actor_id === actorId)) &&
+          (!tokenId || entry.token_id === tokenId) &&
           (!kind || entry.category === kind) &&
           (!query || matchesSearch(entry, query)) &&
           (!fromTs || entry.created_at >= fromTs) &&

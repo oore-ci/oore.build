@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   createLazyFileRoute,
   useNavigate,
   useSearch,
 } from '@tanstack/react-router'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
 import { toast } from '@/lib/toast'
@@ -23,6 +23,13 @@ import { getApiErrorMessage } from '@/lib/api-client/api-error'
 import { useAuthStore } from '@/stores/auth-store'
 import { useHasPermissions } from '@/hooks/use-permissions'
 import { usePageClamp } from '@/hooks/use-page-clamp'
+import { useProjects } from '@/hooks/use-projects'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  DEFAULT_TOKEN_ABILITIES,
+  TOKEN_ABILITIES,
+  TOKEN_ABILITY_VALUES,
+} from './-api-token-abilities'
 import {
   useApiTokens,
   useCreateApiToken,
@@ -86,21 +93,34 @@ const ROLE_HIERARCHY: Array<string> = [
 ]
 
 const EXPIRY_OPTIONS = {
-  never: 'Never',
   '30': '30 days',
   '90': '90 days',
   '365': '1 year',
+  never: 'No expiry',
 } satisfies Record<string, string>
 
-const createTokenSchema = z.object({
-  name: z
-    .string()
-    .trim()
-    .min(1, 'Name is required')
-    .max(255, 'Name must be at most 255 characters'),
-  role: z.string().min(1, 'Role is required'),
-  expiry: z.string(),
-})
+const APP_SCOPE_OPTIONS = {
+  all: 'Every app I can reach',
+  chosen: 'Only the apps I choose',
+} satisfies Record<string, string>
+
+const createTokenSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, 'Name is required')
+      .max(255, 'Name must be at most 255 characters'),
+    role: z.string().min(1, 'Role is required'),
+    expiry: z.string(),
+    abilities: z.array(z.enum(TOKEN_ABILITY_VALUES)),
+    appScope: z.enum(['all', 'chosen']),
+    projectIds: z.array(z.string()),
+  })
+  .refine(
+    (values) => values.appScope === 'all' || values.projectIds.length > 0,
+    { message: 'Choose at least one app', path: ['projectIds'] },
+  )
 
 type CreateTokenFormValues = z.infer<typeof createTokenSchema>
 
@@ -117,6 +137,8 @@ function CreateTokenDialog({
 }: CreateTokenDialogProps) {
   const authUser = useAuthStore((s) => s.user)
   const createMutation = useCreateApiToken()
+  const projectsQuery = useProjects({ limit: 200 }, { enabled: open })
+  const projects = projectsQuery.data?.projects ?? []
 
   const userRoleIndex = ROLE_HIERARCHY.indexOf(authUser?.role ?? 'qa_viewer')
   const availableRoles = ROLE_HIERARCHY.slice(userRoleIndex)
@@ -132,9 +154,14 @@ function CreateTokenDialog({
       name: '',
       role: defaultRole,
       expiry: '90',
+      abilities: DEFAULT_TOKEN_ABILITIES,
+      appScope: 'all',
+      projectIds: [],
     },
     mode: 'onBlur',
   })
+
+  const appScope = useWatch({ control: form.control, name: 'appScope' })
 
   function handleClose(nextOpen: boolean) {
     if (!nextOpen) {
@@ -154,6 +181,8 @@ function CreateTokenDialog({
         name: values.name,
         role: values.role,
         expires_at: expiresAt,
+        abilities: values.abilities,
+        project_ids: values.appScope === 'chosen' ? values.projectIds : [],
       },
       {
         onSuccess: (response) => {
@@ -264,6 +293,124 @@ function CreateTokenDialog({
               )}
             />
 
+            <FormField
+              control={form.control}
+              name="abilities"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>What it can do</FormLabel>
+                  <div className="space-y-2.5">
+                    {TOKEN_ABILITIES.map((ability) => {
+                      const checked = field.value.includes(ability.value)
+                      const locked = ability.value === 'read'
+                      return (
+                        <label
+                          key={ability.value}
+                          className="flex items-start gap-3 text-sm"
+                        >
+                          <Checkbox
+                            checked={checked || locked}
+                            disabled={locked}
+                            onCheckedChange={(next) =>
+                              field.onChange(
+                                next
+                                  ? [...field.value, ability.value]
+                                  : field.value.filter(
+                                      (value) => value !== ability.value,
+                                    ),
+                              )
+                            }
+                          />
+                          <span className="space-y-0.5">
+                            <span className="block font-medium">
+                              {ability.label}
+                            </span>
+                            <span className="block text-muted-foreground">
+                              {ability.description}
+                            </span>
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  <FormDescription>
+                    The token can never do more than its role and your own
+                    access allow.
+                  </FormDescription>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="appScope"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Apps</FormLabel>
+                  <Select
+                    value={field.value}
+                    onValueChange={(value) => field.onChange(value)}
+                    items={APP_SCOPE_OPTIONS}
+                  >
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {Object.entries(APP_SCOPE_OPTIONS).map(([key, label]) => (
+                        <SelectItem key={key} value={key}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormItem>
+              )}
+            />
+
+            {appScope === 'chosen' ? (
+              <FormField
+                control={form.control}
+                name="projectIds"
+                render={({ field }) => (
+                  <FormItem>
+                    <div className="max-h-40 space-y-2 overflow-y-auto rounded-md border p-3">
+                      {projects.length === 0 ? (
+                        <p className="text-sm text-muted-foreground">
+                          {projectsQuery.isLoading
+                            ? 'Loading apps…'
+                            : 'No apps yet.'}
+                        </p>
+                      ) : (
+                        projects.map((project) => (
+                          <label
+                            key={project.id}
+                            className="flex items-center gap-3 text-sm"
+                          >
+                            <Checkbox
+                              checked={field.value.includes(project.id)}
+                              onCheckedChange={(next) =>
+                                field.onChange(
+                                  next
+                                    ? [...field.value, project.id]
+                                    : field.value.filter(
+                                        (id) => id !== project.id,
+                                      ),
+                                )
+                              }
+                            />
+                            {project.name}
+                          </label>
+                        ))
+                      )}
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ) : null}
+
             <DialogFooter>
               <Button
                 type="button"
@@ -315,6 +462,17 @@ function ApiTokensPage() {
     limit: pageSize,
     offset: (page - 1) * pageSize,
   })
+  const projectsQuery = useProjects({ limit: 200 })
+  const projectNames = useMemo(
+    () =>
+      Object.fromEntries(
+        (projectsQuery.data?.projects ?? []).map((project) => [
+          project.id,
+          project.name,
+        ]),
+      ),
+    [projectsQuery.data],
+  )
   const total = tokensQuery.data?.total ?? 0
   const currentPage = Math.min(page, Math.max(1, Math.ceil(total / pageSize)))
   const visibleTokens = tokensQuery.data?.tokens ?? []
@@ -447,6 +605,7 @@ function ApiTokensPage() {
           onSortChange={handleSortChange}
           page={currentPage}
           pageSize={pageSize}
+          projectNames={projectNames}
           query={search.q ?? ''}
           sort={sort}
           tokens={visibleTokens}

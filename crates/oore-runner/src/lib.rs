@@ -4454,8 +4454,34 @@ impl SecretMasker {
                 masked = masked.replace(pattern.as_str(), "***");
             }
         }
-        masked
+        mask_oore_api_tokens(&masked)
     }
+}
+
+/// Hide Oore API tokens (`oore_` and 64 hex characters) wherever a build
+/// prints one, even when it is not one of the job's secrets.
+fn mask_oore_api_tokens(text: &str) -> String {
+    const PREFIX: &str = "oore_";
+    const HEX_LEN: usize = 64;
+    if !text.contains(PREFIX) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(PREFIX) {
+        let after = &rest[at + PREFIX.len()..];
+        let hex = after.bytes().take_while(|b| b.is_ascii_hexdigit()).count();
+        out.push_str(&rest[..at]);
+        if hex >= HEX_LEN {
+            out.push_str("oore_***");
+            rest = &after[hex..];
+        } else {
+            out.push_str(PREFIX);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Log sequence position plus the masker applied to every uploaded line.
@@ -10518,6 +10544,11 @@ mod secret_tests {
             "  ***"
         );
         assert_eq!(masker.mask("nothing to hide"), "nothing to hide");
+        let token = format!("oore_{}", "ab12".repeat(16));
+        assert_eq!(
+            masker.mask(&format!("OORE_TOKEN={token} oore_short")),
+            "OORE_TOKEN=oore_*** oore_short"
+        );
     }
 
     #[test]

@@ -60,7 +60,11 @@ pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 /// Reconnect delay suggested to EventSource-compatible clients.
 const CLIENT_RETRY: Duration = Duration::from_secs(3);
 
-const MAX_STREAMS_PER_USER: usize = 8;
+/// Live event streams per caller: per API token, or per person for browser
+/// and CLI sign-ins.
+pub(crate) const MAX_STREAMS_PER_USER: usize = 8;
+/// Live event streams of one person across their sign-ins and tokens.
+pub(crate) const MAX_STREAMS_PER_PERSON: usize = 24;
 const MAX_STREAMS_GLOBAL: usize = 256;
 
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
@@ -114,6 +118,7 @@ pub enum Replay {
 #[derive(Default)]
 struct ActiveStreams {
     by_user: HashMap<String, usize>,
+    by_key: HashMap<String, usize>,
     total: usize,
 }
 
@@ -202,18 +207,23 @@ impl EventHub {
         (receiver, replay)
     }
 
-    fn acquire(&self, user_id: &str) -> Option<StreamAdmission> {
+    /// Admit a stream for `user_id`, counted against `limit_key` (see
+    /// `SessionInfo::limit_key`) and the person's total.
+    fn acquire(&self, user_id: &str, limit_key: &str) -> Option<StreamAdmission> {
         let mut active = lock(&self.active);
         if active.total >= MAX_STREAMS_GLOBAL
-            || active.by_user.get(user_id).copied().unwrap_or(0) >= MAX_STREAMS_PER_USER
+            || active.by_key.get(limit_key).copied().unwrap_or(0) >= MAX_STREAMS_PER_USER
+            || active.by_user.get(user_id).copied().unwrap_or(0) >= MAX_STREAMS_PER_PERSON
         {
             return None;
         }
         active.total += 1;
         *active.by_user.entry(user_id.to_string()).or_default() += 1;
+        *active.by_key.entry(limit_key.to_string()).or_default() += 1;
         Some(StreamAdmission {
             active: self.active.clone(),
             user_id: user_id.to_string(),
+            limit_key: limit_key.to_string(),
         })
     }
 }
@@ -233,16 +243,23 @@ fn lock(active: &Mutex<ActiveStreams>) -> MutexGuard<'_, ActiveStreams> {
 struct StreamAdmission {
     active: Arc<Mutex<ActiveStreams>>,
     user_id: String,
+    limit_key: String,
 }
 
 impl Drop for StreamAdmission {
     fn drop(&mut self) {
         let mut active = lock(&self.active);
+        let active = &mut *active;
         active.total -= 1;
-        if let Some(count) = active.by_user.get_mut(&self.user_id) {
-            *count -= 1;
-            if *count == 0 {
-                active.by_user.remove(&self.user_id);
+        for (counts, key) in [
+            (&mut active.by_user, &self.user_id),
+            (&mut active.by_key, &self.limit_key),
+        ] {
+            if let Some(count) = counts.get_mut(key) {
+                *count -= 1;
+                if *count == 0 {
+                    counts.remove(key);
+                }
             }
         }
     }
@@ -527,13 +544,21 @@ pub async fn stream_events(
         require_project_permission(&effective, ProjectPermission::Read)?;
     }
 
-    let admission = state.events.acquire(&session.user_id).ok_or_else(|| {
-        api_err(
-            StatusCode::TOO_MANY_REQUESTS,
+    let Some(admission) = state.events.acquire(&session.user_id, &session.limit_key()) else {
+        return Ok(crate::util::limit_reached_response(
             "stream_limit",
-            "Too many active event streams",
-        )
-    })?;
+            if session.token.is_some() {
+                format!(
+                    "This API token already has {MAX_STREAMS_PER_USER} live event streams open. Close one, or use another token for another agent."
+                )
+            } else {
+                format!(
+                    "You already have {MAX_STREAMS_PER_USER} live event streams open. Close a browser tab, or use an API token for agents."
+                )
+            },
+            5,
+        ));
+    };
     let runners_visible = can_read_runners(&state, &session).await;
     let authorization = StreamAuthorization {
         user_id: session.user_id.clone(),
@@ -604,6 +629,12 @@ impl ProjectAccess {
     ) -> Option<bool> {
         if let Some(readable) = self.readable.get(project_id) {
             return Some(*readable);
+        }
+        // The stream outlives the request scope, so apply the token's app
+        // list from the session itself.
+        if !session.allows_project(project_id) {
+            self.readable.insert(project_id.to_string(), false);
+            return Some(false);
         }
         let effective = resolve_effective_project_role(
             pool,
@@ -949,6 +980,7 @@ mod tests {
             role: "developer".to_string(),
             expires_at: i64::MAX,
             auth_source: crate::session::AuthSource::Session,
+            token: None,
         };
         let mut access = ProjectAccess {
             readable: HashMap::new(),
@@ -972,11 +1004,13 @@ mod tests {
     fn admission_limits_streams_per_user() {
         let hub = EventHub::new();
         let held: Vec<_> = (0..MAX_STREAMS_PER_USER)
-            .map(|_| hub.acquire("u").expect("admitted"))
+            .map(|_| hub.acquire("u", "u").expect("admitted"))
             .collect();
-        assert!(hub.acquire("u").is_none());
-        assert!(hub.acquire("v").is_some());
+        assert!(hub.acquire("u", "u").is_none());
+        // Another token of the same person has its own allowance.
+        assert!(hub.acquire("u", "token:t1").is_some());
+        assert!(hub.acquire("v", "v").is_some());
         drop(held);
-        assert!(hub.acquire("u").is_some());
+        assert!(hub.acquire("u", "u").is_some());
     }
 }

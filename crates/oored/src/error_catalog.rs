@@ -565,6 +565,19 @@ mod tests {
                     codes.entry(code.to_string()).or_default().insert(status);
                 }
             }
+            // `util::limit_reached_response("code", ..)` always answers 429.
+            let mut rest = text.as_str();
+            while let Some(start) = rest.find("limit_reached_response(") {
+                rest = &rest[start + "limit_reached_response(".len()..];
+                let Some(after) = rest.trim_start().strip_prefix('"') else {
+                    continue;
+                };
+                let Some(end) = after.find('"') else { continue };
+                codes
+                    .entry(after[..end].to_string())
+                    .or_default()
+                    .insert(429);
+            }
         }
         // Answered by the extractor and body-limit layers rather than a handler.
         codes

@@ -1058,6 +1058,10 @@ pub async fn list_all_pipelines(
             binds.len()
         ));
     }
+    // A token limited to some apps sees only their pipelines.
+    if let Some(limit_sql) = crate::session::current_project_limit_sql("p.project_id") {
+        conditions.push(limit_sql);
+    }
     if let Some(project_id) = params
         .project_id
         .as_deref()

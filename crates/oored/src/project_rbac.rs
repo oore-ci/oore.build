@@ -4,7 +4,7 @@ use oore_contract::{ApiError, ProjectRole};
 use sqlx::Row;
 use tracing::error;
 
-use crate::session::AuthSource;
+use crate::session::{Ability, AuthSource, current_allows_project, current_has_ability};
 use crate::util::api_err;
 
 // ── Effective project role ──────────────────────────────────────
@@ -40,6 +40,23 @@ pub enum ProjectPermission {
     ManageReleases,
     /// Approve or reject a gated build, and change a pipeline's approval policy.
     ApproveBuild,
+}
+
+impl ProjectPermission {
+    /// The token ability this permission needs.
+    pub fn ability(self) -> Ability {
+        match self {
+            Self::Read | Self::ReadArtifacts => Ability::Read,
+            Self::TriggerBuild | Self::CancelBuild | Self::WriteArtifacts => Ability::Build,
+            Self::OperateRelease => Ability::ReleaseOperate,
+            Self::ManageReleases | Self::ApproveBuild => Ability::ReleaseManage,
+            Self::Write
+            | Self::Delete
+            | Self::ManageMembers
+            | Self::ManagePipelines
+            | Self::DeleteArtifacts => Ability::Manage,
+        }
+    }
 }
 
 // ── Resolution ──────────────────────────────────────────────────
@@ -82,6 +99,10 @@ pub async fn resolve_effective_project_role(
     project_id: &str,
     auth_source: &AuthSource,
 ) -> Result<EffectiveProjectRole, (StatusCode, Json<ApiError>)> {
+    // An API token limited to chosen apps sees nothing of the others.
+    if !current_allows_project(project_id) {
+        return Ok(EffectiveProjectRole::None);
+    }
     if instance_role == "owner" || instance_role == "admin" {
         return Ok(EffectiveProjectRole::InstanceAdmin);
     }
@@ -126,6 +147,10 @@ pub fn check_project_permission(
     effective_role: &EffectiveProjectRole,
     permission: ProjectPermission,
 ) -> bool {
+    // An API token also needs the ability behind the permission.
+    if !current_has_ability(permission.ability()) {
+        return false;
+    }
     match effective_role {
         EffectiveProjectRole::InstanceAdmin => true,
         EffectiveProjectRole::Member(role) => role_has_permission(role, permission),

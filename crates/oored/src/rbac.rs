@@ -4,7 +4,17 @@ use casbin::prelude::*;
 use oore_contract::ApiError;
 use tracing::warn;
 
+use crate::session::{Ability, current_has_ability};
 use crate::util::api_err;
+
+/// The token ability an instance-level `resource`/`action` pair needs.
+pub fn ability_for(resource: &str, action: &str) -> Ability {
+    match (resource, action) {
+        (_, "read") => Ability::Read,
+        ("builds", "write" | "cancel") | ("artifacts", "write") => Ability::Build,
+        _ => Ability::Manage,
+    }
+}
 
 const MODEL: &str = include_str!("../rbac_model.conf");
 const POLICY: &str = include_str!("../rbac_policy.csv");
@@ -16,7 +26,13 @@ pub struct CasbinEnforcer {
 
 impl CasbinEnforcer {
     /// Check whether `role` is allowed to perform `action` on `resource`.
+    ///
+    /// Inside a request signed in with an API token, the token must also hold
+    /// the ability the pair needs (see `ability_for`).
     pub async fn check(&self, role: &str, resource: &str, action: &str) -> bool {
+        if !current_has_ability(ability_for(resource, action)) {
+            return false;
+        }
         match self.enforcer.enforce((role, resource, action)) {
             Ok(allowed) => allowed,
             Err(e) => {
