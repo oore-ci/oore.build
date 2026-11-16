@@ -31,6 +31,7 @@ type OpenAPIDocument = {
 
 export function Docs({
   children,
+  markdownHref,
   openapi,
   page,
   params,
@@ -38,6 +39,7 @@ export function Docs({
   tree,
 }: {
   children?: ReactNode
+  markdownHref?: string
   openapi?: OpenAPIDocument
   page?: DocsPageProps
   params: AstroProviderProps['params']
@@ -71,12 +73,26 @@ export function Docs({
               <DocsDescription>{openapi.description}</DocsDescription>
             ) : null}
             <DocsBody>
-              {openapi.operation ? (
+              {openapi.operation || markdownHref ? (
                 <div className="not-prose mb-6 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b pb-4 text-sm">
-                  <span className="text-fd-muted-foreground">Operation ID</span>
-                  <code className="font-mono">
-                    {openapi.operation.operationId}
-                  </code>
+                  {openapi.operation ? (
+                    <>
+                      <span className="text-fd-muted-foreground">
+                        Operation ID
+                      </span>
+                      <code className="font-mono">
+                        {openapi.operation.operationId}
+                      </code>
+                    </>
+                  ) : null}
+                  {markdownHref ? (
+                    <a
+                      className="text-fd-muted-foreground hover:text-fd-foreground ms-auto underline-offset-4 hover:underline"
+                      href={markdownHref}
+                    >
+                      View as Markdown
+                    </a>
+                  ) : null}
                 </div>
               ) : null}
               <OpenAPIPage {...openapi.props} />

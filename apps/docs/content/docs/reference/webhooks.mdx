@@ -1,0 +1,251 @@
+---
+title: 'Outbound webhooks'
+status: implemented
+description: 'Payloads, delivery, retries and the X-Oore-Signature check for notification channels of type Webhook.'
+---
+
+A notification channel of type **Webhook (Generic HTTP POST)** sends each
+event to your URL as JSON. Use it to let a bot, a chat bridge or an AI agent
+hear about builds and releases as they happen, instead of asking Oore over
+and over.
+
+Add one under **Settings > Notifications > Add channel**. Choose the app or
+**All apps**, the events to send, the **Webhook URL**, and an
+**HMAC secret**. Set a secret: without one, anyone who learns the URL can
+send you fake events.
+
+## Delivery
+
+- Oore sends `POST` with `Content-Type: application/json` and
+  `User-Agent: oore-ci/1.0`, from the backend host. Your endpoint must be
+  reachable from there.
+- Any `2xx` answer counts as delivered. Anything else, a timeout or a
+  connection error is tried again after 30 seconds, then 1, 2 and 4 minutes:
+  five attempts in about eight minutes. After that the delivery is marked
+  failed. Each channel's **Delivery history** shows every attempt and its
+  error.
+- Deliveries are stored, so a restart resumes pending retries.
+- An event can arrive more than once, for example when your endpoint
+  answered after Oore gave up waiting. Use `event` with the build or release
+  `id` and `timestamp` to drop repeats.
+- Events for different builds can arrive out of order. Read `status` or
+  `state` in the payload, or fetch the build, rather than relying on order.
+- A channel limited to one app receives only that app's events. Runner
+  events go only to channels for all apps.
+- **Test** on the channel's page sends a `build.test` event.
+
+## Check the signature
+
+With a secret set, every request carries:
+
+```http
+X-Oore-Signature: sha256=<hex>
+```
+
+`<hex>` is the HMAC-SHA256 of the raw request body, keyed with the channel's
+secret, in lowercase hex. Compute it over the bytes you received, before any
+JSON parsing, and compare in constant time.
+
+Node.js:
+
+```js
+import { createHmac, timingSafeEqual } from 'node:crypto'
+
+export function verifyOoreSignature(rawBody, header, secret) {
+  const expected =
+    'sha256=' + createHmac('sha256', secret).update(rawBody).digest('hex')
+  const a = Buffer.from(expected)
+  const b = Buffer.from(header ?? '')
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+```
+
+Python:
+
+```python
+import hashlib
+import hmac
+
+
+def verify_oore_signature(raw_body: bytes, header: str | None, secret: str) -> bool:
+    expected = "sha256=" + hmac.new(secret.encode(), raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header or "")
+```
+
+A shell check, for debugging:
+
+```bash
+printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | sed 's/^.* /sha256=/'
+```
+
+Answer `401` and drop the event when the signature does not match.
+
+## Events
+
+Every payload has `event`, which names what happened, and `timestamp`, in
+Unix seconds. The rest depends on the event family below. New fields may be
+added; ignore the ones you do not know.
+
+| `event`                                                                                                                                                                                                                         | Channel filter                                                                                                                                                  | Family                       |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `build.succeeded`, `build.failed`, `build.canceled`, `build.timed_out`, `build.expired`                                                                                                                                         | `succeeded`, `failed`, `canceled`, `timed_out`, `expired`                                                                                                       | [Build](#build-events)       |
+| `build.approval_needed`                                                                                                                                                                                                         | `build_approval_needed`                                                                                                                                         | [Build](#build-events)       |
+| `build.qa_feedback`                                                                                                                                                                                                             | `qa_feedback`                                                                                                                                                   | [Feedback](#tester-feedback) |
+| `release.release_uploaded`, `release.release_blocked`, `release.release_submitted`, `release.release_approved`, `release.release_rejected`, `release.release_live`, `release.release_approval_needed`, `release.release_failed` | `release_uploaded`, `release_blocked`, `release_submitted`, `release_approved`, `release_rejected`, `release_live`, `release_approval_needed`, `release_failed` | [Release](#release-events)   |
+| `release.rollout_step_raised`, `release.rollout_halted`, `release.rollout_completed`                                                                                                                                            | `rollout_step_raised`, `rollout_halted`, `rollout_completed`                                                                                                    | [Release](#release-events)   |
+| `signing.expiring`                                                                                                                                                                                                              | `signing_expiring`                                                                                                                                              | [Signing](#signing-expiry)   |
+| `runner.offline`                                                                                                                                                                                                                | `runner_offline`                                                                                                                                                | [Runner](#runner-offline)    |
+| `build.test`                                                                                                                                                                                                                    | sent by **Test** only                                                                                                                                           | [Build](#build-events)       |
+
+### Build events
+
+```json
+{
+  "event": "build.failed",
+  "build": {
+    "id": "0198f3c2-7d4e-7a51-9a5e-2f1c0b7d9e11",
+    "project_id": "0198f3a0-1b2c-7d3e-8f40-5a6b7c8d9e0f",
+    "pipeline_id": "0198f3a1-2c3d-7e4f-9051-6b7c8d9e0f1a",
+    "build_number": 142,
+    "status": "failed",
+    "branch": "main",
+    "commit_sha": "4f2a9c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+    "trigger_type": "webhook",
+    "trigger_actor": "octocat",
+    "started_at": 1763301600,
+    "finished_at": 1763302020,
+    "rehearsal": false,
+    "release_outcome": null
+  },
+  "project_name": "FlutterShop",
+  "pipeline_name": "Release",
+  "timestamp": 1763302021
+}
+```
+
+| Field                   | Meaning                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `build.status`          | The build's new status, or `approval_needed` while it waits for a maintainer                                                                                  |
+| `build.trigger_type`    | `manual` (started in Oore or the CLI), `api`, `webhook` (a Git push, tag or pull request) or `schedule`                                                       |
+| `build.trigger_actor`   | Oore email for builds started in Oore, Git username for pushes                                                                                                |
+| `build.rehearsal`       | `true` for a [release rehearsal](/build/distribute/rehearse), which submits nothing                                                                           |
+| `build.release_outcome` | Where the build's store release stands: `waiting`, `blocked`, `in_review`, `approved`, `rejected`, `live` or `failed`, or `null` when it has no store release |
+| `pipeline_name`         | Ends in `(rehearsal, nothing submitted)` for a rehearsal                                                                                                      |
+
+To read why a build failed, fetch
+`GET /v1/builds/{build.id}/failure-hint` and `GET /v1/builds/{build.id}/logs`
+with an [API token](/team/api-tokens), or run `oore build why <build.id>`.
+
+### Tester feedback
+
+The build payload above, with `event` set to `build.qa_feedback` and a
+`feedback` object:
+
+```json
+{
+  "event": "build.qa_feedback",
+  "build": {
+    "id": "0198f3c2-7d4e-7a51-9a5e-2f1c0b7d9e11",
+    "project_id": "0198f3a0-1b2c-7d3e-8f40-5a6b7c8d9e0f",
+    "pipeline_id": "0198f3a1-2c3d-7e4f-9051-6b7c8d9e0f1a",
+    "build_number": 142,
+    "status": "succeeded",
+    "branch": "main",
+    "commit_sha": "4f2a9c1e8b7d6a5f4e3d2c1b0a9f8e7d6c5b4a39",
+    "trigger_type": "manual",
+    "trigger_actor": "dev@example.com",
+    "started_at": 1763301600,
+    "finished_at": 1763302020,
+    "rehearsal": false,
+    "release_outcome": null
+  },
+  "feedback": {
+    "id": "0198f3d0-aa11-7b22-8c33-d44e55f66a77",
+    "author_email": "tester@example.com",
+    "author_name": "Sam",
+    "message": "Checkout button does nothing on the second tap.",
+    "device": "Pixel 8",
+    "os_version": "Android 16",
+    "app_version": "2.4.0 (142)",
+    "artifact_id": "0198f3c9-1234-7abc-8def-0123456789ab",
+    "has_screenshot": true,
+    "created_at": 1763305200
+  },
+  "project_name": "FlutterShop",
+  "pipeline_name": "Release",
+  "timestamp": 1763305200
+}
+```
+
+### Release events
+
+```json
+{
+  "event": "release.rollout_halted",
+  "release": {
+    "id": "0198f400-0a0b-7c0d-8e0f-101112131415",
+    "project_id": "0198f3a0-1b2c-7d3e-8f40-5a6b7c8d9e0f",
+    "build_id": "0198f3c2-7d4e-7a51-9a5e-2f1c0b7d9e11",
+    "version_name": "2.4.0",
+    "version_code": 142,
+    "track": "production",
+    "rollout_percent": 5.0,
+    "actor": "dev@example.com",
+    "reason": "Crash rate 3.1% is above the 2% threshold",
+    "state": "halted",
+    "store_status": "HALTED",
+    "console_url": "https://play.google.com/console/"
+  },
+  "project_name": "FlutterShop",
+  "timestamp": 1763391600
+}
+```
+
+`release.state` is the release's state in Oore, `rollout_percent` runs from 0 to 100, `store_status` the store's
+own word for it, and `console_url` a link to the release in Google Play
+Console or App Store Connect when Oore knows it. Fields that do not apply,
+such as `rollout_percent` on the App Store, are `null`.
+
+### Signing expiry
+
+```json
+{
+  "event": "signing.expiring",
+  "project_id": "0198f3a0-1b2c-7d3e-8f40-5a6b7c8d9e0f",
+  "project_name": "FlutterShop",
+  "signing": {
+    "key": "pipeline-profile:0198f3b5-0001-7002-8003-000400050006",
+    "what": "Provisioning profile",
+    "holder": "FlutterShop App Store",
+    "expires_at": 1764000000,
+    "band": "week",
+    "when": "expires in 6 days",
+    "path": "/projects/0198f3a0-1b2c-7d3e-8f40-5a6b7c8d9e0f/pipelines/0198f3a1-2c3d-7e4f-9051-6b7c8d9e0f1a/edit?signing=ios"
+  },
+  "timestamp": 1763481600
+}
+```
+
+`band` is `month` (30 days left), `week` (7 days left) or `expired`. `path`
+is where in the web UI to replace the file.
+
+### Runner offline
+
+```json
+{
+  "event": "runner.offline",
+  "runner": {
+    "id": "0198f300-aaaa-7bbb-8ccc-dddddddddddd",
+    "name": "mac-studio-2",
+    "from_status": "online",
+    "to_status": "offline"
+  },
+  "timestamp": 1763395200
+}
+```
+
+## Related
+
+- [Send notifications to Slack](/team/notifications) covers the events and
+  filters in the web UI.
+- [Automate Oore](/build/automate) uses the API to act on an event.
