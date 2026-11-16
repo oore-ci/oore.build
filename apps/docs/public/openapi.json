@@ -1487,7 +1487,7 @@
           {
             "name": "actor_id",
             "in": "query",
-            "description": "Filter by actor user ID",
+            "description": "Filter by actor user ID, or `system` for entries without an actor",
             "required": false,
             "schema": {
               "type": "string"
@@ -1496,10 +1496,28 @@
           {
             "name": "action",
             "in": "query",
-            "description": "Filter by action string",
+            "description": "Filter by exact action string",
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search text matched against the action, the actor, the details, and the names of apps and pipelines",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Filter by kind of activity",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AuditLogCategory"
             }
           },
           {
@@ -1557,6 +1575,75 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListAuditLogsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Insufficient permissions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/audit-logs/activity": {
+      "get": {
+        "tags": [
+          "Audit Logs"
+        ],
+        "summary": "Summarize recent audit activity",
+        "description": "Returns the number of audit log entries per calendar day over the\nmost recent days, with how many people were active and how many\nentries record something blocked or failed. Owner and admin roles only.",
+        "operationId": "get_audit_log_activity",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "description": "Days to cover, ending today (default 14, max 90)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "utc_offset_minutes",
+            "in": "query",
+            "description": "The caller's offset from UTC in minutes, used to split days (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Audit activity per day",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogActivityResponse"
                 }
               }
             }
@@ -17737,6 +17824,65 @@
           "generic"
         ]
       },
+      "AuditLogActivityDay": {
+        "type": "object",
+        "required": [
+          "date",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "date": {
+            "type": "string",
+            "description": "Calendar day in the caller's time zone, `YYYY-MM-DD`."
+          }
+        }
+      },
+      "AuditLogActivityResponse": {
+        "type": "object",
+        "description": "Audit activity over the most recent days, oldest day first.",
+        "required": [
+          "days",
+          "total",
+          "actors",
+          "problems"
+        ],
+        "properties": {
+          "actors": {
+            "type": "integer",
+            "format": "int64",
+            "description": "People who did at least one thing in the window."
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditLogActivityDay"
+            }
+          },
+          "problems": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Entries that record something blocked or failed."
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AuditLogCategory": {
+        "type": "string",
+        "description": "The kind of activity an audit entry records. The audit log filters on it.",
+        "enum": [
+          "access",
+          "builds",
+          "settings",
+          "system"
+        ]
+      },
       "AuditLogEntry": {
         "type": "object",
         "required": [
@@ -17761,6 +17907,30 @@
               "null"
             ]
           },
+          "actor_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The actor's display name, when they have one."
+          },
+          "build_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build the entry is about, when it still exists."
+          },
+          "build_number": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "category": {
+            "$ref": "#/components/schemas/AuditLogCategory"
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -17774,6 +17944,42 @@
           "id": {
             "type": "integer",
             "format": "int64"
+          },
+          "names": {
+            "type": "object",
+            "description": "Current names of the records this entry refers to, keyed by the ids\nfound in `resource_id` and `details`. Deleted records are absent.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "pipeline_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The pipeline the entry is about, when it still exists."
+          },
+          "pipeline_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "project_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The app the entry is about, when it still exists."
+          },
+          "project_name": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "resource_id": {
             "type": [
