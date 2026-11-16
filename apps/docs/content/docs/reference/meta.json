@@ -6,6 +6,7 @@
     "cli",
     "config",
     "api",
+    "webhooks",
     "(product-values)",
     "known-limitations"
   ]
