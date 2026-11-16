@@ -261,6 +261,7 @@ use utoipa::{
         operations::reject_promotion,
         // ── Audit Logs ──
         operations::list_audit_logs,
+        operations::get_audit_log_activity,
         // ── API Tokens ──
         operations::list_api_tokens,
         operations::create_api_token,
@@ -810,6 +811,9 @@ use utoipa::{
         oore_contract::ListNotificationDeliveriesResponse,
         // Audit Logs
         oore_contract::AuditLogEntry,
+        oore_contract::AuditLogCategory,
+        oore_contract::AuditLogActivityDay,
+        oore_contract::AuditLogActivityResponse,
         oore_contract::ListAuditLogsResponse,
         // API Tokens
         oore_contract::CreateApiTokenRequest,
@@ -4817,8 +4821,10 @@ mod operations {
         params(
             ("limit" = Option<i64>, Query, description = "Page size (default 50, max 200)"),
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
-            ("actor_id" = Option<String>, Query, description = "Filter by actor user ID"),
-            ("action" = Option<String>, Query, description = "Filter by action string"),
+            ("actor_id" = Option<String>, Query, description = "Filter by actor user ID, or `system` for entries without an actor"),
+            ("action" = Option<String>, Query, description = "Filter by exact action string"),
+            ("q" = Option<String>, Query, description = "Search text matched against the action, the actor, the details, and the names of apps and pipelines"),
+            ("category" = Option<AuditLogCategory>, Query, description = "Filter by kind of activity"),
             ("resource_type" = Option<String>, Query, description = "Filter by resource type"),
             ("from_ts" = Option<i64>, Query, description = "Start of time range (unix timestamp)"),
             ("to_ts" = Option<i64>, Query, description = "End of time range (unix timestamp)"),
@@ -4833,6 +4839,25 @@ mod operations {
         )
     )]
     pub(super) fn list_audit_logs() {}
+
+    /// Summarize recent audit activity
+    ///
+    /// Returns the number of audit log entries per calendar day over the
+    /// most recent days, with how many people were active and how many
+    /// entries record something blocked or failed. Owner and admin roles only.
+    #[utoipa::path(get, path = "/v1/audit-logs/activity", tag = "Audit Logs",
+        params(
+            ("days" = Option<i64>, Query, description = "Days to cover, ending today (default 14, max 90)"),
+            ("utc_offset_minutes" = Option<i64>, Query, description = "The caller's offset from UTC in minutes, used to split days (default 0)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Audit activity per day", body = AuditLogActivityResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 403, description = "Insufficient permissions", body = ApiError),
+        )
+    )]
+    pub(super) fn get_audit_log_activity() {}
 
     // ── API Tokens ──
 
