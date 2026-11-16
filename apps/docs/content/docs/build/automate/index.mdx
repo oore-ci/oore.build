@@ -1,0 +1,247 @@
+---
+title: 'Automate Oore'
+status: implemented
+description: 'Drive Oore from a script, a CI job or an AI agent: sign in with an API token, run a build, wait for it, read why it failed, and hand out the install link.'
+---
+
+Everything the web UI does goes through the Oore HTTP API, so a script or an
+agent can do the same work without a browser. This page walks through the
+daily loop three ways: with the `oore` CLI, with `curl`, and with the
+[`@oore/client`](https://www.npmjs.com/package/@oore/client) JavaScript
+client. Pick whichever your tool already speaks.
+
+An agent that reads documentation should start from
+[`llms.txt`](https://docs.oore.build/llms.txt). Every page on this site is also
+plain Markdown: add `.md` to its address, or send `Accept: text/markdown`.
+
+## 1. Create an API token
+
+Scripts sign in with an API token, not with your browser session. Open
+**Settings > API tokens**, select **Create token**, give it a name that says
+where it runs, such as `release-bot` or `claude-code on my laptop`, pick the
+**Developer** role, and keep the suggested 90 day expiry. Copy the token: Oore
+shows it once.
+
+[API tokens](/team/api-tokens) explains roles, expiry, revoking, and how to
+keep a token out of a repository.
+
+## 2. Point your tools at the instance
+
+Oore is self-hosted, so every tool needs the address of your instance and the
+token. Set two variables:
+
+```bash
+export OORE_URL='https://ci.example.com'
+export OORE_TOKEN='<token from step 1>'
+```
+
+The `oore` CLI, `oore-dev` and the examples on this site read these names.
+`oore` also reads the older `OORE_DAEMON_URL` and `OORE_SESSION_TOKEN`, and
+`--url` and `--token` on the command line win over both. Keep the token in a
+secret store or your shell's keychain helper, not in a file you commit.
+
+If the instance sits behind an access proxy that wants its own credentials,
+such as a Cloudflare Access service token, give the CLI the extra headers, one
+`Name: value` per line:
+
+```bash
+export OORE_HTTP_HEADERS='CF-Access-Client-Id: <id>
+CF-Access-Client-Secret: <secret>'
+```
+
+`curl` takes the same headers with `-H`, and `@oore/client` with the `headers`
+option of `createOoreClient`.
+
+Check the connection:
+
+```bash
+oore status --json
+curl -fsS "$OORE_URL/v1/users/me" -H "Authorization: Bearer $OORE_TOKEN"
+```
+
+## 3. Find the pipeline
+
+Builds start from a pipeline. List apps and their pipelines to find its ID:
+
+```bash
+oore project list
+oore pipeline list --project FlutterShop
+```
+
+```bash
+curl -fsS "$OORE_URL/v1/projects?search=FlutterShop" \
+  -H "Authorization: Bearer $OORE_TOKEN"
+curl -fsS "$OORE_URL/v1/projects/$PROJECT_ID/pipelines" \
+  -H "Authorization: Bearer $OORE_TOKEN"
+```
+
+`--project` and `--pipeline` take a name or an ID. When a name matches more
+than one, the CLI stops and lists the matches with their IDs.
+
+## 4. Run a build and wait for it
+
+```bash
+oore build run --project FlutterShop --pipeline Release --branch main --wait
+```
+
+`--wait` follows the build to its result and exits with the build's
+[exit code](#exit-codes). Add `--json` to get the finished build as one JSON
+object on standard output.
+
+With `curl`, queue the build, then ask for it until its `status` is final
+(`succeeded`, `failed`, `canceled`, `timed_out` or `expired`):
+
+```bash
+build_id=$(curl -fsS -X POST "$OORE_URL/v1/projects/$PROJECT_ID/builds" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"pipeline_id\": \"$PIPELINE_ID\", \"branch\": \"main\"}" | jq -r .build.id)
+
+while :; do
+  status=$(curl -fsS "$OORE_URL/v1/builds/$build_id" \
+    -H "Authorization: Bearer $OORE_TOKEN" | jq -r .status)
+  case "$status" in
+    succeeded|failed|canceled|timed_out|expired) break ;;
+  esac
+  sleep 10
+done
+echo "$status"
+```
+
+A newer daemon also answers `GET /v1/builds/{build_id}?wait=60` only when the
+build changes or the minute is up, so a loop needs no `sleep`.
+
+With `@oore/client`:
+
+```ts
+import { createBuild, createOoreClient, getBuild } from '@oore/client'
+
+const client = createOoreClient({
+  baseUrl: process.env.OORE_URL!,
+  token: process.env.OORE_TOKEN,
+})
+
+const { build } = await createBuild({
+  client,
+  path: { project_id: projectId },
+  body: { pipeline_id: pipelineId, branch: 'main' },
+})
+
+const done = new Set([
+  'succeeded',
+  'failed',
+  'canceled',
+  'timed_out',
+  'expired',
+])
+let current = build
+while (!done.has(current.status)) {
+  await new Promise((resolve) => setTimeout(resolve, 10_000))
+  current = await getBuild({ client, path: { build_id: build.id } })
+}
+```
+
+A webhook tells you when a build finishes without asking at all. See
+[Outbound webhooks](/reference/webhooks).
+
+## 5. Read why a build failed
+
+```bash
+oore build why "$build_id"
+```
+
+It prints the failed step and its exit code, the likely cause and fix, the
+last 40 lines of that step's log and the failed tests. `--json` gives the same
+as one object, which is the easiest thing to hand to an agent.
+
+With `curl`, the likely cause and the log are separate calls:
+
+```bash
+curl -fsS "$OORE_URL/v1/builds/$build_id/failure-hint" \
+  -H "Authorization: Bearer $OORE_TOKEN"
+curl -fsS "$OORE_URL/v1/builds/$build_id/logs" \
+  -H "Authorization: Bearer $OORE_TOKEN"
+```
+
+A newer daemon puts them together at `GET /v1/builds/{build_id}/diagnosis`,
+and the logs take `step`, `tail` and `search` so you fetch only the part you
+need.
+
+## 6. Get the install link
+
+```bash
+oore build install-link "$build_id" --platform android
+```
+
+With `curl`, list the build's artifacts and ask for a link to one:
+
+```bash
+artifact_id=$(curl -fsS "$OORE_URL/v1/builds/$build_id/artifacts" \
+  -H "Authorization: Bearer $OORE_TOKEN" | jq -r '.artifacts[0].id')
+curl -fsS -X POST "$OORE_URL/v1/artifacts/$artifact_id/install-link" \
+  -H "Authorization: Bearer $OORE_TOKEN"
+```
+
+The answer holds `install_url`, a page a tester opens on the phone, and
+`expires_at`. With `@oore/client`, the same calls are `listArtifacts` and
+`createArtifactInstallLink`.
+
+## Exit codes
+
+Every `oore` command uses the same exit codes, so a script can branch on them
+without reading the output:
+
+| Code | Meaning                                                                 |
+| ---- | ----------------------------------------------------------------------- |
+| 0    | Done                                                                    |
+| 1    | Failed: the build did not succeed, or the command hit an error          |
+| 2    | Blocked: a person must act, for example to approve a build or fix setup |
+| 3    | The store refused the upload or the release                             |
+| 4    | Not signed in, or the token may not do this                             |
+| 5    | Not found                                                               |
+| 64   | The command was used wrongly                                            |
+
+With `--json`, standard output holds only JSON, and a failure prints one JSON
+object on standard error:
+
+```json
+{
+  "error": "Build not found",
+  "code": "not_found",
+  "status": 404,
+  "hint": "Check the build ID with `oore build list`."
+}
+```
+
+`code` is the API's error code when the failure came from the API. The codes
+are listed under [Error codes](/reference/errors).
+
+Without a terminal, the CLI never stops to ask a question. A command that
+would ask for confirmation, such as a delete, needs `--yes`.
+
+## Retry safely
+
+An agent that times out and tries again must not start a second build. Send an
+`Idempotency-Key` header with a value you make up for that one action, such
+as a UUID, on calls that start work: create build, re-run, send to testers,
+release actions and promote. Oore keeps the key for 24 hours. The same key
+with the same body answers with the first response and starts nothing. The
+CLI sends a key for you.
+
+```bash
+curl -fsS -X POST "$OORE_URL/v1/projects/$PROJECT_ID/builds" \
+  -H "Authorization: Bearer $OORE_TOKEN" \
+  -H "Idempotency-Key: $(uuidgen)" \
+  -H "Content-Type: application/json" \
+  -d "{\"pipeline_id\": \"$PIPELINE_ID\"}"
+```
+
+## Next steps
+
+- [Test without an instance](/build/automate/test-without-an-instance) runs
+  your code against realistic mock data before it touches a real Oore.
+- [Outbound webhooks](/reference/webhooks) push build and release events to
+  your own service, signed so you can check they came from Oore.
+- [HTTP API](/reference/api) lists every operation with a `curl` example, and
+  [`openapi.json`](/openapi.json) is the contract to generate a client from.
+- [`oore` command reference](/reference/cli) has every command and flag.

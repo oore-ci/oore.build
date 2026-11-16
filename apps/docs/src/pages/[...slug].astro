@@ -43,6 +43,7 @@ const documentTitle =
     ? 'Oore CI docs'
     : `${pageTitle} | Oore CI docs`
 const canonical = canonicalUrl(page.slugs)
+const markdownHref = page.slugs.length === 0 ? '/index.md' : `${page.url}.md`
 const socialImage = canonicalUrl(['og-image.png'])
 const pageTree = await source.serializePageTree(source.getPageTree())
 
@@ -87,6 +88,7 @@ if (isAuthoredPage(page)) {
     <meta name="twitter:title" content={documentTitle} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={socialImage} />
+    <link rel="alternate" type="text/markdown" href={markdownHref} />
   </Fragment>
 
   {
@@ -100,10 +102,18 @@ if (isAuthoredPage(page)) {
       >
         <h1 class="font-semibold text-3xl">{pageTitle}</h1>
         {authoredDescription ? (
-          <p class="text-lg text-fd-muted-foreground mb-8">
+          <p class="text-lg text-fd-muted-foreground mb-2">
             {authoredDescription}
           </p>
         ) : null}
+        <p class="mb-8 text-sm">
+          <a
+            class="text-fd-muted-foreground underline-offset-4 hover:text-fd-foreground hover:underline"
+            href={markdownHref}
+          >
+            View as Markdown
+          </a>
+        </p>
         <div class="prose flex-1">
           <Content
             components={{
@@ -120,6 +130,7 @@ if (isAuthoredPage(page)) {
         params={Astro.params}
         page={{ toc }}
         openapi={openapiPage}
+        markdownHref={markdownHref}
         client:load
       />
     ) : null
