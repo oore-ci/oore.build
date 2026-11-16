@@ -382,7 +382,9 @@ jobs:
           cargo install --locked --root "$tools/cargo" "cargo-zigbuild@${CARGO_ZIGBUILD_VERSION}"
           echo "$tools/cargo/bin" >> "$GITHUB_PATH"
 
+      # See the acceptance job: never on self-hosted runners.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: runner.environment == 'github-hosted'
         with:
           cache-bin: false
           cache-on-failure: true
