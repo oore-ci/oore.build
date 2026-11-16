@@ -72,6 +72,8 @@ export const demoBuilds: Array<Build> = [
     status: 'running',
     trigger_type: 'manual',
     trigger_actor: 'demo+developer@oore.build',
+    trigger_token_id: 'token-demo-003',
+    trigger_token_name: 'Local CLI',
     commit_sha: 'f0e1d2c3b4a5f6e7d8c9b0a1f2e3d4c5b6a7f8e9',
     branch: 'main',
     changelog: 'Adds receipt sharing and improves payment retry messaging.',

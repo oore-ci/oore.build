@@ -833,6 +833,7 @@ use utoipa::{
         oore_contract::AuditLogActivityResponse,
         oore_contract::ListAuditLogsResponse,
         // API Tokens
+        oore_contract::TokenAbility,
         oore_contract::CreateApiTokenRequest,
         oore_contract::CreateApiTokenResponse,
         oore_contract::ApiTokenSummary,
@@ -4948,6 +4949,7 @@ mod operations {
             ("limit" = Option<i64>, Query, description = "Page size (default 50, max 200)"),
             ("offset" = Option<i64>, Query, description = "Page offset (default 0)"),
             ("actor_id" = Option<String>, Query, description = "Filter by actor user ID, or `system` for entries without an actor"),
+            ("token_id" = Option<String>, Query, description = "Filter to entries made through this API token"),
             ("action" = Option<String>, Query, description = "Filter by exact action string"),
             ("q" = Option<String>, Query, description = "Search text matched against the action, the actor, the details, and the names of apps and pipelines"),
             ("category" = Option<AuditLogCategory>, Query, description = "Filter by kind of activity"),

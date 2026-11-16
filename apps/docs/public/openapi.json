@@ -1494,6 +1494,15 @@
             }
           },
           {
+            "name": "token_id",
+            "in": "query",
+            "description": "Filter to entries made through this API token",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "action",
             "in": "query",
             "description": "Filter by exact action string",
@@ -17663,6 +17672,17 @@
           "is_revoked"
         ],
         "properties": {
+          "abilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenAbility"
+            },
+            "description": "Abilities the token holds. Tokens made before abilities existed show\nthe abilities their role implies."
+          },
+          "abilities_chosen": {
+            "type": "boolean",
+            "description": "Whether `abilities` was chosen when the token was made, rather than\nimplied by its role."
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -17701,6 +17721,13 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "project_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Apps the token may reach. Empty means every app its creator reaches."
           },
           "role": {
             "$ref": "#/components/schemas/UserRole"
@@ -18523,6 +18550,20 @@
           },
           "resource_type": {
             "type": "string"
+          },
+          "token_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The API token the actor used, when the action came through one."
+          },
+          "token_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That token's name when it acted, shown as \"via token <name>\"."
           }
         }
       },
@@ -18836,6 +18877,20 @@
               "string",
               "null"
             ]
+          },
+          "trigger_token_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The API token that started the build, when one did."
+          },
+          "trigger_token_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "That token's name, shown as \"via token <name>\"."
           },
           "trigger_type": {
             "$ref": "#/components/schemas/TriggerType"
@@ -20204,15 +20259,36 @@
           "role"
         ],
         "properties": {
+          "abilities": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/TokenAbility"
+            },
+            "description": "What the token may do. Leave out for `read` and `build`. `read` is\nalways included."
+          },
           "expires_at": {
             "type": [
               "integer",
               "null"
             ],
-            "format": "int64"
+            "format": "int64",
+            "description": "Unix time the token stops working. Leave out for a token that never\nexpires; the web UI and CLI suggest 90 days."
           },
           "name": {
             "type": "string"
+          },
+          "project_ids": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Apps the token may reach. Leave out or empty for every app you reach."
           },
           "role": {
             "type": "string"
@@ -20230,6 +20306,13 @@
           "token"
         ],
         "properties": {
+          "abilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenAbility"
+            },
+            "description": "Abilities the token holds."
+          },
           "created_at": {
             "type": "integer",
             "format": "int64"
@@ -20249,6 +20332,13 @@
           },
           "prefix": {
             "type": "string"
+          },
+          "project_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Apps the token may reach. Empty means every app its creator reaches."
           },
           "role": {
             "type": "string"
@@ -29557,6 +29647,17 @@
             "description": "1 to 80 characters, unique on the instance."
           }
         }
+      },
+      "TokenAbility": {
+        "type": "string",
+        "description": "What an API token may do, on top of its role. A token may do the least\nof its creator's own rights, its role, its abilities and its app list.",
+        "enum": [
+          "read",
+          "build",
+          "release_operate",
+          "release_manage",
+          "manage"
+        ]
       },
       "TriggerConfig": {
         "type": "object",

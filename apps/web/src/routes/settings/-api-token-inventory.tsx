@@ -19,6 +19,7 @@ import { apiTokenStatus } from '@/lib/status-variants'
 import { ApiTokenActions } from './-api-token-actions'
 import { Text } from '@/components/layout/text'
 import { Stack } from '@/components/layout/stack'
+import { tokenAbilityLabel } from './-api-token-abilities'
 
 const API_TOKEN_TABLE_SORTS = [
   'name',
@@ -44,12 +45,28 @@ function LastUsed({ at }: { at?: number | null }) {
   return <RelativeTime at={at} />
 }
 
+function TokenApps({
+  projectIds,
+  projectNames,
+}: {
+  projectIds: Array<string>
+  projectNames: Record<string, string>
+}) {
+  if (projectIds.length === 0) {
+    return <span className="text-muted-foreground">All apps</span>
+  }
+  const names = projectIds.map((id) => projectNames[id] ?? 'Removed app')
+  return <span title={names.join(', ')}>{names.join(', ')}</span>
+}
+
 function getApiTokenColumns({
   canDelete,
   onRevoke,
+  projectNames,
 }: {
   canDelete: boolean
   onRevoke: (token: ApiTokenSummary) => void
+  projectNames: Record<string, string>
 }): Array<DataTableColumnDef<ApiTokenSummary>> {
   return [
     {
@@ -73,6 +90,31 @@ function getApiTokenColumns({
         <Badge variant="secondary">
           {roles[row.original.role] ?? row.original.role}
         </Badge>
+      ),
+    },
+    {
+      id: 'abilities',
+      header: 'Can do',
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div className="flex max-w-64 flex-wrap gap-1">
+          {(row.original.abilities ?? []).map((ability) => (
+            <Badge key={ability} variant="outline">
+              {tokenAbilityLabel(ability)}
+            </Badge>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: 'apps',
+      header: 'Apps',
+      enableSorting: false,
+      cell: ({ row }) => (
+        <TokenApps
+          projectIds={row.original.project_ids ?? []}
+          projectNames={projectNames}
+        />
       ),
     },
     {
@@ -130,6 +172,7 @@ export function ApiTokenInventory({
   onSortChange,
   page,
   pageSize,
+  projectNames,
   query,
   sort,
   tokens,
@@ -144,14 +187,15 @@ export function ApiTokenInventory({
   onSortChange: (sort: ApiTokenSort, direction: SortDirection) => void
   page: number
   pageSize: number
+  projectNames: Record<string, string>
   query: string
   sort: ApiTokenSort
   tokens: Array<ApiTokenSummary>
   total: number
 }) {
   const columns = useMemo(
-    () => getApiTokenColumns({ canDelete, onRevoke }),
-    [canDelete, onRevoke],
+    () => getApiTokenColumns({ canDelete, onRevoke, projectNames }),
+    [canDelete, onRevoke, projectNames],
   )
   const sorting = useMemo(
     () => dataTableSortingState(sort, direction),

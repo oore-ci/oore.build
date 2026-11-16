@@ -80,6 +80,18 @@ export const apiTokenHandlers = [
         name: z.string(),
         role: z.enum(['owner', 'admin', 'developer', 'qa_viewer']),
         expires_at: z.number().optional(),
+        abilities: z
+          .array(
+            z.enum([
+              'read',
+              'build',
+              'release_operate',
+              'release_manage',
+              'manage',
+            ]),
+          )
+          .optional(),
+        project_ids: z.array(z.string()).optional(),
       })
       .parse(await request.json())
     if (
@@ -95,12 +107,16 @@ export const apiTokenHandlers = [
         { status: 403 },
       )
     }
+    const abilities = [
+      ...new Set(['read' as const, ...(body.abilities ?? ['read', 'build'])]),
+    ]
+    const projectIds = body.project_ids ?? []
     const id = `token-demo-new-${Date.now()}`
     const createdAt = ago(0)
     demoState.apiTokens.unshift({
       id,
       name: body.name,
-      prefix: `oore_${id.slice(-6)}`,
+      prefix: `oore_${id.slice(-8)}`,
       role: body.role,
       created_by: persona.userId,
       created_by_email: persona.email,
@@ -109,14 +125,19 @@ export const apiTokenHandlers = [
       last_used_at: null,
       is_expired: false,
       is_revoked: false,
+      abilities,
+      abilities_chosen: true,
+      project_ids: projectIds,
     })
     return HttpResponse.json({
       id,
       name: body.name,
-      prefix: `oore_${id.slice(-6)}`,
+      prefix: `oore_${id.slice(-8)}`,
       role: body.role,
       created_at: createdAt,
       expires_at: body.expires_at ?? null,
+      abilities,
+      project_ids: projectIds,
       token: `oore_demo_${crypto.randomUUID().replaceAll('-', '')}`,
     })
   }),

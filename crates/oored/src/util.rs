@@ -36,6 +36,21 @@ pub fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
         .and_then(|v| v.strip_prefix("Bearer "))
 }
 
+/// A 429 answer for a stream or rate limit: the error body names the limit
+/// and how to recover, and `Retry-After` says when to try again.
+pub fn limit_reached_response(
+    code: &str,
+    message: impl Into<String>,
+    retry_after_secs: u64,
+) -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        [(header::RETRY_AFTER, retry_after_secs.to_string())],
+        Json(ApiError::new(code, message)),
+    )
+        .into_response()
+}
+
 /// Convenience error constructor for API error responses.
 pub fn api_err(
     status: StatusCode,

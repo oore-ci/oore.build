@@ -592,6 +592,9 @@ pub async fn list_build_artifacts(
         query.push_bind(&auth.0.user_id);
         query.push(")");
     }
+    if let Some(limit) = crate::session::current_project_limit_sql("b.project_id") {
+        query.push(" AND ").push(limit);
+    }
     query.push(" ORDER BY a.created_at DESC");
 
     let rows = query.build().fetch_all(&pool).await.map_err(|e| {
