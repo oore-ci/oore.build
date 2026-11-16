@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link, useLocation } from '@tanstack/react-router'
 import { HugeiconsIcon } from '@hugeicons/react'
 import {
@@ -100,20 +101,23 @@ function ActiveBuildBadge() {
 }
 
 /**
- * Whether the Settings group shows its pages. It is always open while a
- * settings page is showing; otherwise it follows the person's last choice,
- * and starts open only for people who can change instance settings.
+ * Whether the Settings group shows its pages. It opens on every settings page
+ * so the current page is visible, unless the person folded it on that page;
+ * elsewhere it follows the person's last choice, and starts open only for
+ * people who can change instance settings.
  */
 export function isSettingsGroupOpen({
   remembered,
   role,
   onSettingsPage,
+  foldedHere = false,
 }: {
   remembered: boolean | undefined
   role: UserRole | undefined
   onSettingsPage: boolean
+  foldedHere?: boolean
 }): boolean {
-  if (onSettingsPage) return true
+  if (onSettingsPage) return !foldedHere
   if (remembered !== undefined) return remembered
   return role === 'owner' || role === 'admin'
 }
@@ -157,20 +161,28 @@ function CollapsibleNavGroup({
   const onSettingsPage = group.items.some((item) =>
     isSidebarItemActive(pathname, item.to),
   )
-  const open = isSettingsGroupOpen({ remembered, role, onSettingsPage })
+  // The settings page the person folded the group on, if any. Moving to
+  // another settings page opens it again so the current page stays visible.
+  const [foldedOn, setFoldedOn] = useState<string | null>(null)
+  const open = isSettingsGroupOpen({
+    remembered,
+    role,
+    onSettingsPage,
+    foldedHere: foldedOn === pathname,
+  })
 
   return (
     <Collapsible
       open={open}
-      onOpenChange={setRemembered}
+      onOpenChange={(next) => {
+        setRemembered(next)
+        setFoldedOn(!next && onSettingsPage ? pathname : null)
+      }}
       render={<SidebarGroup />}
     >
       <SidebarGroupLabel
         render={
-          <CollapsibleTrigger
-            className="w-full justify-between hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-            disabled={onSettingsPage}
-          />
+          <CollapsibleTrigger className="w-full justify-between hover:bg-sidebar-accent hover:text-sidebar-accent-foreground" />
         }
       >
         {group.title}
