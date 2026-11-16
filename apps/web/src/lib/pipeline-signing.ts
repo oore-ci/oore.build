@@ -1,5 +1,11 @@
-import { usesOwnApiKey, type PipelineFormValues } from '@/lib/pipeline-schema'
+import {
+  PIPELINE_OWN_FILES,
+  usesOwnApiKey,
+  type PipelineFormValues,
+} from '@/lib/pipeline-schema'
 import type {
+  AndroidSigningProfile,
+  AndroidSigningProfileInput,
   PipelineAndroidSigningResponse,
   PipelineIosSigningResponse,
   UpdatePipelineAndroidSigningRequest,
@@ -27,132 +33,71 @@ interface SigningResult<T> {
   errors: Array<string>
 }
 
-function profileHasInput(
-  enabled: boolean,
-  file: File | null,
-  alias?: string,
-  storePassword?: string,
-  keyPassword?: string,
-): boolean {
-  return enabled || !!file || !!alias || !!storePassword || !!keyPassword
+/**
+ * One Android build type's pick: a library identity signs it, the files the
+ * pipeline still holds keep signing it, or nothing does. Undefined when
+ * nothing changed.
+ */
+function androidProfileInput(
+  picked: string | undefined,
+  previous: AndroidSigningProfile | undefined,
+): AndroidSigningProfileInput | undefined {
+  const identity = picked ?? ''
+  const enabled = identity !== ''
+  const ownFiles = identity === PIPELINE_OWN_FILES
+  if (previous) {
+    const unchanged =
+      enabled === previous.enabled &&
+      (ownFiles || identity === (previous.identity_id ?? ''))
+    if (unchanged) return undefined
+  } else if (!enabled) {
+    return undefined
+  }
+  // Own files keep the stored choice; turning signing off keeps the pick
+  // too, so turning it back on needs no new pick.
+  return {
+    enabled,
+    identity_id: ownFiles || !enabled ? undefined : identity,
+  }
 }
 
+/**
+ * Android signing picks a library identity per build type. The files
+ * argument is kept for callers from before the library; uploads now go to
+ * the library.
+ */
 export async function buildAndroidSigningPayload(
   values: PipelineFormValues,
-  files: AndroidSigningFiles,
+  _files?: AndroidSigningFiles,
   previous?: PipelineAndroidSigningResponse,
 ): Promise<SigningResult<UpdatePipelineAndroidSigningRequest>> {
+  await Promise.resolve()
   if (!values.platform_android) return { payload: null, errors: [] }
-
-  const release = {
-    enabled: values.android_signing_release_enabled,
-    alias: trimToUndefined(values.android_signing_release_key_alias),
-    storePassword: trimToUndefined(
-      values.android_signing_release_store_password,
-    ),
-    keyPassword: trimToUndefined(values.android_signing_release_key_password),
-  }
-  const debug = {
-    enabled: values.android_signing_debug_enabled,
-    alias: trimToUndefined(values.android_signing_debug_key_alias),
-    storePassword: trimToUndefined(values.android_signing_debug_store_password),
-    keyPassword: trimToUndefined(values.android_signing_debug_key_password),
-  }
-
-  const releaseHasInput = profileHasInput(
-    release.enabled,
-    files.release,
-    release.alias,
-    release.storePassword,
-    release.keyPassword,
+  const release = androidProfileInput(
+    values.android_signing_release_identity_id,
+    previous?.release,
   )
-  const debugHasInput = profileHasInput(
-    debug.enabled,
-    files.debug,
-    debug.alias,
-    debug.storePassword,
-    debug.keyPassword,
+  const debug = androidProfileInput(
+    values.android_signing_debug_identity_id,
+    previous?.debug,
   )
-  if (!previous && !releaseHasInput && !debugHasInput) {
-    return { payload: null, errors: [] }
-  }
+  if (!release && !debug) return { payload: null, errors: [] }
+  return { errors: [], payload: { release, debug } }
+}
 
-  const errors: Array<string> = []
-  if (release.enabled) {
-    if (!files.release && !previous?.release.has_keystore) {
-      errors.push(
-        'Release signing is enabled but no release keystore is configured',
-      )
-    }
-    if (!release.alias) errors.push('Release signing key alias is required')
-    if (!release.storePassword && !previous?.release.has_store_password) {
-      errors.push('Release store password is required')
-    }
-    if (!release.keyPassword && !previous?.release.has_key_password) {
-      errors.push('Release key password is required')
-    }
-  }
-  if (debug.enabled) {
-    if (!files.debug && !previous?.debug.has_keystore) {
-      errors.push(
-        'Debug signing is enabled but no debug keystore is configured',
-      )
-    }
-    if (!debug.alias) errors.push('Debug signing key alias is required')
-    if (!debug.storePassword && !previous?.debug.has_store_password) {
-      errors.push('Debug store password is required')
-    }
-    if (!debug.keyPassword && !previous?.debug.has_key_password) {
-      errors.push('Debug key password is required')
-    }
-  }
-  if (errors.length > 0) return { payload: null, errors }
+/** The picker value for a stored Android profile. */
+export function androidIdentityValue(profile?: AndroidSigningProfile): string {
+  if (!profile?.enabled) return profile?.identity_id ?? ''
+  if (profile.identity_id) return profile.identity_id
+  return profile.has_keystore ? PIPELINE_OWN_FILES : ''
+}
 
-  const releaseTouched = previous
-    ? release.enabled !== previous.release.enabled ||
-      !!files.release ||
-      release.alias !== trimToUndefined(previous.release.key_alias) ||
-      !!release.storePassword ||
-      !!release.keyPassword
-    : releaseHasInput
-  const debugTouched = previous
-    ? debug.enabled !== previous.debug.enabled ||
-      !!files.debug ||
-      debug.alias !== trimToUndefined(previous.debug.key_alias) ||
-      !!debug.storePassword ||
-      !!debug.keyPassword
-    : debugHasInput
-  if (!releaseTouched && !debugTouched) return { payload: null, errors: [] }
-
-  return {
-    errors: [],
-    payload: {
-      release: releaseTouched
-        ? {
-            enabled: release.enabled,
-            keystore_filename: files.release?.name,
-            keystore_base64: files.release
-              ? await fileToBase64(files.release)
-              : undefined,
-            key_alias: release.alias,
-            store_password: release.storePassword,
-            key_password: release.keyPassword,
-          }
-        : undefined,
-      debug: debugTouched
-        ? {
-            enabled: debug.enabled,
-            keystore_filename: files.debug?.name,
-            keystore_base64: files.debug
-              ? await fileToBase64(files.debug)
-              : undefined,
-            key_alias: debug.alias,
-            store_password: debug.storePassword,
-            key_password: debug.keyPassword,
-          }
-        : undefined,
-    },
-  }
+/** The picker value for stored iOS signing. */
+export function iosIdentityValue(signing?: PipelineIosSigningResponse): string {
+  if (signing?.identity_id) return signing.identity_id
+  return signing?.mode === 'manual' && signing.enabled && signing.has_p12
+    ? PIPELINE_OWN_FILES
+    : ''
 }
 
 /**
@@ -173,12 +118,51 @@ export function iosProfilesNeedResync(
   )
 }
 
+/**
+ * Manual mode signs with a library identity, which sets the team, export
+ * method and bundle IDs on the daemon. Files the pipeline still holds keep
+ * their stored team and bundles.
+ */
+function manualIosSigningPayload(
+  values: PipelineFormValues,
+  previous?: PipelineIosSigningResponse,
+): SigningResult<UpdatePipelineIosSigningRequest> {
+  const identity = values.ios_signing_identity_id ?? ''
+  const ownFiles = identity === PIPELINE_OWN_FILES
+  const enabled = values.ios_signing_enabled
+  const changed = previous
+    ? enabled !== previous.enabled ||
+      previous.mode !== 'manual' ||
+      (!ownFiles && identity !== (previous.identity_id ?? ''))
+    : enabled
+  if (!changed) return { payload: null, errors: [] }
+  if (enabled && !identity) {
+    return { payload: null, errors: ['Pick an iOS signing identity'] }
+  }
+  return {
+    errors: [],
+    payload: {
+      enabled,
+      mode: 'manual',
+      identity_id: ownFiles || !identity ? undefined : identity,
+      // The daemon replaces these with the identity's.
+      export_method: ownFiles ? previous?.export_method : undefined,
+      team_id: ownFiles ? (previous?.team_id ?? undefined) : undefined,
+      bundle_ids: ownFiles || !identity ? (previous?.bundle_ids ?? []) : [],
+      provisioning_profiles: [],
+    },
+  }
+}
+
 export async function buildIosSigningPayload(
   values: PipelineFormValues,
   files: IosSigningFiles,
   previous?: PipelineIosSigningResponse,
 ): Promise<SigningResult<UpdatePipelineIosSigningRequest>> {
   if (!values.platform_ios) return { payload: null, errors: [] }
+  if (values.ios_signing_mode === 'manual') {
+    return manualIosSigningPayload(values, previous)
+  }
 
   const bundleIds = parseBundleIdsInput(values.ios_signing_bundle_ids)
   const teamId = trimToUndefined(values.ios_signing_team_id)
@@ -231,15 +215,13 @@ export async function buildIosSigningPayload(
   }
 
   const needsManual =
-    values.ios_signing_enabled &&
-    (values.ios_signing_mode === 'manual' ||
-      values.ios_signing_mode === 'hybrid')
+    values.ios_signing_enabled && values.ios_signing_mode === 'hybrid'
   if (needsManual) {
     if (!files.p12File && !previous?.has_p12) {
-      errors.push('Manual/Hybrid iOS signing requires a .p12 certificate')
+      errors.push('Hybrid iOS signing requires a .p12 certificate')
     }
     if (!p12Password && !previous?.has_p12_password) {
-      errors.push('Manual/Hybrid iOS signing requires p12 password')
+      errors.push('Hybrid iOS signing requires p12 password')
     }
     // The daemon discards stored profiles when the export method changes.
     const keepsStoredProfiles =
@@ -252,7 +234,7 @@ export async function buildIosSigningPayload(
         )
       if (!files.profileFiles[bundleId] && !hasStoredProfile) {
         errors.push(
-          `Manual/Hybrid iOS signing requires provisioning profile for ${bundleId}`,
+          `Hybrid iOS signing requires provisioning profile for ${bundleId}`,
         )
       }
     }

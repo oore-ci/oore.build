@@ -20,6 +20,7 @@ import {
   signingIdentityExpiry,
   signingIdentitySummary,
   signingIdentityUsage,
+  signingIdentityUses,
 } from '@/lib/signing-identities'
 import { toast } from '@/lib/toast'
 import { CollectionError } from '@/components/collection'
@@ -186,7 +187,7 @@ function DeleteIdentityDialog({
     })
   }
 
-  const uses = shown?.used_by ?? []
+  const uses = shown ? signingIdentityUses(shown) : []
   return (
     <AlertDialog open={identity !== undefined} onOpenChange={close}>
       <AlertDialogContent>
@@ -196,7 +197,7 @@ function DeleteIdentityDialog({
           </AlertDialogTitle>
           <AlertDialogDescription>
             {uses.length > 0
-              ? `${signingIdentityUsage(shown!)}. Pick another identity in those workflow settings first.`
+              ? `${signingIdentityUsage(shown!)}. Pick another identity there first.`
               : 'Builds of files that name it under signing are refused until the file names another. This cannot be undone.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
@@ -233,7 +234,10 @@ function DeleteIdentityDialog({
   )
 }
 
-/** Project settings > Signing: the keystores and certificates workflows sign with. */
+/**
+ * App settings > Signing: the only place keystores, certificates and
+ * profiles are uploaded. Pipelines and workflows pick from it.
+ */
 export function SigningIdentitiesPanel({
   canWrite,
   projectId,
@@ -251,7 +255,7 @@ export function SigningIdentitiesPanel({
     <SettingsSection
       id="signing"
       title="Signing"
-      hint="Files name these under signing; key material never leaves Oore."
+      hint="Pipelines and workflows pick these; key material never leaves Oore."
       meta={
         identities.length > 0 ? (
           <Badge variant="secondary">{identities.length}</Badge>
@@ -286,8 +290,8 @@ export function SigningIdentitiesPanel({
             </EmptyMedia>
             <EmptyTitle>No signing identities yet</EmptyTitle>
             <EmptyDescription>
-              Add a keystore or distribution certificate once, then let each
-              workflow sign with its own.{' '}
+              Add a keystore or distribution certificate once, then pick it on
+              each pipeline.{' '}
               <a
                 href={SIGNING_DOCS_URL}
                 target="_blank"

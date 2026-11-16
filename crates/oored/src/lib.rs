@@ -58,6 +58,7 @@ pub mod sample_app;
 pub mod scheduler;
 pub mod secrets;
 pub mod session;
+pub mod signing_adoption;
 pub mod signing_expiry;
 pub mod signing_identities;
 pub mod step_retry;
@@ -2393,6 +2394,22 @@ pub async fn build_router_with_recovery(
             }
             Err(e) => {
                 tracing::error!(error = %e, "failed to mark interrupted promotions as failed");
+            }
+        }
+        // Pipelines that still hold their own signing files move them into
+        // the app's signing library, keeping the same keys.
+        match signing_adoption::adopt_pipeline_signing(pool, &encryption_key, None).await {
+            Ok(report) if report.linked > 0 || report.skipped > 0 => {
+                info!(
+                    created = report.created,
+                    linked = report.linked,
+                    skipped = report.skipped,
+                    "moved pipeline signing files into the signing library"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(error = %e, "failed to move pipeline signing files into the signing library");
             }
         }
     }

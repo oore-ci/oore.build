@@ -481,6 +481,8 @@ u7FtNIKhMcPaYJ6YVeHr1zsO6PJMj5yCh1gv5ufc+cP0Yj4BubQIax4E
             include_str!("../migrations/014_pipeline_ios_signing.sql"),
             include_str!("../migrations/043_pipeline_publish.sql"),
             include_str!("../migrations/055_app_store_connect_keys.sql"),
+            // From 101, without the signing library it points at.
+            "ALTER TABLE pipeline_ios_signing_settings ADD COLUMN identity_id TEXT",
             "INSERT INTO pipelines VALUES ('pl1'), ('pl2')",
         ] {
             sqlx::raw_sql(statement).execute(&pool).await.unwrap();

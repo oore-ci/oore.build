@@ -185,10 +185,6 @@ export default function PipelineForm({
   const { errors, isSubmitted } = useFormState({ control: form.control })
   const errorCount = isSubmitted ? countFieldErrors(errors) : 0
 
-  const [releaseKeystoreFile, setReleaseKeystoreFile] = useState<File | null>(
-    null,
-  )
-  const [debugKeystoreFile, setDebugKeystoreFile] = useState<File | null>(null)
   const [iosP12File, setIosP12File] = useState<File | null>(null)
   const [iosApiKeyFile, setIosApiKeyFile] = useState<File | null>(null)
   const [iosProfileFiles, setIosProfileFiles] = useState<
@@ -196,7 +192,7 @@ export default function PipelineForm({
   >({})
   const { isSubmitting } = form.formState
   const signingFilesDirty = hasSigningFileChanges(
-    [releaseKeystoreFile, debugKeystoreFile, iosP12File, iosApiKeyFile],
+    [iosP12File, iosApiKeyFile],
     iosProfileFiles,
   )
   const isDirty = form.formState.isDirty || signingFilesDirty
@@ -213,7 +209,8 @@ export default function PipelineForm({
   }
 
   function handleFormSubmit(data: PipelineFormValues) {
-    return onSubmit(data, releaseKeystoreFile, debugKeystoreFile, {
+    // Keystores are uploaded to the app's signing library, not here.
+    return onSubmit(data, null, null, {
       p12File: iosP12File,
       apiKeyFile: iosApiKeyFile,
       profileFiles: iosProfileFiles,
@@ -331,7 +328,6 @@ export default function PipelineForm({
               <PipelineSigningSection
                 androidSigningData={signingData}
                 bundleIds={iosBundleIds}
-                debugKeystoreFile={debugKeystoreFile}
                 iosActions={iosSigningActions}
                 iosApiKeyFile={iosApiKeyFile}
                 iosAppStorePublishing={iosAppStorePublishing}
@@ -339,11 +335,8 @@ export default function PipelineForm({
                 iosProfileFiles={iosProfileFiles}
                 iosSigningData={iosSigningData}
                 onApiKeyFileChange={setIosApiKeyFile}
-                onDebugKeystoreFileChange={setDebugKeystoreFile}
                 onP12FileChange={setIosP12File}
                 onProfileFileChange={handleProfileFileChange}
-                onReleaseKeystoreFileChange={setReleaseKeystoreFile}
-                releaseKeystoreFile={releaseKeystoreFile}
                 summary={summaries.signing}
                 values={values}
               />

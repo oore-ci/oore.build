@@ -456,6 +456,7 @@ use utoipa::{
         oore_contract::RepositoryConfigFilesResponse,
         oore_contract::SigningIdentityKind,
         oore_contract::SigningIdentityUse,
+        oore_contract::SigningIdentityPipelineUse,
         oore_contract::SigningIdentityProfile,
         oore_contract::SigningIdentity,
         oore_contract::ListSigningIdentitiesResponse,
