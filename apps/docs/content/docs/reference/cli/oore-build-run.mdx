@@ -5,32 +5,37 @@ description: 'Queue a build of a pipeline, optionally naming the workflow to run
 ---
 
 ```text
-oore build run --pipeline <ID> [--workflow NAME] [--branch BRANCH] [--commit SHA]
-               [--platform PLATFORM]... [--notes TEXT] [--rehearsal]
-               [--daemon-url <URL>] [--token <TOKEN>] [--json]
+oore build run --pipeline <NAME|ID> [--project <NAME|ID>] [--workflow NAME]
+               [--branch BRANCH] [--commit SHA] [--platform PLATFORM]... [--notes TEXT]
+               [--rehearsal] [--wait [--store] [--interval SECONDS]]
+               [--url <URL>] [--token <TOKEN>] [--json]
 ```
 
 The command looks up the pipeline's project, then queues a build with
 `POST /v1/projects/{project_id}/builds`, as **Run build** in the web UI does.
 It needs a signed-in session (`oore login`, `--token`, or
-`OORE_SESSION_TOKEN`) with build access to the project.
+`OORE_TOKEN`) with build access to the project.
 
 | Option                | Effect                                                                                                                                        |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--pipeline ID`       | The pipeline to build. Required.                                                                                                              |
+| `--pipeline NAME`     | The pipeline to build, by name or ID. Required.                                                                                               |
+| `--project NAME`      | The app the pipeline belongs to, by name or ID, when the pipeline's name is not unique.                                                       |
 | `--workflow NAME`     | The `.oore.yaml` version 2 workflow to run. Defaults to the pipeline's default workflow, then the only one.                                   |
 | `--branch BRANCH`     | The branch to build. Defaults to the project's default branch.                                                                                |
 | `--commit SHA`        | The exact commit to build, instead of the branch head.                                                                                        |
 | `--platform PLATFORM` | Build only `android`, `ios` or `macos`. Repeat for several. Defaults to every platform the build plans.                                       |
 | `--notes TEXT`        | Release notes for the app version the build makes, unless the repository's changelog has them. See [`oore notes`](/reference/cli/oore-notes). |
 | `--rehearsal`         | Rehearse the release: build, sign and check with the stores, but submit nothing. See [Rehearse a release](/build/distribute/rehearse).        |
-| `--daemon-url`        | Backend URL; otherwise uses environment, CLI config, then loopback.                                                                           |
-| `--token`             | Session token; otherwise `OORE_SESSION_TOKEN` or the stored session.                                                                          |
-| `--json`              | Print the queued build as JSON.                                                                                                               |
+| `--wait`              | Follow the build to its result, as [`oore build watch`](/reference/cli/oore-build-watch) does, with the same exit codes.                      |
+| `--store`             | With `--wait`, also wait for the store's answer.                                                                                              |
+| `--url`               | Backend URL; otherwise `OORE_URL`, `OORE_DAEMON_URL`, CLI config, then loopback.                                                              |
+| `--token`             | API or session token; otherwise `OORE_TOKEN`, `OORE_SESSION_TOKEN` or the stored session.                                                     |
+| `--json`              | Print the queued build as JSON. With `--wait`, print JSON lines as `oore build watch --json` does.                                            |
 
 ```bash
 oore build run --pipeline pipe_123 --workflow release --branch main
 oore build run --pipeline pipe_123 --workflow adhoc --platform android
+oore build run --project Coin --pipeline Release --wait --store
 ```
 
 ```text

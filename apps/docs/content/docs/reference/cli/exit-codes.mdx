@@ -1,0 +1,62 @@
+---
+title: 'Exit codes and JSON errors'
+status: implemented
+description: 'The exit codes every oore command uses, and the JSON error object --json prints on failure.'
+---
+
+Every `oore` command exits with one of these codes, so a script or an agent
+can branch on the result without reading the text.
+
+| Code | Meaning                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------ |
+| `0`  | The command did what was asked.                                                                                    |
+| `1`  | The command failed, or the build it followed did not succeed.                                                      |
+| `2`  | Blocked until a person acts, such as `oore pipeline readiness` finding a blocker, or a build waiting for approval. |
+| `3`  | The store blocked, rejected or failed the release (`oore build watch --store`).                                    |
+| `4`  | Not signed in, or not allowed: the daemon answered 401 or 403.                                                     |
+| `5`  | Not found: the daemon answered 404, or no app or pipeline has the name given.                                      |
+| `64` | Usage error: an unknown command or flag, a missing value, or a confirmation that needs `--yes`.                    |
+
+Clap's own usage error is `2`, which here means "blocked", so `oore` moves
+it to `64`. `oore --help` lists the table too.
+
+## JSON output
+
+With `--json`, the result goes to standard output as JSON and nothing else
+does. Progress lines go to standard error. A command that follows a build,
+such as `oore build watch --json`, prints one JSON object per line.
+
+When a command fails with `--json`, it prints one JSON object on standard
+error:
+
+```json
+{
+  "error": "build lookup failed (HTTP 404): Build not found",
+  "code": "build_not_found",
+  "status": 404,
+  "exit_code": 5,
+  "hint": "List builds with `oore build list`."
+}
+```
+
+| Field       | Meaning                                                                                                                                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `error`     | What went wrong, in a sentence.                                                                                                                                                                             |
+| `code`      | The API's error code when the failure came from the API, otherwise a code such as `usage`, `not_signed_in`, `ambiguous_name`, `no_terminal`, `build_not_succeeded`, `store_refused` or `readiness_blocked`. |
+| `status`    | The HTTP status when the failure came from the API, otherwise `null`.                                                                                                                                       |
+| `exit_code` | The process exit code, from the table above.                                                                                                                                                                |
+| `hint`      | What to do next, when there is something to suggest. Left out otherwise.                                                                                                                                    |
+
+```bash
+if ! out=$(oore build show "$id" --json 2>err.json); then
+  jq -r '.code' err.json
+fi
+```
+
+## No prompts without a terminal
+
+A command never waits for an answer when standard input is not a terminal.
+When it needs one, it fails at once with exit code `64` and names the flag
+that answers it, such as `--profile` for `oore install`. Commands that delete
+or replace state, `oore uninstall` and `oore backup restore`, need `--yes`
+there.
