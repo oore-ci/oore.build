@@ -69,6 +69,9 @@ fn read_poll(status: u16, body: &Value) -> Poll {
     {
         return Poll::Token(token.to_string());
     }
+    if status == 429 {
+        return Poll::SlowDown;
+    }
     let code = body
         .get("code")
         .and_then(Value::as_str)
@@ -241,6 +244,10 @@ mod tests {
         );
         assert_eq!(
             read_poll(400, &json!({ "error": "slow_down" })),
+            Poll::SlowDown
+        );
+        assert_eq!(
+            read_poll(429, &json!({ "code": "rate_limited" })),
             Poll::SlowDown
         );
         assert_eq!(
