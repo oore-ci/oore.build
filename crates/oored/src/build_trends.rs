@@ -46,6 +46,9 @@ fn push_scope(query: &mut QueryBuilder<Sqlite>, member_user_id: Option<&str>) {
         query.push_bind(user_id.to_string());
         query.push(")");
     }
+    if let Some(limit) = crate::session::current_project_limit_sql("b.project_id") {
+        query.push(" AND ").push(limit);
+    }
 }
 
 /// `GET /v1/builds/trends`

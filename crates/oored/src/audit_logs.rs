@@ -114,6 +114,8 @@ pub struct ListAuditLogsQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub actor_id: Option<String>,
+    /// Entries made through this API token.
+    pub token_id: Option<String>,
     pub action: Option<String>,
     pub q: Option<String>,
     pub category: Option<AuditLogCategory>,
@@ -183,6 +185,9 @@ fn audit_log_filters(params: &ListAuditLogsQuery) -> (String, Vec<String>) {
         Some("system") => conditions.push("a.actor_id IS NULL".to_string()),
         Some(actor_id) => conditions.push(format!("a.actor_id = ?{}", bind(actor_id.to_string()))),
         None => {}
+    }
+    if let Some(token_id) = params.token_id.as_deref().filter(|id| !id.is_empty()) {
+        conditions.push(format!("a.token_id = ?{}", bind(token_id.to_string())));
     }
     if let Some(action) = &params.action {
         conditions.push(format!("a.action = ?{}", bind(action.clone())));
@@ -282,6 +287,7 @@ pub async fn list_audit_logs(
     Query(params): Query<ListAuditLogsQuery>,
 ) -> ApiResult<ListAuditLogsResponse> {
     check_permission(&state.enforcer, &auth.0.role, "audit_logs", "read").await?;
+    refuse_app_limited_token(&auth)?;
 
     let requested_limit = params.limit.unwrap_or(50);
     if requested_limit <= 0 {
@@ -315,6 +321,19 @@ pub async fn list_audit_logs(
         })
 }
 
+/// The audit log spans every app, so a token limited to chosen apps may not
+/// read it.
+fn refuse_app_limited_token(auth: &AuthUser) -> Result<(), (StatusCode, Json<ApiError>)> {
+    match auth.0.token.as_deref() {
+        Some(grant) if !grant.project_ids.is_empty() => Err(api_err(
+            StatusCode::FORBIDDEN,
+            "token_limited_to_apps",
+            "This token is limited to chosen apps, so it cannot read the audit log of the whole instance",
+        )),
+        _ => Ok(()),
+    }
+}
+
 fn row_to_audit_log_entry(row: &sqlx::sqlite::SqliteRow) -> AuditLogEntry {
     let action: String = row.get("action");
     let resource_type: String = row.get("resource_type");
@@ -323,6 +342,8 @@ fn row_to_audit_log_entry(row: &sqlx::sqlite::SqliteRow) -> AuditLogEntry {
         actor_id: row.get("actor_id"),
         actor_email: row.get("actor_email"),
         actor_name: row.get("actor_name"),
+        token_id: row.try_get("token_id").ok().flatten(),
+        token_name: row.try_get("token_name").ok().flatten(),
         category: audit_category(&action, &resource_type),
         action,
         resource_type,
@@ -591,6 +612,7 @@ pub async fn get_audit_log_activity(
     Query(params): Query<AuditLogActivityQuery>,
 ) -> ApiResult<AuditLogActivityResponse> {
     check_permission(&state.enforcer, &auth.0.role, "audit_logs", "read").await?;
+    refuse_app_limited_token(&auth)?;
 
     let days = params.days.unwrap_or(DEFAULT_ACTIVITY_DAYS);
     if !(1..=MAX_ACTIVITY_DAYS).contains(&days) {

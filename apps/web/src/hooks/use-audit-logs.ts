@@ -11,6 +11,7 @@ export function useAuditLogs(params?: {
   limit?: number
   offset?: number
   actor_id?: string
+  token_id?: string
   q?: string
   category?: AuditLogCategory
   from_ts?: number

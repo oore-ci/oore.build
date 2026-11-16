@@ -116,7 +116,15 @@ pub async fn list_release_freezes(
     }
     .map_err(store_err("Failed to load release freezes"))?;
     Ok(Json(ListReleaseFreezesResponse {
-        freezes: rows.iter().map(freeze_from_row).collect(),
+        freezes: rows
+            .iter()
+            .map(freeze_from_row)
+            .filter(|f| {
+                f.project_id
+                    .as_deref()
+                    .is_none_or(crate::session::current_allows_project)
+            })
+            .collect(),
     }))
 }
 

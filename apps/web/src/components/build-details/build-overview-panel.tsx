@@ -433,6 +433,9 @@ function DetailsSection({
               ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}`
               : ''}
             {build.trigger_actor ? ` · ${build.trigger_actor}` : ''}
+            {build.trigger_token_name
+              ? ` via token ${build.trigger_token_name}`
+              : ''}
           </Fact>
           {build.context?.runner_name ? (
             <Fact label="Runner">{build.context.runner_name}</Fact>

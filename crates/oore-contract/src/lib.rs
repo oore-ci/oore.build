@@ -1697,6 +1697,12 @@ pub struct Build {
     pub trigger_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_actor: Option<String>,
+    /// The API token that started the build, when one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_token_id: Option<String>,
+    /// That token's name, shown as "via token <name>".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger_token_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trigger_event: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -6719,6 +6725,12 @@ pub struct AuditLogEntry {
     /// The actor's display name, when they have one.
     #[serde(default)]
     pub actor_name: Option<String>,
+    /// The API token the actor used, when the action came through one.
+    #[serde(default)]
+    pub token_id: Option<String>,
+    /// That token's name when it acted, shown as "via token <name>".
+    #[serde(default)]
+    pub token_name: Option<String>,
     pub action: String,
     #[serde(default)]
     pub category: AuditLogCategory,
@@ -8050,12 +8062,86 @@ pub struct PromotionDecisionRequest {
 
 // ── API Tokens ──────────────────────────────────────────────────
 
+/// What an API token may do, on top of its role. A token may do the least
+/// of its creator's own rights, its role, its abilities and its app list.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, ToSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenAbility {
+    /// Read apps, pipelines, builds, logs, artifacts and releases.
+    Read,
+    /// Start, cancel, re-run and retry builds, set release notes and send
+    /// builds to testers.
+    Build,
+    /// Pause or halt a store release.
+    ReleaseOperate,
+    /// Raise, resume, complete, approve and promote store releases, and
+    /// approve gated builds.
+    ReleaseManage,
+    /// Change pipelines, secrets, signing, members and settings.
+    Manage,
+}
+
+impl TokenAbility {
+    pub const ALL: [Self; 5] = [
+        Self::Read,
+        Self::Build,
+        Self::ReleaseOperate,
+        Self::ReleaseManage,
+        Self::Manage,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Build => "build",
+            Self::ReleaseOperate => "release_operate",
+            Self::ReleaseManage => "release_manage",
+            Self::Manage => "manage",
+        }
+    }
+
+    /// The abilities a token of `role` held before abilities existed.
+    pub fn implied_by_role(role: &str) -> Vec<Self> {
+        match role {
+            "owner" | "admin" => Self::ALL.to_vec(),
+            "developer" => vec![Self::Read, Self::Build, Self::ReleaseOperate, Self::Manage],
+            _ => vec![Self::Read],
+        }
+    }
+}
+
+impl std::str::FromStr for TokenAbility {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|ability| ability.as_str() == value)
+            .ok_or_else(|| {
+                format!(
+                    "unknown ability '{value}'; use read, build, release_operate, release_manage or manage"
+                )
+            })
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CreateApiTokenRequest {
     pub name: String,
     pub role: String,
+    /// Unix time the token stops working. Leave out for a token that never
+    /// expires; the web UI and CLI suggest 90 days.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<i64>,
+    /// What the token may do. Leave out for `read` and `build`. `read` is
+    /// always included.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub abilities: Option<Vec<TokenAbility>>,
+    /// Apps the token may reach. Leave out or empty for every app you reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -8066,6 +8152,12 @@ pub struct CreateApiTokenResponse {
     pub role: String,
     pub created_at: i64,
     pub expires_at: Option<i64>,
+    /// Abilities the token holds.
+    #[serde(default)]
+    pub abilities: Vec<TokenAbility>,
+    /// Apps the token may reach. Empty means every app its creator reaches.
+    #[serde(default)]
+    pub project_ids: Vec<String>,
     /// The plaintext token. Only returned on creation, never again.
     pub token: String,
 }
@@ -8084,6 +8176,17 @@ pub struct ApiTokenSummary {
     pub last_used_at: Option<i64>,
     pub is_expired: bool,
     pub is_revoked: bool,
+    /// Abilities the token holds. Tokens made before abilities existed show
+    /// the abilities their role implies.
+    #[serde(default)]
+    pub abilities: Vec<TokenAbility>,
+    /// Whether `abilities` was chosen when the token was made, rather than
+    /// implied by its role.
+    #[serde(default)]
+    pub abilities_chosen: bool,
+    /// Apps the token may reach. Empty means every app its creator reaches.
+    #[serde(default)]
+    pub project_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

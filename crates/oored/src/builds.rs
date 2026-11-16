@@ -95,6 +95,8 @@ pub(crate) fn row_to_build(row: &sqlx::sqlite::SqliteRow) -> Build {
             .and_then(|reason| reason.parse::<RunnerPolicyBlockReason>().ok()),
         trigger_type: row.get("trigger_type"),
         trigger_actor: row.get("trigger_actor"),
+        trigger_token_id: row.try_get("trigger_token_id").ok().flatten(),
+        trigger_token_name: row.try_get("trigger_token_name").ok().flatten(),
         trigger_event: row.get("trigger_event"),
         trigger_ref: row.get("trigger_ref"),
         commit_sha: row.get("commit_sha"),
@@ -709,16 +711,17 @@ async fn execute_build_insert(
     _query: &str,
     b: &BuildInsertBinds<'_>,
 ) -> Result<bool, sqlx::Error> {
+    let token_grant = crate::session::current_grant();
     let mut tx = pool.begin().await?;
     let result = sqlx::query(
         "INSERT INTO builds (id, project_id, pipeline_id, build_number, status, \
          trigger_type, trigger_actor, trigger_event, trigger_ref, commit_sha, branch, \
          changelog, config_snapshot, webhook_id, source_build_id, queued_at, created_at, updated_at, \
-         approval_state, approval_requested_at) \
+         approval_state, approval_requested_at, trigger_token_id, trigger_token_name) \
          SELECT ?1, ?2, ?3, \
                 (SELECT COALESCE(MAX(build_number), 0) + 1 FROM builds WHERE project_id = ?2), \
                 'queued', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14, ?14, \
-                CASE WHEN ?15 THEN 'pending' END, CASE WHEN ?15 THEN ?14 END \
+                CASE WHEN ?15 THEN 'pending' END, CASE WHEN ?15 THEN ?14 END, ?16, ?17 \
          WHERE EXISTS ( \
            SELECT 1 FROM projects p \
            JOIN integration_repositories r ON r.id = p.repository_id \
@@ -747,6 +750,9 @@ async fn execute_build_insert(
     .bind(b.source_build_id)
     .bind(b.now)
     .bind(b.approval_required)
+    // The API token the request signed in with, when it used one.
+    .bind(token_grant.as_ref().map(|g| g.id.clone()))
+    .bind(token_grant.as_ref().map(|g| g.name.clone()))
     .execute(&mut *tx)
     .await?;
     if result.rows_affected() != 1 {
@@ -985,6 +991,10 @@ fn build_list_conditions(
     let mut bind_values: Vec<String> = Vec::new();
 
     push_viewer_scope(viewer, &mut conditions, &mut bind_values);
+    // An API token limited to chosen apps lists only their builds.
+    if let Some(limit) = crate::session::current_project_limit_sql("builds.project_id") {
+        conditions.push(limit);
+    }
     if let Some(ref project_id) = params.project_id {
         bind_values.push(project_id.clone());
         conditions.push(format!("builds.project_id = ?{}", bind_values.len()));
@@ -1752,6 +1762,8 @@ pub async fn create_build(
         status: "queued".to_string(),
         runner_policy_block_reason,
         trigger_type: "manual".to_string(),
+        trigger_token_id: auth.0.token_id().map(str::to_owned),
+        trigger_token_name: auth.0.token_name().map(str::to_owned),
         trigger_actor: Some(auth.0.email),
         trigger_event: None,
         trigger_ref,
@@ -2712,6 +2724,8 @@ pub(crate) async fn queue_rerun(
         runner_policy_block_reason,
         trigger_type: "manual".to_string(),
         trigger_actor: Some(auth.0.email.clone()),
+        trigger_token_id: auth.0.token_id().map(str::to_owned),
+        trigger_token_name: auth.0.token_name().map(str::to_owned),
         trigger_event: Some(event_type.to_string()),
         trigger_ref,
         commit_sha,
@@ -3203,6 +3217,8 @@ pub async fn trigger_build_from_webhook(
                     runner_policy_block_reason,
                     trigger_type: "webhook".to_string(),
                     trigger_actor: actor.map(String::from),
+                    trigger_token_id: crate::session::current_grant().map(|g| g.id.clone()),
+                    trigger_token_name: crate::session::current_grant().map(|g| g.name.clone()),
                     trigger_event: Some(event_type.to_string()),
                     trigger_ref: trigger_ref.map(String::from),
                     commit_sha: commit_sha.map(String::from),

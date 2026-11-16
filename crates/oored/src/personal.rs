@@ -74,7 +74,9 @@ pub(crate) async fn visible_projects(
     };
     Ok(rows
         .iter()
-        .map(|row| (row.get("id"), row.get("name")))
+        .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("name")))
+        // An API token limited to chosen apps sees only those.
+        .filter(|(id, _)| crate::session::current_allows_project(id))
         .collect())
 }
 

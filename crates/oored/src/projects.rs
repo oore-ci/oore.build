@@ -334,6 +334,14 @@ fn push_project_filters(
             .push(" OR p.description LIKE ")
             .push_bind(format!("%{search}%"))
             .push(")");
+        has_condition = true;
+    }
+
+    // An API token limited to chosen apps lists only those.
+    if let Some(limit) = crate::session::current_project_limit_sql("p.id") {
+        query
+            .push(if has_condition { " AND " } else { " WHERE " })
+            .push(limit);
     }
 }
 
@@ -916,7 +924,7 @@ pub async fn update_project(
     ) {
         let result = sqlx::query(
             "INSERT INTO audit_logs \
-             (actor_id, action, resource_type, resource_id, details, created_at) \
+             (actor_id, action, resource_type, resource_id, details, created_at, token_id, token_name) \
              SELECT ?1, 'project_source_link_updated', 'project', p.id, \
                     json_object( \
                       'previous_repository_id', p.repository_id, \
@@ -924,7 +932,7 @@ pub async fn update_project(
                       'repository_id', ?3, \
                       'repository_full_name', ?4, \
                       'updated_by', ?5 \
-                    ), ?6 \
+                    ), ?6, ?7, ?8 \
              FROM projects p \
              LEFT JOIN integration_repositories old_r ON old_r.id = p.repository_id \
              WHERE p.id = ?2 AND p.repository_id IS NOT ?3",
@@ -935,6 +943,8 @@ pub async fn update_project(
         .bind(repository_full_name)
         .bind(&auth.0.email)
         .bind(now)
+        .bind(auth.0.token_id())
+        .bind(auth.0.token_name())
         .execute(&mut *tx)
         .await
         .map_err(|e| {

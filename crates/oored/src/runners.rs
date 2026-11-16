@@ -1828,13 +1828,15 @@ pub async fn delete_runner(
     .to_string();
     sqlx::query(
         "INSERT INTO audit_logs \
-         (actor_id, action, resource_type, resource_id, details, created_at) \
-         VALUES (?1, 'runner_deleted', 'runner', ?2, ?3, ?4)",
+         (actor_id, action, resource_type, resource_id, details, created_at, token_id, token_name) \
+         VALUES (?1, 'runner_deleted', 'runner', ?2, ?3, ?4, ?5, ?6)",
     )
     .bind(&auth.0.user_id)
     .bind(&runner_id)
     .bind(&details)
     .bind(now_unix())
+    .bind(auth.0.token_id())
+    .bind(auth.0.token_name())
     .execute(&mut *transaction)
     .await
     .map_err(|error| {

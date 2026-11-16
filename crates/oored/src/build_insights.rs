@@ -49,6 +49,9 @@ impl Scope<'_> {
             query.push_bind(user_id.to_string());
             query.push(")");
         }
+        if let Some(limit) = crate::session::current_project_limit_sql("builds.project_id") {
+            query.push(" AND ").push(limit);
+        }
         if let Some(project_id) = self.project_id {
             // `+` keeps the time range, not a project's whole history, as the
             // index SQLite searches.

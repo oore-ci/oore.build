@@ -3338,6 +3338,10 @@ pub async fn build_router_with_recovery(
                 .put(retention::update_project_retention)
                 .delete(retention::delete_project_retention),
         )
+        .layer(axum_mw::from_fn_with_state(
+            shared_state.clone(),
+            extractors::scope_request_auth,
+        ))
         .layer(cors)
         .with_state(shared_state.clone())
         // Merge webhook routes (outside CORS)

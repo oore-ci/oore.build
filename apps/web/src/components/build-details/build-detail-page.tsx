@@ -601,7 +601,14 @@ export function BuildDetailPage({
           value: `${TRIGGER_TYPE_LABELS[build.trigger_type]}${build.trigger_event ? ` · ${formatEnumLabel(build.trigger_event).toLowerCase()}` : ''}`,
         },
         ...(build.trigger_actor
-          ? [{ label: 'Requested by', value: build.trigger_actor }]
+          ? [
+              {
+                label: 'Requested by',
+                value: build.trigger_token_name
+                  ? `${build.trigger_actor} via token ${build.trigger_token_name}`
+                  : build.trigger_actor,
+              },
+            ]
           : []),
         ...(sourceRef
           ? [
