@@ -2,13 +2,19 @@ import { useEffect, type ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { useFormContext } from 'react-hook-form'
 
-import { usesOwnApiKey, type PipelineFormValues } from '@/lib/pipeline-schema'
+import {
+  PIPELINE_OWN_FILES,
+  usesOwnApiKey,
+  type PipelineFormValues,
+} from '@/lib/pipeline-schema'
 import type {
   IosExportMethod,
   IosProvisioningProfileSummary,
   PipelineIosSigningResponse,
 } from '@oore/client/models'
 import { useAppStoreConnectKeys } from '@/hooks/use-app-store-connect-keys'
+import { useSigningIdentities } from '@/hooks/use-signing-identities'
+import { SigningIdentityPicker } from '@/components/signing/signing-identity-picker'
 import { useHasPermissions } from '@/hooks/use-permissions'
 import { PipelineFormSubsection } from '@/components/pipeline-form-section'
 import { FileField } from '@/components/file-field'
@@ -48,13 +54,13 @@ const EXPORT_METHOD_EFFECTS = {
 } satisfies Record<IosExportMethod, string>
 
 const SIGNING_MODES = {
-  manual: 'Manual (.p12 + provisioning profiles)',
-  api: 'API (App Store Connect automation)',
-  hybrid: 'Hybrid (manual cert + API automation)',
+  manual: 'Signing identity from the library',
+  api: 'App Store Connect (automatic)',
+  hybrid: 'Hybrid (uploaded certificate, synced profiles)',
 } satisfies Record<string, string>
 
 const SIGNING_MODE_SUMMARIES = {
-  manual: 'Signed with an uploaded certificate and profiles.',
+  manual: 'Signed with a signing library identity.',
   api: 'Signing assets synced from App Store Connect.',
   hybrid: 'Uploaded certificate with profiles synced from App Store Connect.',
 } satisfies Record<keyof typeof SIGNING_MODES, string>
@@ -78,6 +84,7 @@ export function PipelineIosSigningSection({
   onProfileFileChange,
   p12File,
   profileFiles,
+  projectId,
   signingData,
 }: {
   /** Rendered beside the heading, such as the profile sync button. */
@@ -90,6 +97,7 @@ export function PipelineIosSigningSection({
   onProfileFileChange: (bundleId: string, file: File | null) => void
   p12File: File | null
   profileFiles: Record<string, File | null>
+  projectId: string
   signingData?: PipelineIosSigningResponse
 }) {
   const form = useFormContext<PipelineFormValues>()
@@ -111,12 +119,21 @@ export function PipelineIosSigningSection({
       <IosSigningToggle signingData={signingData} />
       {enabled ? (
         <>
-          <IosSigningIdentityFields
-            appStorePublishing={appStorePublishing}
-            mode={mode}
-            storedExportMethod={signingData?.export_method}
-          />
-          {mode === 'manual' || mode === 'hybrid' ? (
+          <IosSigningModeField storedMode={signingData?.mode} />
+          {mode === 'manual' ? (
+            <IosLibraryIdentityField
+              appStorePublishing={appStorePublishing}
+              projectId={projectId}
+              signingData={signingData}
+            />
+          ) : (
+            <IosSigningIdentityFields
+              appStorePublishing={appStorePublishing}
+              mode={mode}
+              storedExportMethod={signingData?.export_method}
+            />
+          )}
+          {mode === 'hybrid' ? (
             <IosCertificateFields
               file={p12File}
               onFileChange={onP12FileChange}
@@ -130,7 +147,7 @@ export function PipelineIosSigningSection({
               signingData={signingData}
             />
           ) : null}
-          {mode === 'manual' || mode === 'hybrid' ? (
+          {mode === 'hybrid' ? (
             <IosProvisioningProfiles
               bundleIds={bundleIds}
               onFileChange={onProfileFileChange}
@@ -142,8 +159,8 @@ export function PipelineIosSigningSection({
             title="iOS app setup"
             summary="Oore installs the profiles and a temporary keychain for each build."
             items={[
-              'Manual mode uses your uploaded .p12 certificate and .mobileprovision files.',
-              'API mode uses App Store Connect credentials to sync signing assets; hybrid mode combines API sync with a manually uploaded certificate.',
+              'A signing identity holds a .p12 certificate and its provisioning profiles, uploaded once in the app\u2019s signing library.',
+              'App Store Connect mode uses an API key to fetch the certificate and profiles itself.',
               'During a build, Oore installs profiles, creates a temporary keychain, and pins CODE_SIGN_IDENTITY when a signing identity is available.',
               'Keep bundle identifiers aligned with the Xcode targets you expect to sign.',
             ]}
@@ -173,7 +190,7 @@ function IosSigningToggle({
             />
             Enable iOS signing
           </label>
-          {signingData ? (
+          {signingData && storedSigningSummary(signingData) ? (
             <Text variant="muted">{storedSigningSummary(signingData)}</Text>
           ) : null}
           <FormMessage />
@@ -185,13 +202,15 @@ function IosSigningToggle({
 
 const STORED_MODE_LABELS = {
   manual: 'Manual',
-  api: 'API',
+  api: 'App Store Connect',
   hybrid: 'Hybrid',
 } satisfies Record<keyof typeof SIGNING_MODES, string>
 
 /** What the server has stored, as one sentence. */
 function storedSigningSummary(signingData: PipelineIosSigningResponse) {
   const mode = signingData.mode
+  // The identity picker below already says what it signs with.
+  if (mode === 'manual' && signingData.identity_id) return undefined
   const parts: Array<string> = []
   if (mode !== 'api') {
     parts.push(
@@ -220,6 +239,121 @@ function exportMethodChangeHint(mode: PipelineFormValues['ios_signing_mode']) {
   return mode === 'manual'
     ? ' Saving discards the stored provisioning profiles, so upload profiles of the new type below.'
     : ' Saving discards the stored provisioning profiles and syncs new ones from App Store Connect.'
+}
+
+/** Hybrid stays a choice only for pipelines that already use it. */
+function IosSigningModeField({ storedMode }: { storedMode?: string }) {
+  const form = useFormContext<PipelineFormValues>()
+  const mode = form.watch('ios_signing_mode')
+  const modes = Object.fromEntries(
+    Object.entries(SIGNING_MODES).filter(
+      ([key]) =>
+        key !== 'hybrid' || storedMode === 'hybrid' || mode === 'hybrid',
+    ),
+  )
+  return (
+    <FormField
+      control={form.control}
+      name="ios_signing_mode"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>Signs with</FormLabel>
+          <Select
+            value={field.value}
+            onValueChange={field.onChange}
+            items={modes}
+          >
+            <FormControl>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent>
+              {Object.entries(modes).map(([key, value]) => (
+                <SelectItem key={key} value={key}>
+                  {value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+/**
+ * The certificate and profiles iOS builds sign with, picked from the app's
+ * signing library. The identity sets the team, distribution and bundles.
+ */
+function IosLibraryIdentityField({
+  appStorePublishing,
+  projectId,
+  signingData,
+}: {
+  appStorePublishing?: IosAppStorePublishing
+  projectId: string
+  signingData?: PipelineIosSigningResponse
+}) {
+  const form = useFormContext<PipelineFormValues>()
+  const identitiesQuery = useSigningIdentities(projectId)
+  const ownFiles =
+    signingData?.has_p12 && !signingData.identity_id
+      ? ([
+          [
+            PIPELINE_OWN_FILES,
+            `${signingData.p12_filename ?? 'Certificate'} (stored on this pipeline)`,
+          ],
+        ] as const)
+      : []
+  return (
+    <FormField
+      control={form.control}
+      name="ios_signing_identity_id"
+      render={({ field, fieldState }) => {
+        const picked = identitiesQuery.data?.find(
+          (identity) => identity.id === field.value,
+        )
+        const exportMethod =
+          picked?.export_method ??
+          (field.value === PIPELINE_OWN_FILES
+            ? signingData?.export_method
+            : undefined)
+        return (
+          <FormItem>
+            <FormLabel hint="Its profiles set the team, distribution and bundle IDs.">
+              Signing identity
+            </FormLabel>
+            <SigningIdentityPicker
+              emptyLabel="Pick an identity"
+              extra={ownFiles}
+              invalid={!!fieldState.error}
+              kind="ios_distribution"
+              projectId={projectId}
+              value={field.value ?? ''}
+              onChange={field.onChange}
+            />
+            {picked ? (
+              <Text variant="muted">
+                {(picked.profiles ?? [])
+                  .map((profile) => profile.bundle_id)
+                  .join(', ')}
+              </Text>
+            ) : null}
+            {exportMethod === 'ad_hoc' && appStorePublishing?.configured ? (
+              <p className="text-sm text-warning">
+                TestFlight and App Store uploads need an identity with App Store
+                profiles. Uploads stay off until you switch.{' '}
+                {appStorePublishing.link}
+              </p>
+            ) : null}
+            <FormMessage />
+          </FormItem>
+        )
+      }}
+    />
+  )
 }
 
 function IosSigningIdentityFields({
@@ -286,34 +420,6 @@ function IosSigningIdentityFields({
                 )}
               </Text>
             ) : null}
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <FormField
-        control={form.control}
-        name="ios_signing_mode"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>Signing mode</FormLabel>
-            <Select
-              value={field.value}
-              onValueChange={field.onChange}
-              items={SIGNING_MODES}
-            >
-              <FormControl>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent>
-                {Object.entries(SIGNING_MODES).map(([key, value]) => (
-                  <SelectItem key={key} value={key}>
-                    {value}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <FormMessage />
           </FormItem>
         )}

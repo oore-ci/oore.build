@@ -86,13 +86,15 @@ pub(crate) async fn expiring(
                 'Distribution certificate' AS what, s.p12_expires_at AS expires_at \
          FROM pipeline_ios_signing_settings s \
          JOIN pipelines pl ON pl.id = s.pipeline_id JOIN projects p ON p.id = pl.project_id \
-         WHERE s.p12_expires_at BETWEEN ?1 AND ?2 \
+         WHERE s.p12_expires_at BETWEEN ?1 AND ?2 AND s.identity_id IS NULL \
          UNION ALL \
          SELECT 'pipeline-profile:' || pp.id, pl.id, pl.name, p.id, p.name, \
                 'Profile for ' || pp.bundle_id, pp.expires_at \
          FROM pipeline_ios_provisioning_profiles pp \
          JOIN pipelines pl ON pl.id = pp.pipeline_id JOIN projects p ON p.id = pl.project_id \
-         WHERE pp.expires_at BETWEEN ?1 AND ?2",
+         WHERE pp.expires_at BETWEEN ?1 AND ?2 \
+           AND NOT EXISTS (SELECT 1 FROM pipeline_ios_signing_settings s \
+                           WHERE s.pipeline_id = pp.pipeline_id AND s.identity_id IS NOT NULL)",
     )
     .bind(from)
     .bind(until)

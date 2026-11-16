@@ -48,6 +48,7 @@ import {
   listRepositoryConfigFilesOptions,
   listRepositoryConfigFilesQueryKey,
 } from '@oore/client/react-query'
+import { invalidateSigningQueries } from '@/hooks/use-signing-identities'
 import { useApiContext } from '@/hooks/use-api-context'
 import {
   scopeOoreInfiniteQueryOptions,
@@ -509,6 +510,7 @@ export function useUpdatePipelineAndroidSigning() {
       })
     },
     onSuccess: (_data, variables) => {
+      invalidateSigningQueries(queryClient)
       void queryClient.invalidateQueries({
         queryKey: scopeOoreQueryKey(
           instanceId,
@@ -571,6 +573,7 @@ export function useUpdatePipelineIosSigning() {
       })
     },
     onSuccess: (_data, variables) => {
+      invalidateSigningQueries(queryClient)
       void queryClient.invalidateQueries({
         queryKey: scopeOoreQueryKey(
           instanceId,

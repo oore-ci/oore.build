@@ -3780,6 +3780,8 @@ mod tests {
             "CREATE TABLE projects (id TEXT PRIMARY KEY)",
             "CREATE TABLE pipelines (id TEXT PRIMARY KEY, project_id TEXT)",
             include_str!("../migrations/042_secrets.sql"),
+            "CREATE TABLE project_store_connections (project_id TEXT, store TEXT, \
+             service_account_secret TEXT, app_identifier TEXT)",
             include_str!("../migrations/043_pipeline_publish.sql"),
             "INSERT INTO projects VALUES ('p1')",
             "INSERT INTO pipelines VALUES ('pl1', 'p1')",

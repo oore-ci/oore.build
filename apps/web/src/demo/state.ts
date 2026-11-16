@@ -56,6 +56,7 @@ import {
 } from './data/environments'
 import { demoPipelines } from './data/pipelines'
 import {
+  demoAndroidSigning,
   demoSigningIdentities,
   demoWorkflowSettings,
 } from './data/signing-identities'
@@ -921,7 +922,7 @@ export function createDemoState(
       setup_mode: false,
       is_configured: true,
     },
-    androidSigning: {},
+    androidSigning: clone(demoAndroidSigning),
     iosSigning: {},
     iosDevices: {},
     signingIdentities: clone(demoSigningIdentities),
@@ -995,6 +996,7 @@ export function createDemoState(
     state.auditLogs = []
     state.signingIdentities = []
     state.workflowSettings = {}
+    state.androidSigning = {}
   }
 
   if (scenario === 'empty') {
