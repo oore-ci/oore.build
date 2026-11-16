@@ -17,6 +17,7 @@
     ".roo/**",
     ".windsurf/**",
     "apps/docs/public/openapi.json",
+    "apps/docs/content/docs/reference/cli/commands.mdx",
     "apps/web/tools/oxlint/anti-slop/**",
     "research/fumadocs-astro-7-architecture.md",
     "*.toml",
