@@ -198,7 +198,7 @@ fn hint(
     }
 }
 
-fn step_started(line: &str) -> Option<String> {
+pub(crate) fn step_started(line: &str) -> Option<String> {
     let json = line.trim().strip_prefix(STEP_MARKER)?;
     let value: serde_json::Value = serde_json::from_str(json).ok()?;
     (value.get("event")?.as_str()? == "start")

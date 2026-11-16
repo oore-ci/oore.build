@@ -77,6 +77,36 @@ impl SetupState {
     }
 }
 
+// ── Instance meta (agents and tools) ────────────────────────────
+
+/// How people sign in to this instance.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InstanceAuthMode {
+    /// Passwordless sign-in on the daemon's own machine only.
+    Local,
+    Oidc,
+    TrustedProxy,
+}
+
+/// `GET /v1/meta`: what this instance is and which optional API features it
+/// has, so tools can adapt without guessing from the version.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct InstanceMeta {
+    pub setup_state: SetupState,
+    pub auth_mode: InstanceAuthMode,
+    /// Optional features this daemon has, such as `diagnosis`,
+    /// `log_filters`, `build_wait`, `idempotency` and `mcp`. A new feature
+    /// adds a string; clients ignore ones they do not know.
+    pub features: Vec<String>,
+    /// The daemon's version. Only for a signed-in caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// The release channel it was installed from. Only for a signed-in caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel: Option<String>,
+}
+
 // ── Public setup status (non-sensitive) ─────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -438,6 +468,25 @@ pub struct ApiError {
     pub code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
+    /// What to do next, in plain words, when Oore knows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+    /// Whether sending the same request again later may succeed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+    /// The inputs that were rejected, when the request was invalid. Boxed
+    /// to keep error results small.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Box<Vec<ApiErrorField>>>,
+}
+
+/// One rejected input of an invalid request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct ApiErrorField {
+    /// Where the input is: a body field such as `name` or `steps[0].run`,
+    /// or a query parameter.
+    pub path: String,
+    pub message: String,
 }
 
 impl ApiError {
@@ -446,7 +495,20 @@ impl ApiError {
             error: error.into(),
             code: code.into(),
             details: None,
+            hint: None,
+            retryable: None,
+            fields: None,
         }
+    }
+
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    pub fn with_fields(mut self, fields: Vec<ApiErrorField>) -> Self {
+        self.fields = Some(Box::new(fields));
+        self
     }
 
     pub fn with_details(mut self, details: impl Into<String>) -> Self {
@@ -2277,6 +2339,50 @@ pub struct BuildFailureHint {
     pub fix: Option<String>,
 }
 
+/// The step a failed build stopped at.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildDiagnosisStep {
+    /// The step's name in the build, as in `step_results` and log markers.
+    pub name: String,
+    /// The name people see, such as `Check out code` for `checkout`.
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+}
+
+/// One failed test, kept short.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
+pub struct BuildDiagnosisTest {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// `GET /v1/builds/{build_id}/diagnosis`: why a build failed, in one call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
+pub struct BuildDiagnosis {
+    pub build_id: String,
+    pub build_number: i64,
+    #[schema(value_type = BuildStatus)]
+    pub status: String,
+    /// Absent when no step failed, as for a build that is still running,
+    /// passed, or was cancelled before a step ran.
+    pub failed_step: Option<BuildDiagnosisStep>,
+    /// The log line that explains the failure, with its likely cause and fix.
+    pub hint: Option<BuildFailureHint>,
+    /// The last lines of the failed step's log, or of the whole log when no
+    /// step failed.
+    pub log_tail: Vec<String>,
+    /// More lines came before `log_tail`.
+    pub log_tail_truncated: bool,
+    /// Failed tests, at most 20.
+    pub failed_tests: Vec<BuildDiagnosisTest>,
+    pub failed_tests_total: i64,
+    /// The build's page in the web app, when the instance knows its address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, ToSchema)]
 pub struct BuildFailureHintResponse {
     /// Absent when the build did not fail or no line stood out.
@@ -3470,6 +3576,11 @@ pub struct InstancePreferences {
     pub runtime_mode: RuntimeMode,
     pub remote_auth_mode: RemoteAuthMode,
     pub direct_macos_runner_paused: bool,
+    /// The MCP server at `/mcp` answers AI agents. Off until an owner turns
+    /// it on.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub mcp_enabled: bool,
     pub restart_required: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
@@ -3489,6 +3600,9 @@ pub struct UpdateInstancePreferencesRequest {
     pub remote_auth_mode: Option<RemoteAuthMode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub direct_macos_runner_paused: Option<bool>,
+    /// Turn the MCP server at `/mcp` on or off. Owner only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_enabled: Option<bool>,
 }
 
 // ── Project API types ───────────────────────────────────────────
@@ -4623,6 +4737,20 @@ pub struct PipelineDetailResponse {
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ListPipelinesResponse {
     pub pipelines: Vec<Pipeline>,
+    pub total: i64,
+}
+
+/// A pipeline with the app it belongs to, for lists across apps.
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct PipelineListing {
+    #[serde(flatten)]
+    pub pipeline: Pipeline,
+    pub project_name: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ListAllPipelinesResponse {
+    pub pipelines: Vec<PipelineListing>,
     pub total: i64,
 }
 

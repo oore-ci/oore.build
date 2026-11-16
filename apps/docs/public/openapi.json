@@ -2018,6 +2018,15 @@
             }
           },
           {
+            "name": "commit_sha",
+            "in": "query",
+            "description": "Filter by commit: the full SHA or a prefix of at least 7 hex characters, ignoring case",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
             "name": "mine",
             "in": "query",
             "description": "Only builds you started or builds of apps you pinned.",
@@ -2303,6 +2312,26 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "wait",
+            "in": "query",
+            "description": "Hold the request up to this many seconds (1 to 60) until the build changes. Answers at once when the build has finished or changed after `since_updated_at`.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "since_updated_at",
+            "in": "query",
+            "description": "With `wait`: the build's `updated_at` you last saw, in Unix seconds. Defaults to its current value.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
           }
         ],
         "responses": {
@@ -2316,8 +2345,28 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many requests are waiting for builds",
             "content": {
               "application/json": {
                 "schema": {
@@ -2540,6 +2589,74 @@
           },
           "409": {
             "description": "Build not in cancellable state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/builds/{build_id}/diagnosis": {
+      "get": {
+        "tags": [
+          "Builds"
+        ],
+        "summary": "Diagnose a build",
+        "description": "Why a build failed, in one call: the failed step with its label and\nexit code, the log line that explains it with the likely cause and\nfix, the last lines of that step's log and the failed tests. A build\nthat did not fail answers with `failed_step` null and empty lists.",
+        "operationId": "get_build_diagnosis",
+        "parameters": [
+          {
+            "name": "build_id",
+            "in": "path",
+            "description": "Build ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Log lines to return, 1 to 200 (default 40)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Diagnosis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BuildDiagnosis"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -2993,7 +3110,45 @@
           {
             "name": "limit",
             "in": "query",
-            "description": "Page size",
+            "description": "Page size (default 1000, at most 5000)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "step",
+            "in": "query",
+            "description": "Only lines of this step, by its name in the build's `step_results`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tail",
+            "in": "query",
+            "description": "Only the last this many matching lines (at most 5000)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Only lines containing this text, ignoring case. At most 200 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "context",
+            "in": "query",
+            "description": "With `search`, also this many lines before and after each match (0 to 50)",
             "required": false,
             "schema": {
               "type": "integer",
@@ -3003,11 +3158,26 @@
         ],
         "responses": {
           "200": {
-            "description": "Build logs",
+            "description": "Build logs. With `step`, `tail` or `search`, `total` counts the matching lines. With `Accept: text/plain`, the lines alone, one per line, and the count in `X-Oore-Log-Total`.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BuildLogsResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
                 }
               }
             }
@@ -3215,6 +3385,18 @@
         "operationId": "rerun_build",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "build_id",
             "in": "path",
             "description": "Source build ID to re-run",
@@ -3405,6 +3587,18 @@
         "description": "Emails each member an install link and sends a browser notification to\nmembers who turned them on. Members without access to the app are\nlisted with no_access and are not sent anything.",
         "operationId": "send_build_to_group",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "build_id",
             "in": "path",
@@ -3661,7 +3855,7 @@
           "Events"
         ],
         "summary": "Stream live events (SSE)",
-        "description": "Server-sent event stream of build, runner and release changes, so\nclients can refresh without polling. Every connection starts with a\n`ready` event (`EventStreamReady`). Then: `build` (`BuildChangedEvent`),\n`release` (`ReleaseChangedEvent`), `runner` (`RunnerChangedEvent`, only\nfor users who can read runners), `resync` (`EventStreamResync`, events\nwere dropped and clients should refetch) and `done` (the stream ends,\ndata is the reason). Build and release events are limited to projects\nthe caller can read. Events are not replayed, so a client that\nreconnects should refetch once on `ready`. Comment keepalives are sent\nevery 15 seconds.",
+        "description": "Server-sent event stream of build, runner and release changes, so\nclients can refresh without polling. Every connection starts with a\n`ready` event (`EventStreamReady`). Then: `build` (`BuildChangedEvent`),\n`release` (`ReleaseChangedEvent`), `runner` (`RunnerChangedEvent`, only\nfor users who can read runners), `resync` (`EventStreamResync`, events\nwere dropped and clients should refetch) and `done` (the stream ends,\ndata is the reason). Build and release events are limited to projects\nthe caller can read. Build, release and runner events carry an\nincreasing SSE `id`. A client that reconnects with `Last-Event-ID` (or\n`since`) gets the events it missed first; when they are no longer kept,\nit gets a `resync` with reason `replay_unavailable` and should refetch.\nWithout either, refetch once on `ready`. Comment keepalives are sent\nevery 15 seconds.",
         "operationId": "stream_events",
         "parameters": [
           {
@@ -3671,6 +3865,28 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Replay events after this event id, like `Last-Event-ID`",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "Last-Event-ID",
+            "in": "header",
+            "description": "The id of the last event received; events after it are replayed first",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           }
         ],
@@ -5138,6 +5354,66 @@
         ]
       }
     },
+    "/v1/meta": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Get instance details for tools",
+        "description": "Setup state, sign-in mode and the optional API features this daemon\nhas, such as `diagnosis`, `log_filters`, `build_wait`, `idempotency`,\n`event_replay` and `mcp` (present while the MCP server is on). `features` grows\nwithout a spec change; ignore strings you do not know. `version` and\n`channel` are only sent to a signed-in caller. No sign-in needed.",
+        "operationId": "get_instance_meta",
+        "responses": {
+          "200": {
+            "description": "Instance details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceMeta"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {},
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Get this daemon's OpenAPI spec",
+        "description": "The API contract this daemon was built from, so tools read the\noperations of the version they talk to. No sign-in needed.",
+        "operationId": "get_openapi_spec",
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/operator-incidents": {
       "get": {
         "tags": [
@@ -5225,6 +5501,92 @@
           },
           "404": {
             "description": "Notification not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/v1/pipelines": {
+      "get": {
+        "tags": [
+          "Pipelines"
+        ],
+        "summary": "List pipelines across apps",
+        "description": "Pipelines of every app the caller can read, ordered by app name then\npipeline name, each with its app's name. Use `name` to find one\npipeline without knowing its app.",
+        "operationId": "list_all_pipelines",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "Exact pipeline name, ignoring case",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Part of the pipeline name, ignoring case. At most 200 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "description": "Only this app's pipelines",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (default 50, at most 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Page offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pipelines",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListAllPipelinesResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
             "content": {
               "application/json": {
                 "schema": {
@@ -7372,6 +7734,18 @@
         "operationId": "create_build",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "project_id",
             "in": "path",
             "description": "Project ID",
@@ -8432,6 +8806,18 @@
         "description": "Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.",
         "operationId": "promote_build",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "project_id",
             "in": "path",
@@ -10551,6 +10937,20 @@
         "summary": "Create release",
         "description": "Records a release for a succeeded build. Requires the project maintainer role.",
         "operationId": "create_release",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -10726,6 +11126,18 @@
         "operationId": "approve_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -10830,6 +11242,18 @@
         "description": "Hands a Play rollout's steps to Oore with `policy`, also for a release made outside Oore. Requires maintainer. Writes history and an audit log entry.",
         "operationId": "attach_schedule_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -10936,6 +11360,18 @@
         "operationId": "complete_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -11040,6 +11476,18 @@
         "description": "Stops Oore stepping the rollout; it stays where it is until changed. Requires maintainer. Writes history and an audit log entry.",
         "operationId": "detach_schedule_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -11146,6 +11594,18 @@
         "operationId": "halt_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -11250,6 +11710,18 @@
         "description": "Records that Google Play rejected a release Play Console held for review. Requires maintainer. Writes history and an audit log entry.",
         "operationId": "mark_rejected_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -11356,6 +11828,18 @@
         "operationId": "mark_sent_for_review_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -11460,6 +11944,18 @@
         "description": "Stops scheduled steps. Requires developer or maintainer. Writes history, an audit log entry, and a release event.",
         "operationId": "pause_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -11566,6 +12062,18 @@
         "operationId": "pull_from_review_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -11670,6 +12178,18 @@
         "description": "Raises the rollout to `fraction`, or to the next policy step. Raising to 1 completes the release. Requires maintainer. Writes history, an audit log entry, and a release event.",
         "operationId": "raise_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -11776,6 +12296,18 @@
         "operationId": "release_now_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -11880,6 +12412,18 @@
         "description": "Submits a rejected App Store version for App Review again, with the build it has. Requires maintainer. Writes history and an audit log entry.",
         "operationId": "resubmit_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -11986,6 +12530,18 @@
         "operationId": "resume_release",
         "parameters": [
           {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
             "name": "release_id",
             "in": "path",
             "description": "Release ID",
@@ -12090,6 +12646,18 @@
         "description": "Reads App Store Connect on the next monitor pass, for a blocked release or one waiting on Apple. Requires developer or maintainer. Writes history and an audit log entry.",
         "operationId": "retry_release",
         "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
           {
             "name": "release_id",
             "in": "path",
@@ -17646,6 +18214,47 @@
           },
           "error": {
             "type": "string"
+          },
+          "fields": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/ApiErrorField"
+            },
+            "description": "The inputs that were rejected, when the request was invalid. Boxed\nto keep error results small."
+          },
+          "hint": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "What to do next, in plain words, when Oore knows."
+          },
+          "retryable": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether sending the same request again later may succeed."
+          }
+        }
+      },
+      "ApiErrorField": {
+        "type": "object",
+        "description": "One rejected input of an invalid request.",
+        "required": [
+          "path",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Where the input is: a body field such as `name` or `steps[0].run`,\nor a query parameter."
           }
         }
       },
@@ -19180,6 +19789,125 @@
               "type": "string"
             },
             "description": "Steps of this finished build that `POST /v1/builds/{build_id}/retry-step`\ncan run again without rebuilding."
+          }
+        }
+      },
+      "BuildDiagnosis": {
+        "type": "object",
+        "description": "`GET /v1/builds/{build_id}/diagnosis`: why a build failed, in one call.",
+        "required": [
+          "build_id",
+          "build_number",
+          "status",
+          "log_tail",
+          "log_tail_truncated",
+          "failed_tests",
+          "failed_tests_total"
+        ],
+        "properties": {
+          "build_id": {
+            "type": "string"
+          },
+          "build_number": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "failed_step": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildDiagnosisStep",
+                "description": "Absent when no step failed, as for a build that is still running,\npassed, or was cancelled before a step ran."
+              }
+            ]
+          },
+          "failed_tests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuildDiagnosisTest"
+            },
+            "description": "Failed tests, at most 20."
+          },
+          "failed_tests_total": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "hint": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BuildFailureHint",
+                "description": "The log line that explains the failure, with its likely cause and fix."
+              }
+            ]
+          },
+          "log_tail": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The last lines of the failed step's log, or of the whole log when no\nstep failed."
+          },
+          "log_tail_truncated": {
+            "type": "boolean",
+            "description": "More lines came before `log_tail`."
+          },
+          "status": {
+            "$ref": "#/components/schemas/BuildStatus"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The build's page in the web app, when the instance knows its address."
+          }
+        }
+      },
+      "BuildDiagnosisStep": {
+        "type": "object",
+        "description": "The step a failed build stopped at.",
+        "required": [
+          "name",
+          "label"
+        ],
+        "properties": {
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "label": {
+            "type": "string",
+            "description": "The name people see, such as `Check out code` for `checkout`."
+          },
+          "name": {
+            "type": "string",
+            "description": "The step's name in the build, as in `step_results` and log markers."
+          }
+        }
+      },
+      "BuildDiagnosisTest": {
+        "type": "object",
+        "description": "One failed test, kept short.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": "string"
           }
         }
       },
@@ -22456,6 +23184,53 @@
           }
         }
       },
+      "InstanceAuthMode": {
+        "type": "string",
+        "description": "How people sign in to this instance.",
+        "enum": [
+          "local",
+          "oidc",
+          "trusted_proxy"
+        ]
+      },
+      "InstanceMeta": {
+        "type": "object",
+        "description": "`GET /v1/meta`: what this instance is and which optional API features it\nhas, so tools can adapt without guessing from the version.",
+        "required": [
+          "setup_state",
+          "auth_mode",
+          "features"
+        ],
+        "properties": {
+          "auth_mode": {
+            "$ref": "#/components/schemas/InstanceAuthMode"
+          },
+          "channel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The release channel it was installed from. Only for a signed-in caller."
+          },
+          "features": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Optional features this daemon has, such as `diagnosis`,\n`log_filters`, `build_wait`, `idempotency` and `mcp`. A new feature\nadds a string; clients ignore ones they do not know."
+          },
+          "setup_state": {
+            "$ref": "#/components/schemas/SetupState"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The daemon's version. Only for a signed-in caller."
+          }
+        }
+      },
       "InstancePreferences": {
         "type": "object",
         "required": [
@@ -22463,6 +23238,7 @@
           "runtime_mode",
           "remote_auth_mode",
           "direct_macos_runner_paused",
+          "mcp_enabled",
           "restart_required"
         ],
         "properties": {
@@ -22471,6 +23247,10 @@
           },
           "key_storage_mode": {
             "$ref": "#/components/schemas/KeyStorageMode"
+          },
+          "mcp_enabled": {
+            "type": "boolean",
+            "description": "The MCP server at `/mcp` answers AI agents. Off until an owner turns\nit on."
           },
           "remote_auth_mode": {
             "$ref": "#/components/schemas/RemoteAuthMode"
@@ -22985,6 +23765,25 @@
             "description": "The full link. Only returned when the link is created; later lists\nshow `prefix` only."
           },
           "use_count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListAllPipelinesResponse": {
+        "type": "object",
+        "required": [
+          "pipelines",
+          "total"
+        ],
+        "properties": {
+          "pipelines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PipelineListing"
+            }
+          },
+          "total": {
             "type": "integer",
             "format": "int64"
           }
@@ -24585,6 +25384,25 @@
             "format": "int64"
           }
         }
+      },
+      "PipelineListing": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Pipeline"
+          },
+          {
+            "type": "object",
+            "required": [
+              "project_name"
+            ],
+            "properties": {
+              "project_name": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "A pipeline with the app it belongs to, for lists across apps."
       },
       "PipelinePlanPreview": {
         "type": "object",
@@ -29789,6 +30607,13 @@
           },
           "key_storage_mode": {
             "$ref": "#/components/schemas/KeyStorageMode"
+          },
+          "mcp_enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Turn the MCP server at `/mcp` on or off. Owner only."
           },
           "remote_auth_mode": {
             "oneOf": [

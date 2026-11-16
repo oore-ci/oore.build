@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::Json;
@@ -8,13 +8,14 @@ use oore_contract::{
     ApiError, ApprovalPolicy, BuildPlatform, ConcurrencyPolicy, CreatePipelineRequest,
     CreatePipelineResponse, DEFAULT_BUILD_TIMEOUT_MINUTES, ExportPipelineYamlRequest,
     ExportPipelineYamlResponse, ImportPipelineYamlRequest, ImportPipelineYamlResponse,
-    ImportedPlayPublish, ListPipelinesResponse, MAX_BUILD_TIMEOUT_MINUTES,
-    MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline, PipelineDetailResponse,
-    PipelineExecutionConfig, PipelineFileState, PipelinePlanPreview, PipelineWorkflowSummary,
-    PipelineWorkflowsResponse, PlanPipelineRequest, PlanPipelineResponse, PlanRequest,
-    RepositoryConfig, SigningSpec, SizeBudget, TriggerConfig, TriggerSpec, UpdatePipelineRequest,
-    ValidatePipelineRequest, ValidatePipelineResponse, is_valid_pipeline_env_key,
-    is_valid_workflow_name, normalize_runner_labels, parse_repository_config,
+    ImportedPlayPublish, ListAllPipelinesResponse, ListPipelinesResponse,
+    MAX_BUILD_TIMEOUT_MINUTES, MAX_PLAN_REPOSITORY_YAML_BYTES, OkResponse, Pipeline,
+    PipelineDetailResponse, PipelineExecutionConfig, PipelineFileState, PipelineListing,
+    PipelinePlanPreview, PipelineWorkflowSummary, PipelineWorkflowsResponse, PlanPipelineRequest,
+    PlanPipelineResponse, PlanRequest, RepositoryConfig, SigningSpec, SizeBudget, TriggerConfig,
+    TriggerSpec, UpdatePipelineRequest, ValidatePipelineRequest, ValidatePipelineResponse,
+    is_valid_pipeline_env_key, is_valid_workflow_name, normalize_runner_labels,
+    parse_repository_config,
     pipeline_config::select_v1_platforms,
     pipeline_export::{FormSettings, export_form_settings},
     pipeline_import::{ImportContext, import_form_settings},
@@ -1009,6 +1010,168 @@ pub async fn list_pipelines(
     crate::repository_config_files::attach_health(pool, &project_id, &mut pipelines).await;
 
     Ok(Json(ListPipelinesResponse { pipelines, total }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListAllPipelinesQuery {
+    /// Exact name, ignoring case.
+    pub name: Option<String>,
+    /// Part of the name, ignoring case.
+    pub search: Option<String>,
+    pub project_id: Option<String>,
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+}
+
+/// `GET /v1/pipelines` — pipelines of every app the caller can read, by
+/// app name then pipeline name.
+pub async fn list_all_pipelines(
+    State(state): State<Arc<AppState>>,
+    auth: AuthUser,
+    Query(params): Query<ListAllPipelinesQuery>,
+) -> ApiResult<ListAllPipelinesResponse> {
+    let pool = &state.db;
+    let limit = params.limit.unwrap_or(50);
+    if limit <= 0 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "limit must be greater than zero",
+        ));
+    }
+    let limit = limit.min(200) as usize;
+    let offset = params.offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_input",
+            "offset must not be negative",
+        ));
+    }
+
+    let mut conditions: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    if auth.0.role != "owner" && auth.0.role != "admin" {
+        binds.push(auth.0.user_id.clone());
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.project_id AND pm.user_id = ?{})",
+            binds.len()
+        ));
+    }
+    if let Some(project_id) = params
+        .project_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        binds.push(project_id.to_string());
+        conditions.push(format!("p.project_id = ?{}", binds.len()));
+    }
+    if let Some(name) = params
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        binds.push(name.to_lowercase());
+        conditions.push(format!("lower(p.name) = ?{}", binds.len()));
+    }
+    if let Some(search) = params
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        if search.chars().count() > 200 {
+            return Err(api_err(
+                StatusCode::BAD_REQUEST,
+                "invalid_input",
+                "search must be at most 200 characters",
+            ));
+        }
+        let escaped = search
+            .to_lowercase()
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        binds.push(format!("%{escaped}%"));
+        conditions.push(format!("lower(p.name) LIKE ?{} ESCAPE '\\'", binds.len()));
+    }
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+    let sql = format!(
+        "SELECT p.*, proj.name AS listing_project_name FROM pipelines p \
+         JOIN projects proj ON proj.id = p.project_id {where_clause} \
+         ORDER BY proj.name COLLATE NOCASE, p.name COLLATE NOCASE, p.id"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for bind in &binds {
+        query = query.bind(bind);
+    }
+    let rows = query.fetch_all(pool).await.map_err(|e| {
+        error!(error = %e, "failed to list pipelines");
+        api_err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store_error",
+            "Failed to list pipelines",
+        )
+    })?;
+
+    // Each app's role decides whether its pipelines show and whether their
+    // env values are redacted; it also applies limits on the caller's token.
+    let mut roles: HashMap<String, Option<bool>> = HashMap::new();
+    let mut listings: Vec<PipelineListing> = Vec::new();
+    for row in &rows {
+        let project_id: String = row.get("project_id");
+        let can_manage = match roles.get(&project_id) {
+            Some(known) => *known,
+            None => {
+                let access = match resolve_effective_project_role(
+                    pool,
+                    &auth.0.user_id,
+                    &auth.0.role,
+                    &project_id,
+                    &auth.0.auth_source,
+                )
+                .await
+                {
+                    Ok(effective)
+                        if check_project_permission(&effective, ProjectPermission::Read) =>
+                    {
+                        Some(check_project_permission(
+                            &effective,
+                            ProjectPermission::ManagePipelines,
+                        ))
+                    }
+                    Ok(_) => None,
+                    Err((status, error)) if status == StatusCode::INTERNAL_SERVER_ERROR => {
+                        return Err((status, error));
+                    }
+                    Err(_) => None,
+                };
+                roles.insert(project_id.clone(), access);
+                access
+            }
+        };
+        let Some(can_manage) = can_manage else {
+            continue;
+        };
+        listings.push(PipelineListing {
+            pipeline: shape_pipeline_response(row_to_pipeline(row), can_manage),
+            project_name: row.get("listing_project_name"),
+        });
+    }
+
+    let total = listings.len() as i64;
+    let pipelines = listings
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit)
+        .collect();
+    Ok(Json(ListAllPipelinesResponse { pipelines, total }))
 }
 
 /// `GET /v1/pipelines/{pipeline_id}` — pipeline detail with build count.

@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod agent_api_tests;
 pub mod api_tokens;
 pub mod app_store_connect;
 pub mod app_store_connect_keys;
@@ -11,6 +13,7 @@ pub mod audit_logs;
 pub mod auth;
 pub mod background;
 pub mod build_analysis;
+pub mod build_diagnosis;
 pub mod build_failure_hint;
 pub mod build_feedback;
 pub mod build_insights;
@@ -20,15 +23,18 @@ pub mod commit_checks;
 pub mod crypto;
 pub mod device_registration;
 pub mod environments;
+pub mod error_catalog;
 pub mod events;
 pub mod extractors;
 pub mod frontend_pairing;
+pub mod idempotency;
 pub mod incidents;
 pub mod instance_settings;
 pub mod integrations;
 pub mod key_check;
 pub mod local_recovery;
 pub mod logs;
+pub mod meta;
 pub mod notification_channels;
 pub mod notification_dispatch;
 pub mod observability;
@@ -52,6 +58,8 @@ pub mod releases;
 pub mod repository_config_files;
 pub mod repository_workflows;
 pub mod retention;
+#[cfg(test)]
+mod route_spec_parity;
 pub mod runners;
 pub mod runtime_updates;
 pub mod sample_app;
@@ -781,7 +789,7 @@ async fn commit_setup_oidc_owner(
 
 // ── Handlers ─────────────────────────────────────────────────────
 
-fn installed_runtime_metadata() -> HealthResponse {
+pub(crate) fn installed_runtime_metadata() -> HealthResponse {
     let install_root = std::env::var_os("OORE_INSTALL_ROOT")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".oore")));
@@ -2538,7 +2546,13 @@ pub async fn build_router_with_recovery(
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            idempotency::IDEMPOTENCY_KEY,
+            axum::http::HeaderName::from_static("last-event-id"),
+        ])
+        .expose_headers([idempotency::IDEMPOTENT_REPLAYED]);
 
     // Webhook routes are mounted OUTSIDE the CORS layer since they're called by providers
     let webhook_routes = Router::new()
@@ -2577,10 +2591,15 @@ pub async fn build_router_with_recovery(
         )
         .with_state(shared_state.clone());
 
+    // Requests that start something take an Idempotency-Key.
+    let idem = || axum_mw::from_fn_with_state(shared_state.clone(), idempotency::idempotent);
+
     let router = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/v1/public/setup-status", get(setup_status))
+        .route("/v1/openapi.json", get(meta::get_openapi))
+        .route("/v1/meta", get(meta::get_meta))
         .route("/v1/frontend/pair", post(frontend_pairing::pair))
         .route(
             "/v1/setup/bootstrap-token/verify",
@@ -2626,7 +2645,7 @@ pub async fn build_router_with_recovery(
         )
         .route(
             "/v1/builds/{build_id}/shares",
-            get(testers::list_build_shares).post(testers::send_build_to_group),
+            get(testers::list_build_shares).merge(post(testers::send_build_to_group).layer(idem())),
         )
         .route(
             "/v1/builds/{build_id}/keep",
@@ -2887,6 +2906,7 @@ pub async fn build_router_with_recovery(
             patch(signing_identities::update_signing_identity)
                 .delete(signing_identities::delete_signing_identity),
         )
+        .route("/v1/pipelines", get(pipelines::list_all_pipelines))
         .route("/v1/pipelines/validate", post(pipelines::validate_pipeline))
         .route("/v1/pipelines/plan", post(pipelines::plan_pipeline))
         .route(
@@ -3006,7 +3026,7 @@ pub async fn build_router_with_recovery(
         // Build endpoints
         .route(
             "/v1/projects/{project_id}/builds",
-            post(builds::create_build),
+            post(builds::create_build).layer(idem()),
         )
         .route(
             "/v1/projects/{project_id}/builds/changelog-preview",
@@ -3028,10 +3048,17 @@ pub async fn build_router_with_recovery(
         .route("/v1/builds/{build_id}/cancel", post(builds::cancel_build))
         .route("/v1/builds/{build_id}/approve", post(builds::approve_build))
         .route("/v1/builds/{build_id}/reject", post(builds::reject_build))
-        .route("/v1/builds/{build_id}/rerun", post(builds::rerun_build))
+        .route(
+            "/v1/builds/{build_id}/rerun",
+            post(builds::rerun_build).layer(idem()),
+        )
         .route(
             "/v1/builds/{build_id}/rehearsal",
             get(rehearsals::get_build_rehearsal),
+        )
+        .route(
+            "/v1/builds/{build_id}/diagnosis",
+            get(build_diagnosis::get_build_diagnosis),
         )
         .route(
             "/v1/builds/{build_id}/failure-hint",
@@ -3071,7 +3098,8 @@ pub async fn build_router_with_recovery(
         )
         .route(
             "/v1/releases",
-            get(releases::list_releases).post(releases::create_release_handler),
+            get(releases::list_releases)
+                .merge(post(releases::create_release_handler).layer(idem())),
         )
         .route(
             "/v1/releases/store-sync",
@@ -3080,7 +3108,7 @@ pub async fn build_router_with_recovery(
         .route("/v1/releases/{release_id}", get(releases::get_release))
         .route(
             "/v1/releases/{release_id}/{action}",
-            post(releases::release_action),
+            post(releases::release_action).layer(idem()),
         )
         .route("/v1/release-events", get(releases::list_release_activity))
         .route(
@@ -3115,7 +3143,7 @@ pub async fn build_router_with_recovery(
         )
         .route(
             "/v1/projects/{project_id}/promotions",
-            post(environments::promote_build),
+            post(environments::promote_build).layer(idem()),
         )
         .route(
             "/v1/projects/{project_id}/promotions/{promotion_id}/approve",
@@ -3347,7 +3375,10 @@ pub async fn build_router_with_recovery(
         .merge(gitlab_flow_routes)
         // Merge the Prometheus /metrics endpoint (uses its own state)
         .merge(observability::metrics_router(metrics_handle))
-        .layer(axum_mw::from_fn(util::normalize_extractor_rejection))
+        .layer(axum_mw::from_fn(
+            error_catalog::normalize_extractor_rejection,
+        ))
+        .layer(axum_mw::from_fn(error_catalog::enrich_api_errors))
         // Request metrics middleware wraps all routes (including /metrics)
         .layer(axum_mw::from_fn(observability::track_http_metrics));
 

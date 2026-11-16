@@ -29,6 +29,7 @@ import { RuntimeOverview } from '@/components/settings/preferences-runtime-overv
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { McpServerPanel } from '@/components/settings/mcp-server-panel'
 import { SettingsSection } from '@/components/settings/settings-section'
 import type {
   ConfigureExternalAccessOidcRequest,
@@ -516,6 +517,7 @@ function PreferencesPage() {
           )}
         </ExternalAccessCard>
       )}
+      <McpServerPanel />
       {networkEditorOpen &&
       !networkSettingsQuery.isLoading &&
       !networkSettingsQuery.error ? (

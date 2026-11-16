@@ -65,6 +65,9 @@ const MAX_STREAMS_GLOBAL: usize = 256;
 
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 
+/// Recent events kept for clients that reconnect with `Last-Event-ID`.
+const REPLAY_WINDOW: usize = 512;
+
 /// A change fanned out to every connected stream before per-user filtering.
 #[derive(Debug, Clone)]
 pub enum LiveEvent {
@@ -75,10 +78,37 @@ pub enum LiveEvent {
     Resync(&'static str),
 }
 
+/// A live event with its stream id. Ids increase and start from the boot
+/// time in milliseconds times 1000, so ids from before a restart are older
+/// than every id after it.
+#[derive(Debug, Clone)]
+pub struct Sequenced {
+    pub id: u64,
+    pub event: LiveEvent,
+}
+
 /// Shared event fan-out and stream admission.
 pub struct EventHub {
-    tx: broadcast::Sender<LiveEvent>,
+    tx: broadcast::Sender<Sequenced>,
     active: Arc<Mutex<ActiveStreams>>,
+    replay: Mutex<ReplayLog>,
+}
+
+/// The last events sent, and the first id after which no change was missed.
+struct ReplayLog {
+    next_id: u64,
+    /// Changes before this id may be missing: the watcher stops scanning
+    /// while nobody listens.
+    continuous_from: u64,
+    recent: std::collections::VecDeque<Sequenced>,
+}
+
+/// What a reconnecting client gets before live events.
+pub enum Replay {
+    /// Every event after its last id, oldest first.
+    Events(Vec<Sequenced>),
+    /// Its last id is too old; it must refetch.
+    Resync,
 }
 
 #[derive(Default)]
@@ -90,13 +120,21 @@ struct ActiveStreams {
 impl EventHub {
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+        let first_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |elapsed| elapsed.as_millis() as u64 * 1000);
         Self {
             tx,
             active: Arc::new(Mutex::new(ActiveStreams::default())),
+            replay: Mutex::new(ReplayLog {
+                next_id: first_id,
+                continuous_from: first_id,
+                recent: std::collections::VecDeque::new(),
+            }),
         }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<LiveEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<Sequenced> {
         self.tx.subscribe()
     }
 
@@ -104,8 +142,64 @@ impl EventHub {
         self.tx.receiver_count() > 0
     }
 
+    fn replay_log(&self) -> MutexGuard<'_, ReplayLog> {
+        self.replay
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     fn publish(&self, event: LiveEvent) {
-        let _ = self.tx.send(event);
+        let mut log = self.replay_log();
+        let sequenced = Sequenced {
+            id: log.next_id,
+            event,
+        };
+        log.next_id += 1;
+        if matches!(sequenced.event, LiveEvent::Resync(_)) {
+            // Changes before a resync were not all described.
+            log.recent.clear();
+            log.continuous_from = log.next_id;
+        } else {
+            if log.recent.len() == REPLAY_WINDOW {
+                log.recent.pop_front();
+            }
+            log.recent.push_back(sequenced.clone());
+        }
+        // Sent under the lock so a subscriber that read the log sees every
+        // later event on its receiver.
+        let _ = self.tx.send(sequenced);
+    }
+
+    /// The watcher stopped scanning; changes from now on until it resumes
+    /// are not reported, so earlier ids cannot be replayed.
+    fn mark_gap(&self) {
+        let mut log = self.replay_log();
+        log.recent.clear();
+        // Skip an id, so a client whose last event was the newest one also
+        // learns it may have missed changes.
+        log.next_id += 1;
+        log.continuous_from = log.next_id;
+    }
+
+    /// Subscribes and returns what happened after `last_id`, so a client that
+    /// reconnects misses nothing.
+    pub fn resume(&self, last_id: u64) -> (broadcast::Receiver<Sequenced>, Replay) {
+        let log = self.replay_log();
+        let receiver = self.tx.subscribe();
+        let oldest_kept = log.recent.front().map_or(log.next_id, |event| event.id);
+        let replay = if last_id + 1 < log.continuous_from.max(oldest_kept) || last_id >= log.next_id
+        {
+            Replay::Resync
+        } else {
+            Replay::Events(
+                log.recent
+                    .iter()
+                    .filter(|event| event.id > last_id)
+                    .cloned()
+                    .collect(),
+            )
+        };
+        (receiver, replay)
     }
 
     fn acquire(&self, user_id: &str) -> Option<StreamAdmission> {
@@ -175,7 +269,9 @@ pub fn start_change_watcher(pool: SqlitePool, scheduler: Arc<Scheduler>, hub: Ar
             }
 
             if !hub.has_subscribers() {
-                cursor = None;
+                if cursor.take().is_some() {
+                    hub.mark_gap();
+                }
                 continue;
             }
 
@@ -398,6 +494,8 @@ async fn load_runners(pool: &SqlitePool) -> Result<HashMap<String, (String, Stri
 #[derive(Debug, Deserialize)]
 pub struct EventStreamQuery {
     pub project_id: Option<String>,
+    /// Replay events after this id, like `Last-Event-ID`.
+    pub since: Option<u64>,
 }
 
 /// `GET /v1/events` — SSE stream of build, runner and release changes.
@@ -443,7 +541,18 @@ pub async fn stream_events(
         auth_source: session.auth_source.clone(),
         expires_at: session.expires_at,
     };
-    let receiver = state.events.subscribe();
+    let last_event_id = headers
+        .get("last-event-id")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .or(query.since);
+    let (receiver, replay) = match last_event_id {
+        Some(last_id) => {
+            let (receiver, replay) = state.events.resume(last_id);
+            (receiver, Some(replay))
+        }
+        None => (state.events.subscribe(), None),
+    };
 
     info!(user = %session.email, project_id = ?project_id, "event stream opened");
 
@@ -454,6 +563,7 @@ pub async fn stream_events(
         project_id,
         runners_visible,
         receiver,
+        replay,
         admission,
     );
     let sse = Sse::new(stream).keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL));
@@ -510,6 +620,44 @@ impl ProjectAccess {
         Some(readable)
     }
 
+    /// The frame to send for `event` on a stream, if the caller may see it.
+    async fn frame(
+        &mut self,
+        pool: &SqlitePool,
+        session: &SessionInfo,
+        project_filter: Option<&str>,
+        runners_visible: bool,
+        event: &LiveEvent,
+    ) -> Option<Event> {
+        match event {
+            LiveEvent::Build(event) => {
+                if project_filter.is_some_and(|id| id != event.project_id) {
+                    return None;
+                }
+                self.project_event(pool, session, &event.project_id, || {
+                    json_event("build", event)
+                })
+                .await
+            }
+            LiveEvent::Release(event) => {
+                if project_filter.is_some_and(|id| id != event.project_id) {
+                    return None;
+                }
+                self.project_event(pool, session, &event.project_id, || {
+                    json_event("release", event)
+                })
+                .await
+            }
+            LiveEvent::Runner(event) => runners_visible.then(|| json_event("runner", event)),
+            LiveEvent::Resync(reason) => Some(json_event(
+                "resync",
+                &EventStreamResync {
+                    reason: reason.to_string(),
+                },
+            )),
+        }
+    }
+
     /// The frame to send for a project-scoped change: the event itself, or a
     /// resync when access could not be checked, so the client refetches
     /// instead of silently missing the change.
@@ -551,7 +699,8 @@ fn event_stream(
     authorization: StreamAuthorization,
     project_filter: Option<String>,
     mut runners_visible: bool,
-    mut receiver: broadcast::Receiver<LiveEvent>,
+    mut receiver: broadcast::Receiver<Sequenced>,
+    replay: Option<Replay>,
     admission: StreamAdmission,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
@@ -569,6 +718,26 @@ fn event_stream(
             runners: runners_visible,
         })
         .retry(CLIENT_RETRY));
+
+        // Live events already sent as replay are skipped below.
+        let mut replayed_up_to = 0;
+        match replay {
+            Some(Replay::Events(events)) => {
+                for sequenced in events {
+                    replayed_up_to = sequenced.id;
+                    if let Some(frame) = access
+                        .frame(&pool, &session, project_filter.as_deref(), runners_visible, &sequenced.event)
+                        .await
+                    {
+                        yield Ok(frame.id(sequenced.id.to_string()));
+                    }
+                }
+            }
+            Some(Replay::Resync) => {
+                yield Ok(json_event("resync", &EventStreamResync { reason: "replay_unavailable".to_string() }));
+            }
+            None => {}
+        }
 
         loop {
             tokio::select! {
@@ -596,31 +765,16 @@ fn event_stream(
                     runners_visible = can_read_runners(&state, &session).await;
                 }
                 received = receiver.recv() => match received {
-                    Ok(LiveEvent::Build(event)) => {
-                        if project_filter.as_ref().is_none_or(|id| *id == event.project_id)
-                            && let Some(frame) = access
-                                .project_event(&pool, &session, &event.project_id, || json_event("build", &event))
-                                .await
+                    Ok(sequenced) => {
+                        if sequenced.id <= replayed_up_to {
+                            continue;
+                        }
+                        if let Some(frame) = access
+                            .frame(&pool, &session, project_filter.as_deref(), runners_visible, &sequenced.event)
+                            .await
                         {
-                            yield Ok(frame);
+                            yield Ok(frame.id(sequenced.id.to_string()));
                         }
-                    }
-                    Ok(LiveEvent::Release(event)) => {
-                        if project_filter.as_ref().is_none_or(|id| *id == event.project_id)
-                            && let Some(frame) = access
-                                .project_event(&pool, &session, &event.project_id, || json_event("release", &event))
-                                .await
-                        {
-                            yield Ok(frame);
-                        }
-                    }
-                    Ok(LiveEvent::Runner(event)) => {
-                        if runners_visible {
-                            yield Ok(json_event("runner", &event));
-                        }
-                    }
-                    Ok(LiveEvent::Resync(reason)) => {
-                        yield Ok(json_event("resync", &EventStreamResync { reason: reason.to_string() }));
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         warn!(skipped, "event stream receiver lagged; asking client to resync");
@@ -678,11 +832,63 @@ mod tests {
         pool
     }
 
-    async fn next_event(rx: &mut broadcast::Receiver<LiveEvent>) -> LiveEvent {
+    async fn next_event(rx: &mut broadcast::Receiver<Sequenced>) -> LiveEvent {
         tokio::time::timeout(Duration::from_secs(3), rx.recv())
             .await
             .expect("event within timeout")
             .expect("open channel")
+            .event
+    }
+
+    fn build_event(build_id: &str) -> LiveEvent {
+        LiveEvent::Build(BuildChangedEvent {
+            build_id: build_id.to_string(),
+            project_id: "p1".to_string(),
+            build_number: 1,
+            status: "running".to_string(),
+            updated_at: 0,
+        })
+    }
+
+    fn replayed_ids(replay: Replay) -> Option<Vec<String>> {
+        match replay {
+            Replay::Events(events) => Some(
+                events
+                    .into_iter()
+                    .map(|sequenced| match sequenced.event {
+                        LiveEvent::Build(event) => event.build_id,
+                        other => panic!("unexpected {other:?}"),
+                    })
+                    .collect(),
+            ),
+            Replay::Resync => None,
+        }
+    }
+
+    #[test]
+    fn a_reconnect_replays_what_came_after_its_last_id() {
+        let hub = EventHub::new();
+        let _listener = hub.subscribe();
+        hub.publish(build_event("a"));
+        hub.publish(build_event("b"));
+        hub.publish(build_event("c"));
+        let first = hub.replay_log().recent.front().unwrap().id;
+
+        let (_rx, replay) = hub.resume(first);
+        assert_eq!(replayed_ids(replay).unwrap(), ["b", "c"]);
+        let (_rx, replay) = hub.resume(first + 2);
+        assert!(replayed_ids(replay).unwrap().is_empty());
+        // An id from before this daemon started, or from the future.
+        assert!(replayed_ids(hub.resume(1).1).is_none());
+        assert!(replayed_ids(hub.resume(first + 100).1).is_none());
+
+        // While nobody listened, changes went unseen: even the newest id
+        // must resync.
+        hub.mark_gap();
+        assert!(replayed_ids(hub.resume(first + 2).1).is_none());
+        hub.publish(build_event("d"));
+        let after_gap = hub.replay_log().recent.front().unwrap().id;
+        assert_eq!(replayed_ids(hub.resume(after_gap - 1).1).unwrap(), ["d"]);
     }
 
     #[tokio::test]

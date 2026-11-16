@@ -840,6 +840,8 @@ pub struct ListBuildsQuery {
     pub trigger: Option<String>,
     /// Exact `trigger_actor`.
     pub actor: Option<String>,
+    /// The full commit SHA, or a prefix of at least 7 hex characters.
+    pub commit_sha: Option<String>,
     /// Builds the caller started or of apps the caller pinned.
     pub mine: Option<bool>,
     /// Unix seconds; builds created at or after this time.
@@ -1012,6 +1014,19 @@ fn build_list_conditions(
     if let Some(ref branch) = params.branch {
         bind_values.push(branch.clone());
         conditions.push(format!("builds.branch = ?{}", bind_values.len()));
+    }
+    if let Some(ref commit_sha) = params.commit_sha {
+        let sha = commit_sha.trim().to_ascii_lowercase();
+        if sha.len() < 7 || sha.len() > 64 || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(invalid_input(
+                "commit_sha must be 7 to 64 hexadecimal characters",
+            ));
+        }
+        bind_values.push(format!("{sha}%"));
+        conditions.push(format!(
+            "lower(builds.commit_sha) LIKE ?{}",
+            bind_values.len()
+        ));
     }
     if let Some(ref workflow) = params.workflow {
         bind_values.push(workflow.clone());
@@ -1919,12 +1934,156 @@ pub async fn list_build_actors(
     Ok(Json(ListBuildActorsResponse { actors }))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct GetBuildQuery {
+    /// Hold the request up to this many seconds (1 to 60) until the build
+    /// changes.
+    pub wait: Option<u64>,
+    /// With `wait`: answer at once when the build changed after this Unix
+    /// time in seconds.
+    pub since_updated_at: Option<i64>,
+}
+
+/// Longest a `wait` request may hold.
+const MAX_BUILD_WAIT_SECS: u64 = 60;
+/// Waiting requests one person may hold at once.
+const MAX_BUILD_WAITS_PER_USER: usize = 16;
+
+static BUILD_WAITERS: std::sync::LazyLock<std::sync::Mutex<HashMap<String, usize>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// One held `wait` request, counted against its caller until dropped.
+struct BuildWaitSlot(String);
+
+impl BuildWaitSlot {
+    fn acquire(user_id: &str) -> Option<Self> {
+        let mut waiters = BUILD_WAITERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let count = waiters.entry(user_id.to_string()).or_default();
+        if *count >= MAX_BUILD_WAITS_PER_USER {
+            return None;
+        }
+        *count += 1;
+        Some(Self(user_id.to_string()))
+    }
+}
+
+impl Drop for BuildWaitSlot {
+    fn drop(&mut self) {
+        let mut waiters = BUILD_WAITERS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(count) = waiters.get_mut(&self.0) {
+            *count -= 1;
+            if *count == 0 {
+                waiters.remove(&self.0);
+            }
+        }
+    }
+}
+
+fn is_finished_status(status: &str) -> bool {
+    matches!(
+        status,
+        "succeeded" | "failed" | "canceled" | "timed_out" | "expired"
+    )
+}
+
+/// Holds a `wait` request until the build changes after `since`, finishes,
+/// or `wait` seconds pass. Wakes on the live event hub, which scans for
+/// changes only while someone listens, so each waiter costs no queries.
+async fn wait_for_build_change(
+    state: &AppState,
+    auth: &AuthUser,
+    build_id: &str,
+    wait: u64,
+    since: Option<i64>,
+) -> Result<(), ApiErr> {
+    if !(1..=MAX_BUILD_WAIT_SECS).contains(&wait) {
+        return Err(invalid_input("wait must be between 1 and 60 seconds"));
+    }
+    let pool = &state.db;
+    // Subscribe before reading, so a change between the read and the wait
+    // still wakes it.
+    let mut events = state.events.subscribe();
+    let load = || async {
+        sqlx::query("SELECT project_id, status, updated_at FROM builds WHERE id = ?1")
+            .bind(build_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                error!(error = %e, "failed to fetch build");
+                api_err(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "store_error",
+                    "Failed to fetch build",
+                )
+            })
+    };
+    let Some(row) = load().await? else {
+        return Ok(());
+    };
+    let project_id: String = row.get("project_id");
+    let effective = resolve_effective_project_role(
+        pool,
+        &auth.0.user_id,
+        &auth.0.role,
+        &project_id,
+        &auth.0.auth_source,
+    )
+    .await?;
+    require_project_permission(&effective, ProjectPermission::Read)?;
+    let status: String = row.get("status");
+    let updated_at: i64 = row.get("updated_at");
+    let since = since.unwrap_or(updated_at);
+    if is_finished_status(&status) || updated_at > since {
+        return Ok(());
+    }
+    let _slot = BuildWaitSlot::acquire(&auth.0.user_id).ok_or_else(|| {
+        api_err(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too_many_waits",
+            "Too many requests are waiting for builds; let one finish first",
+        )
+    })?;
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(wait);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv()).await;
+        let recheck = match event {
+            Err(_) => return Ok(()),
+            Ok(Ok(sequenced)) => match sequenced.event {
+                crate::events::LiveEvent::Build(changed) => changed.build_id == build_id,
+                crate::events::LiveEvent::Resync(_) => true,
+                _ => false,
+            },
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => true,
+            Ok(Err(tokio::sync::broadcast::error::RecvError::Closed)) => return Ok(()),
+        };
+        if recheck {
+            let Some(row) = load().await? else {
+                return Ok(());
+            };
+            let status: String = row.get("status");
+            let updated_at: i64 = row.get("updated_at");
+            if is_finished_status(&status) || updated_at > since {
+                return Ok(());
+            }
+        }
+    }
+}
+
 /// `GET /v1/builds/{build_id}` — build detail with events timeline.
 pub async fn get_build(
     State(state): State<Arc<AppState>>,
     auth: AuthUser,
     Path(build_id): Path<String>,
+    Query(params): Query<GetBuildQuery>,
 ) -> ApiResult<BuildDetailResponse> {
+    if let Some(wait) = params.wait {
+        wait_for_build_change(&state, &auth, &build_id, wait, params.since_updated_at).await?;
+    }
     let pool = &state.db;
 
     let build_row = sqlx::query(
@@ -3997,6 +4156,7 @@ mod tests {
             workflow: None,
             trigger: None,
             actor: None,
+            commit_sha: None,
             mine: None,
             created_after: None,
             created_before: None,
@@ -4251,6 +4411,23 @@ mod tests {
             ..list_params()
         };
         assert_eq!(listed(&pool, &combined, None).await, ["tag"]);
+
+        sqlx::query("UPDATE builds SET commit_sha = 'ABCDEF1234567890' WHERE id = 'push'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let by_commit = ListBuildsQuery {
+            commit_sha: Some("abcdef1".to_string()),
+            ..list_params()
+        };
+        assert_eq!(listed(&pool, &by_commit, None).await, ["push"]);
+        for short_or_not_hex in ["abcdef", "abcdefg"] {
+            let query = ListBuildsQuery {
+                commit_sha: Some(short_or_not_hex.to_string()),
+                ..list_params()
+            };
+            assert!(build_list_conditions(&query, None).is_err());
+        }
 
         for invalid in [
             ListBuildsQuery {

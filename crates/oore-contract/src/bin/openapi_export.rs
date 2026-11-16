@@ -36,6 +36,8 @@ use utoipa::{
         operations::metrics,
         // ── Setup ──
         operations::get_setup_status,
+        operations::get_openapi_spec,
+        operations::get_instance_meta,
         operations::frontend_pair,
         operations::verify_bootstrap_token,
         operations::setup_preferences,
@@ -137,6 +139,7 @@ use utoipa::{
         // ── Pipelines ──
         operations::create_pipeline,
         operations::list_pipelines,
+        operations::list_all_pipelines,
         operations::get_pipeline,
         operations::list_pipeline_workflows,
         operations::list_pipeline_workflow_settings,
@@ -201,6 +204,7 @@ use utoipa::{
         operations::get_build_insights,
         operations::get_build_trends,
         operations::get_build_failure_hint,
+        operations::get_build_diagnosis,
         operations::get_build_rehearsal,
         operations::get_release_notes,
         operations::update_release_notes,
@@ -344,6 +348,8 @@ use utoipa::{
         // Setup
         oore_contract::SetupState,
         oore_contract::SetupStatus,
+        oore_contract::InstanceMeta,
+        oore_contract::InstanceAuthMode,
         oore_contract::FrontendPairRequest,
         oore_contract::FrontendPairResponse,
         oore_contract::BootstrapTokenVerifyRequest,
@@ -364,6 +370,7 @@ use utoipa::{
         oore_contract::SetupCompleteResponse,
         oore_contract::SetupSummaryResponse,
         oore_contract::ApiError,
+        oore_contract::ApiErrorField,
         oore_contract::OkResponse,
         oore_contract::HealthResponse,
         oore_contract::StreamTokenResponse,
@@ -510,6 +517,8 @@ use utoipa::{
         oore_contract::UpdatePipelineRequest,
         oore_contract::PipelineDetailResponse,
         oore_contract::ListPipelinesResponse,
+        oore_contract::PipelineListing,
+        oore_contract::ListAllPipelinesResponse,
         oore_contract::ValidatePipelineRequest,
         oore_contract::ValidatePipelineResponse,
         oore_contract::PlanPipelineRequest,
@@ -633,6 +642,9 @@ use utoipa::{
         oore_contract::FlakyTest,
         oore_contract::SlowerStep,
         oore_contract::BuildFailureHint,
+        oore_contract::BuildDiagnosis,
+        oore_contract::BuildDiagnosisStep,
+        oore_contract::BuildDiagnosisTest,
         oore_contract::BuildFailureHintResponse,
         oore_contract::BuildRehearsalResponse,
         oore_contract::ReleaseFreeze,
@@ -963,6 +975,33 @@ mod operations {
         )
     )]
     pub(super) fn get_setup_status() {}
+
+    /// Get this daemon's OpenAPI spec
+    ///
+    /// The API contract this daemon was built from, so tools read the
+    /// operations of the version they talk to. No sign-in needed.
+    #[utoipa::path(get, path = "/v1/openapi.json", tag = "Health",
+        responses(
+            (status = 200, description = "OpenAPI 3.1 document", body = Object),
+        )
+    )]
+    pub(super) fn get_openapi_spec() {}
+
+    /// Get instance details for tools
+    ///
+    /// Setup state, sign-in mode and the optional API features this daemon
+    /// has, such as `diagnosis`, `log_filters`, `build_wait`, `idempotency`,
+    /// `event_replay` and `mcp` (present while the MCP server is on). `features` grows
+    /// without a spec change; ignore strings you do not know. `version` and
+    /// `channel` are only sent to a signed-in caller. No sign-in needed.
+    #[utoipa::path(get, path = "/v1/meta", tag = "Health",
+        security((), ("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Instance details", body = InstanceMeta),
+            (status = 500, description = "Internal error", body = ApiError),
+        )
+    )]
+    pub(super) fn get_instance_meta() {}
 
     /// Exchange a frontend pairing code
     ///
@@ -2225,6 +2264,27 @@ mod operations {
     )]
     pub(super) fn list_pipelines() {}
 
+    /// List pipelines across apps
+    ///
+    /// Pipelines of every app the caller can read, ordered by app name then
+    /// pipeline name, each with its app's name. Use `name` to find one
+    /// pipeline without knowing its app.
+    #[utoipa::path(get, path = "/v1/pipelines", tag = "Pipelines",
+        params(
+            ("name" = Option<String>, Query, description = "Exact pipeline name, ignoring case"),
+            ("search" = Option<String>, Query, description = "Part of the pipeline name, ignoring case. At most 200 characters."),
+            ("project_id" = Option<String>, Query, description = "Only this app's pipelines"),
+            ("limit" = Option<i64>, Query, description = "Page size (default 50, at most 200)"),
+            ("offset" = Option<i64>, Query, description = "Page offset"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Pipelines", body = ListAllPipelinesResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
+        )
+    )]
+    pub(super) fn list_all_pipelines() {}
+
     /// Get pipeline detail
     #[utoipa::path(get, path = "/v1/pipelines/{pipeline_id}", tag = "Pipelines",
         params(("pipeline_id" = String, Path, description = "Pipeline ID")),
@@ -2963,7 +3023,9 @@ mod operations {
     ///
     /// Queues a new build for the specified project.
     #[utoipa::path(post, path = "/v1/projects/{project_id}/builds", tag = "Builds",
-        params(("project_id" = String, Path, description = "Project ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("project_id" = String, Path, description = "Project ID")),
         request_body = CreateBuildRequest,
         security(("bearer_auth" = [])),
         responses(
@@ -3006,6 +3068,7 @@ mod operations {
             ("workflow" = Option<String>, Query, description = "Filter by exact .oore.yaml version 2 workflow name"),
             ("trigger" = Option<String>, Query, description = "Filter by one or more comma-separated trigger kinds: manual, api, schedule, push, pull_request, or tag_push. The last three are webhook events."),
             ("actor" = Option<String>, Query, description = "Filter by exact trigger actor (the user email for manual builds, the SCM login for webhook builds). At most 320 characters."),
+            ("commit_sha" = Option<String>, Query, description = "Filter by commit: the full SHA or a prefix of at least 7 hex characters, ignoring case"),
             ("mine" = Option<bool>, Query, description = "Only builds you started or builds of apps you pinned."),
             ("created_after" = Option<i64>, Query, description = "Only builds created at or after this Unix time in seconds"),
             ("created_before" = Option<i64>, Query, description = "Only builds created before this Unix time in seconds. Must be later than created_after."),
@@ -3084,6 +3147,26 @@ mod operations {
     )]
     pub(super) fn get_build_failure_hint() {}
 
+    /// Diagnose a build
+    ///
+    /// Why a build failed, in one call: the failed step with its label and
+    /// exit code, the log line that explains it with the likely cause and
+    /// fix, the last lines of that step's log and the failed tests. A build
+    /// that did not fail answers with `failed_step` null and empty lists.
+    #[utoipa::path(get, path = "/v1/builds/{build_id}/diagnosis", tag = "Builds",
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+            ("tail" = Option<i64>, Query, description = "Log lines to return, 1 to 200 (default 40)"),
+        ),
+        security(("bearer_auth" = [])),
+        responses(
+            (status = 200, description = "Diagnosis", body = BuildDiagnosis),
+            (status = 400, description = "Invalid input", body = ApiError),
+            (status = 404, description = "Not found", body = ApiError),
+        )
+    )]
+    pub(super) fn get_build_diagnosis() {}
+
     /// Get a release rehearsal's findings
     ///
     /// What a rehearsal build checked for each store, blocking findings first. A rehearsal (`rehearsal: true` on `POST /v1/projects/{project_id}/builds`) signs and checks every store submission and submits nothing. Empty for a build that is not a rehearsal or has not reached its store checks.
@@ -3127,11 +3210,17 @@ mod operations {
 
     /// Get build detail
     #[utoipa::path(get, path = "/v1/builds/{build_id}", tag = "Builds",
-        params(("build_id" = String, Path, description = "Build ID")),
+        params(
+            ("build_id" = String, Path, description = "Build ID"),
+            ("wait" = Option<i64>, Query, description = "Hold the request up to this many seconds (1 to 60) until the build changes. Answers at once when the build has finished or changed after `since_updated_at`."),
+            ("since_updated_at" = Option<i64>, Query, description = "With `wait`: the build's `updated_at` you last saw, in Unix seconds. Defaults to its current value."),
+        ),
         security(("bearer_auth" = [])),
         responses(
             (status = 200, description = "Build detail", body = BuildDetailResponse),
+            (status = 400, description = "Invalid input", body = ApiError),
             (status = 404, description = "Not found", body = ApiError),
+            (status = 429, description = "Too many requests are waiting for builds", body = ApiError),
         )
     )]
     pub(super) fn get_build() {}
@@ -3167,7 +3256,9 @@ mod operations {
     /// members who turned them on. Members without access to the app are
     /// listed with no_access and are not sent anything.
     #[utoipa::path(post, path = "/v1/builds/{build_id}/shares", tag = "Testers",
-        params(("build_id" = String, Path, description = "Build ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("build_id" = String, Path, description = "Build ID")),
         request_body = SendBuildToGroupRequest,
         security(("bearer_auth" = [])),
         responses(
@@ -3436,6 +3527,9 @@ mod operations {
     ///
     /// Records a release for a succeeded build. Requires the project maintainer role.
     #[utoipa::path(post, path = "/v1/releases", tag = "Releases",
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+        ),
         request_body = CreateReleaseRequest,
         security(("bearer_auth" = [])),
         responses(
@@ -3465,7 +3559,9 @@ mod operations {
     ///
     /// Raises the rollout to `fraction`, or to the next policy step. Raising to 1 completes the release. Requires maintainer. Writes history, an audit log entry, and a release event.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/raise", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3483,7 +3579,9 @@ mod operations {
     ///
     /// Stops scheduled steps. Requires developer or maintainer. Writes history, an audit log entry, and a release event.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/pause", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3501,7 +3599,9 @@ mod operations {
     ///
     /// Resumes a paused or halted release; the next step is one interval away. Requires maintainer. Writes history, an audit log entry, and a release event.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/resume", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3519,7 +3619,9 @@ mod operations {
     ///
     /// Halts the rollout at the store. A halted release never advances until resumed. Requires developer or maintainer. Writes history, an audit log entry, and a release event.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/halt", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3537,7 +3639,9 @@ mod operations {
     ///
     /// Rolls out to 100%. Requires maintainer. Writes history, an audit log entry, and a release event.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/complete", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3555,7 +3659,9 @@ mod operations {
     ///
     /// Records the maintainer approval required by the release policy. Writes history, an audit log entry, and a release event.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/approve", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `fraction` is accepted by raise only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3573,7 +3679,9 @@ mod operations {
     ///
     /// Reads App Store Connect on the next monitor pass, for a blocked release or one waiting on Apple. Requires developer or maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/retry", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3591,7 +3699,9 @@ mod operations {
     ///
     /// Asks App Store Connect to release a version App Review approved and that waits for a manual or scheduled release. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/release_now", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3609,7 +3719,9 @@ mod operations {
     ///
     /// Submits a rejected App Store version for App Review again, with the build it has. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/resubmit", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3627,7 +3739,9 @@ mod operations {
     ///
     /// Takes the App Store version out of App Review, waiting or in review, or approved and not yet released. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/pull_from_review", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3645,7 +3759,9 @@ mod operations {
     ///
     /// Records that a Play release held in Play Console was sent for review there. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/mark_sent_for_review", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3663,7 +3779,9 @@ mod operations {
     ///
     /// Records that Google Play rejected a release Play Console held for review. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/mark_rejected", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3681,7 +3799,9 @@ mod operations {
     ///
     /// Hands a Play rollout's steps to Oore with `policy`, also for a release made outside Oore. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/attach_schedule", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3699,7 +3819,9 @@ mod operations {
     ///
     /// Stops Oore stepping the rollout; it stays where it is until changed. Requires maintainer. Writes history and an audit log entry.
     #[utoipa::path(post, path = "/v1/releases/{release_id}/detach_schedule", tag = "Releases",
-        params(("release_id" = String, Path, description = "Release ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("release_id" = String, Path, description = "Release ID")),
         request_body(content = Option<ReleaseActionRequest>, description = "Optional reason; `policy` is accepted by attach_schedule only"),
         security(("bearer_auth" = [])),
         responses(
@@ -3922,7 +4044,9 @@ mod operations {
     ///
     /// Puts the version a build's live Google Play release already uploaded on the environment's track and records a release with the environment's rollout policy. Nothing is rebuilt. Promoting straight in requires the maintainer role; when the environment requires approval, a developer may ask and the promotion waits as `pending` without touching the store. Writes an audit log entry.
     #[utoipa::path(post, path = "/v1/projects/{project_id}/promotions", tag = "Environments",
-        params(("project_id" = String, Path, description = "Project ID")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("project_id" = String, Path, description = "Project ID")),
         request_body = CreatePromotionRequest,
         security(("bearer_auth" = [])),
         responses(
@@ -3978,7 +4102,9 @@ mod operations {
     ///
     /// Creates a new build cloning the original build's config_snapshot, branch, and commit_sha.
     #[utoipa::path(post, path = "/v1/builds/{build_id}/rerun", tag = "Builds",
-        params(("build_id" = String, Path, description = "Source build ID to re-run")),
+        params(
+            ("Idempotency-Key" = Option<String>, Header, description = "Send the same key when you retry: a request with a key already used in the last 24 hours, with the same body, answers with the first response and the header `Idempotent-Replayed: true` instead of acting again. The same key with another body answers 409 `idempotency_key_reused`."),
+            ("build_id" = String, Path, description = "Source build ID to re-run")),
         security(("bearer_auth" = [])),
         responses(
             (status = 201, description = "Re-run build queued", body = RerunBuildResponse),
@@ -4457,11 +4583,21 @@ mod operations {
         params(
             ("build_id" = String, Path, description = "Build ID"),
             ("after_sequence" = Option<i64>, Query, description = "Return logs after this sequence"),
-            ("limit" = Option<i64>, Query, description = "Page size"),
+            ("limit" = Option<i64>, Query, description = "Page size (default 1000, at most 5000)"),
+            ("step" = Option<String>, Query, description = "Only lines of this step, by its name in the build's `step_results`"),
+            ("tail" = Option<i64>, Query, description = "Only the last this many matching lines (at most 5000)"),
+            ("search" = Option<String>, Query, description = "Only lines containing this text, ignoring case. At most 200 characters."),
+            ("context" = Option<i64>, Query, description = "With `search`, also this many lines before and after each match (0 to 50)"),
         ),
         security(("bearer_auth" = [])),
         responses(
-            (status = 200, description = "Build logs", body = BuildLogsResponse),
+            (status = 200, description = "Build logs. With `step`, `tail` or `search`, `total` counts the matching lines. With `Accept: text/plain`, the lines alone, one per line, and the count in `X-Oore-Log-Total`.",
+                content(
+                    (BuildLogsResponse = "application/json"),
+                    (String = "text/plain"),
+                ),
+            ),
+            (status = 400, description = "Invalid input", body = ApiError),
         )
     )]
     pub(super) fn get_build_logs() {}
@@ -4475,12 +4611,17 @@ mod operations {
     /// for users who can read runners), `resync` (`EventStreamResync`, events
     /// were dropped and clients should refetch) and `done` (the stream ends,
     /// data is the reason). Build and release events are limited to projects
-    /// the caller can read. Events are not replayed, so a client that
-    /// reconnects should refetch once on `ready`. Comment keepalives are sent
+    /// the caller can read. Build, release and runner events carry an
+    /// increasing SSE `id`. A client that reconnects with `Last-Event-ID` (or
+    /// `since`) gets the events it missed first; when they are no longer kept,
+    /// it gets a `resync` with reason `replay_unavailable` and should refetch.
+    /// Without either, refetch once on `ready`. Comment keepalives are sent
     /// every 15 seconds.
     #[utoipa::path(get, path = "/v1/events", tag = "Events",
         params(
             ("project_id" = Option<String>, Query, description = "Only send build and release events for this project"),
+            ("since" = Option<i64>, Query, description = "Replay events after this event id, like `Last-Event-ID`"),
+            ("Last-Event-ID" = Option<String>, Header, description = "The id of the last event received; events after it are replayed first"),
         ),
         security(("bearer_auth" = [])),
         responses(
