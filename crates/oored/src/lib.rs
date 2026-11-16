@@ -3026,6 +3026,10 @@ pub async fn build_router_with_recovery(
         // Audit log endpoints
         .route("/v1/audit-logs", get(audit_logs::list_audit_logs))
         .route(
+            "/v1/audit-logs/activity",
+            get(audit_logs::get_audit_log_activity),
+        )
+        .route(
             "/v1/releases",
             get(releases::list_releases).post(releases::create_release_handler),
         )
