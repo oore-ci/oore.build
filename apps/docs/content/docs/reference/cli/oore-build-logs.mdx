@@ -1,0 +1,33 @@
+---
+title: '`oore build logs`'
+status: implemented
+description: 'Print a build log, one step of it, the last lines, or the lines that match, and follow a running build.'
+---
+
+```text
+oore build logs <BUILD_ID> [-f] [--step NAME] [--tail N] [--search TEXT] [--json]
+```
+
+| Option          | Effect                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `-f, --follow`  | After the stored lines, print new ones as the build writes them, until it finishes.                                                     |
+| `--step NAME`   | Only the lines of one step, such as `Build Android`. Ignores case.                                                                      |
+| `--tail N`      | Only the last N lines.                                                                                                                  |
+| `--search TEXT` | Only lines that contain the text. Ignores case.                                                                                         |
+| `--json`        | Print `{"build_id", "lines": [{"sequence", "stream", "step", "text"}], "truncated"}`. With `-f`, one line object per JSON line instead. |
+
+Step boundaries print as `==> Build Android started` and
+`==> Build Android failed (exit 1)`.
+
+When the daemon supports log filters, it applies `--step`, `--tail` and
+`--search` itself and sends only the lines asked for. An older daemon sends
+the whole log and `oore` filters it.
+
+With `-f`, the command exits like [`oore build watch`](/reference/cli/oore-build-watch):
+`0` when the build succeeds, `1` when it does not.
+
+```bash
+oore build logs bld_9c1e --step "Build Android" --tail 50
+oore build logs bld_9c1e --search error
+oore build run --pipeline Release --json | jq -r .id | xargs -I{} oore build logs {} -f
+```

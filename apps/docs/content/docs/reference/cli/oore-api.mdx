@@ -1,0 +1,47 @@
+---
+title: '`oore api`'
+status: implemented
+description: 'Call any Oore API operation from the terminal, by method and path or by operation ID.'
+---
+
+```text
+oore api <METHOD> <PATH> [-q KEY=VALUE]... [-f KEY=VALUE]... [-F KEY=JSON]... [--input FILE]
+oore api <OPERATION_ID> [-p KEY=VALUE]... [-q KEY=VALUE]... [-f KEY=VALUE]... [--paginate] [-o FILE]
+oore api --list [--tag TAG] [--json]
+```
+
+`oore api` reaches every operation of the [Oore API](/reference/api), like
+`gh api` does for GitHub. It signs in the way every command does: the session
+saved by `oore login`, or `--token` and `OORE_TOKEN` with an API token from
+**Settings > API tokens**.
+
+| Option                | Effect                                                                                        |
+| --------------------- | --------------------------------------------------------------------------------------------- |
+| `METHOD PATH`         | An HTTP method and a path, such as `GET /v1/builds`. The path can carry a query string.       |
+| `OPERATION_ID`        | An operation ID from the API reference, such as `list_builds`. `oore api --list` prints them. |
+| `-p, --path-param`    | A path parameter of an operation ID, such as `-p build_id=b_123`.                             |
+| `-q, --query`         | A query parameter. Repeat for several.                                                        |
+| `-f, --field`         | A string field of the JSON body. On `GET` it becomes a query parameter.                       |
+| `-F, --typed-field`   | A field whose value is JSON: `true`, `3`, `null`, `["a"]` or `{"a": 1}`.                      |
+| `--input FILE`        | Send this file as the body, or `-` for standard input.                                        |
+| `--paginate`          | Follow `limit` and `offset` until `total` is reached, and print one merged answer.            |
+| `-o, --output FILE`   | Write the answer to a file, for downloads.                                                    |
+| `--list`, `--tag TAG` | List the operations, optionally of one tag such as `Builds`.                                  |
+
+```bash
+oore api GET '/v1/builds?limit=5'
+oore api list_builds -q limit=5 -q status=failed
+oore api get_build -p build_id=b_123
+oore api POST /v1/builds/b_123/cancel
+oore api update_version_release_notes -p project_id=p1 -p version_name=1.2.0 -f text='Fixes'
+oore api list_projects --paginate | jq -r '.projects[].name'
+```
+
+A successful answer prints as JSON on standard output. A failed one prints
+the API's error on standard error and exits with the
+[shared exit codes](/reference/cli/exit-codes): `4` for 401 and 403, `5` for
+404, `1` otherwise.
+
+The list of operations comes from the API description built into this
+`oore`. A newer daemon can have operations it does not list yet; call those
+by method and path.

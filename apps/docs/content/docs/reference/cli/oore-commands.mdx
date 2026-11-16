@@ -1,0 +1,27 @@
+---
+title: '`oore commands` and `oore completions`'
+status: implemented
+description: 'Print every command and flag as JSON for agents, and shell completion scripts.'
+---
+
+```text
+oore commands [--json | --markdown]
+oore completions <bash|zsh|fish|elvish|powershell>
+```
+
+`oore commands --json` prints the whole command tree, read from the CLI
+itself: each command's path and summary, and each flag's name, help, value,
+default, choices and environment variable, plus the
+[exit codes](/reference/cli/exit-codes). An agent can learn the commands
+without reading help text. Without `--json`, it prints one line per command.
+
+`oore commands --markdown` prints the [All commands](/reference/cli/commands)
+page these docs publish. A test checks that the page matches the CLI.
+
+`oore completions` prints a completion script for a shell:
+
+```bash
+oore completions zsh > "${fpath[1]}/_oore"
+oore completions bash > /etc/bash_completion.d/oore
+oore completions fish > ~/.config/fish/completions/oore.fish
+```
