@@ -15,9 +15,8 @@ permissions:
 jobs:
   autotag:
     name: Cut release tag
-    # Git and gh only. A fresh hosted runner keeps the checkout token off any
-    # persistent machine.
-    runs-on: ubuntu-latest
+    # Git and gh only, on our own Linux runners.
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
     timeout-minutes: 15
     # Branch protection requires validation before a release branch moves,
     # so this does not wait for the Validate workflow.
