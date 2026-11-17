@@ -179,6 +179,12 @@ jobs:
         with:
           bun-version: 1.4.4
 
+      # Wrangler runs on Node, which the self-hosted Macs do not have.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
@@ -1026,6 +1032,12 @@ jobs:
         with:
           bun-version: 1.4.4
 
+      # Wrangler runs on Node, which the self-hosted Macs do not have.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
       - name: Install dependencies
         working-directory: site-source
         run: bun install --frozen-lockfile
@@ -1123,6 +1135,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
+
+      # Wrangler runs on Node, which the self-hosted Macs do not have.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
