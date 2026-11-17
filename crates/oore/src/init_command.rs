@@ -22,6 +22,86 @@ pub struct InitArgs {
     /// Print the file instead of writing it.
     #[arg(long)]
     pub print: bool,
+    /// Write instructions for coding agents instead: a marked section in
+    /// AGENTS.md and a Claude Code skill in .claude/skills/oore/SKILL.md.
+    /// Running it again updates them in place.
+    #[arg(long)]
+    pub agents: bool,
+}
+
+/// The schema line editors read to check and complete the file.
+pub const SCHEMA_LINE: &str =
+    "# yaml-language-server: $schema=https://docs.oore.build/schema/oore-yaml-v2.json\n";
+
+const AGENTS_BEGIN: &str =
+    "<!-- oore:begin (written by oore init --agents; edits here are replaced) -->";
+const AGENTS_END: &str = "<!-- oore:end -->";
+
+/// What coding agents need to build this app on Oore. The same text is
+/// published at https://docs.oore.build/build/automate/agent-instructions.
+pub const AGENT_INSTRUCTIONS: &str = include_str!("agent_instructions.md");
+
+const SKILL_HEADER: &str = "---\nname: oore\ndescription: Build, test and ship this Flutter app on Oore CI with the oore CLI. Use when asked to build the app, check a failed build, change .oore.yaml, or share a build with testers.\n---\n\n";
+
+/// `existing` with the Oore section replaced, or added at the end.
+pub fn merge_agents_section(existing: &str) -> String {
+    let section = format!("{AGENTS_BEGIN}\n{AGENT_INSTRUCTIONS}{AGENTS_END}\n");
+    if let (Some(start), Some(end)) = (existing.find(AGENTS_BEGIN), existing.find(AGENTS_END))
+        && start < end
+    {
+        let after = &existing[end + AGENTS_END.len()..];
+        let after = after.strip_prefix('\n').unwrap_or(after);
+        return format!("{}{section}{after}", &existing[..start]);
+    }
+    if existing.trim().is_empty() {
+        return section;
+    }
+    let separator = if existing.ends_with("\n\n") {
+        ""
+    } else if existing.ends_with('\n') {
+        "\n"
+    } else {
+        "\n\n"
+    };
+    format!("{existing}{separator}{section}")
+}
+
+fn handle_agents(args: &InitArgs) -> anyhow::Result<()> {
+    let skill = format!("{SKILL_HEADER}{AGENT_INSTRUCTIONS}");
+    if args.print {
+        print!("{AGENT_INSTRUCTIONS}");
+        return Ok(());
+    }
+    let agents_path = args.dir.join("AGENTS.md");
+    let existing = match fs::read_to_string(&agents_path) {
+        Ok(existing) => existing,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", agents_path.display()));
+        }
+    };
+    let merged = merge_agents_section(&existing);
+    fs::write(&agents_path, &merged)
+        .with_context(|| format!("failed to write {}", agents_path.display()))?;
+    let skill_path = args.dir.join(".claude/skills/oore/SKILL.md");
+    if let Some(parent) = skill_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(&skill_path, skill)
+        .with_context(|| format!("failed to write {}", skill_path.display()))?;
+    println!(
+        "{} the Oore section in {} and wrote {}.",
+        if existing.contains(AGENTS_BEGIN) {
+            "Updated"
+        } else {
+            "Added"
+        },
+        agents_path.display(),
+        skill_path.display()
+    );
+    println!("Commit both so every agent working in this repository finds them.");
+    Ok(())
 }
 
 /// What `oore init` found in the folder.
@@ -98,7 +178,7 @@ pub fn detect(dir: &Path) -> anyhow::Result<DetectedApp> {
 
 /// The starter file for what `detect` found.
 pub fn starter_file(app: &DetectedApp) -> String {
-    let mut out = String::new();
+    let mut out = String::from(SCHEMA_LINE);
     out.push_str(&format!(
         "# Oore pipeline for {}, written by oore init.\n",
         app.name.as_deref().unwrap_or("this app")
@@ -155,6 +235,9 @@ fn platform_names(platforms: &[BuildPlatform]) -> String {
 }
 
 pub fn handle_init(args: InitArgs) -> anyhow::Result<()> {
+    if args.agents {
+        return handle_agents(&args);
+    }
     let app = detect(&args.dir)?;
     let file = starter_file(&app);
     // The runner's schema has the last word, so a bad template never lands.
@@ -237,6 +320,7 @@ mod tests {
             dir: dir.clone(),
             force: false,
             print: false,
+            agents: false,
         })
         .unwrap();
         assert!(
@@ -248,7 +332,8 @@ mod tests {
             handle_init(InitArgs {
                 dir: dir.clone(),
                 force: false,
-                print: false
+                print: false,
+                agents: false,
             })
             .is_err()
         );
@@ -256,8 +341,52 @@ mod tests {
             dir: dir.clone(),
             force: true,
             print: false,
+            agents: false,
         })
         .unwrap();
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_starter_file_names_its_schema_first() {
+        let dir = app_dir(&["android/app/build.gradle"]);
+        let file = starter_file(&detect(&dir).unwrap());
+        assert!(file.starts_with(SCHEMA_LINE));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_agents_section_is_added_once_and_updated_in_place() {
+        let added = merge_agents_section("# My app\n\nRun tests first.\n");
+        assert!(added.starts_with("# My app\n\nRun tests first.\n\n<!-- oore:begin"));
+        assert_eq!(merge_agents_section(&added), added);
+        let stale = added.replace("oore build why", "old text");
+        let edited = format!("{stale}\n## Mine\n");
+        let updated = merge_agents_section(&edited);
+        assert_eq!(updated.matches(AGENTS_BEGIN).count(), 1);
+        assert!(updated.contains("oore build why"));
+        assert!(updated.ends_with("\n## Mine\n"));
+        assert!(merge_agents_section("").starts_with(AGENTS_BEGIN));
+    }
+
+    #[test]
+    fn init_agents_writes_agents_md_and_the_skill() {
+        let dir = app_dir(&[]);
+        fs::write(dir.join("AGENTS.md"), "# Rules\n").unwrap();
+        let args = || InitArgs {
+            dir: dir.clone(),
+            force: false,
+            print: false,
+            agents: true,
+        };
+        handle_init(args()).unwrap();
+        handle_init(args()).unwrap();
+        let agents = fs::read_to_string(dir.join("AGENTS.md")).unwrap();
+        assert!(agents.starts_with("# Rules\n"));
+        assert_eq!(agents.matches(AGENTS_BEGIN).count(), 1);
+        let skill = fs::read_to_string(dir.join(".claude/skills/oore/SKILL.md")).unwrap();
+        assert!(skill.starts_with("---\nname: oore\n"));
+        assert!(!dir.join(".oore.yaml").exists());
         let _ = fs::remove_dir_all(dir);
     }
 

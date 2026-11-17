@@ -1,0 +1,60 @@
+---
+title: '`oore token`'
+status: implemented
+description: 'Create, list and revoke API tokens for agents and scripts from the terminal.'
+---
+
+```text
+oore token create --name <NAME> [--role ROLE] [--expires DURATION]
+                  [--app <PROJECT_ID>]... [--ability <ABILITY>]... [--json]
+oore token list   [--search TEXT] [--json]
+oore token revoke <TOKEN_ID> [--yes] [--json]
+```
+
+API tokens let agents, scripts and CI jobs call Oore without a browser. A token
+acts for the person who created it, and never does more than they can. Each
+subcommand takes `--url` and `--token` (or `OORE_URL` and `OORE_TOKEN`) like
+[`oore build run`](/reference/cli/oore-build-run) and needs a signed-in session.
+
+On a Local Only host, sign in with [`oore login`](/reference/cli/oore-login),
+then create a token for the agent. No browser is needed.
+
+| Subcommand | Effect                                                                                   |
+| ---------- | ---------------------------------------------------------------------------------------- |
+| `create`   | Create a token. The token is printed once on standard output, and never shown again.     |
+| `list`     | List tokens with their role, state, expiry, last use and creator. Secrets are not shown. |
+| `revoke`   | Revoke a token. Anything using it stops working at once. Asks first, or needs `--yes`.   |
+
+| Option               | Effect                                                                                                                                                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--name NAME`        | `create`: who or what uses the token, such as `release agent`. Required.                                                                                                      |
+| `--role ROLE`        | `create`: `owner`, `admin`, `developer` or `qa_viewer`. Defaults to `developer`, the least role that can build.                                                               |
+| `--expires DURATION` | `create`: how long it lives, such as `30d` or `12h`, or `never`. Defaults to `90d`.                                                                                           |
+| `--app PROJECT_ID`   | `create`: limit the token to this app. Repeat for several. Without it, the token reaches every app you can.                                                                   |
+| `--ability ABILITY`  | `create`: what the token may do: `read`, `build`, `release_operate`, `release_manage` or `manage`. Repeat for several. Without it, read and build. `read` is always included. |
+| `--search TEXT`      | `list`: only tokens whose name contains the text.                                                                                                                             |
+| `--yes`              | `revoke`: do not ask. Required when no terminal is attached.                                                                                                                  |
+| `--json`             | Print the daemon's response as JSON. For `create` it includes the token.                                                                                                      |
+
+```bash
+oore login
+export OORE_TOKEN="$(oore token create --name 'coding agent' --expires 30d)"
+```
+
+A token can never do more than its creator, its role, its abilities and its
+apps all allow. A token used to create tokens needs `manage`, and cannot create
+one broader than itself. A release agent that may pause and halt but nothing
+more:
+
+```bash
+oore token create --name 'release watcher' --role developer \
+  --app proj_123 --ability release_operate
+```
+
+The notes about the new token go to standard error, so the command above
+captures only the token. Revoke it when the agent is done:
+
+```bash
+oore token list
+oore token revoke tok_123 --yes
+```

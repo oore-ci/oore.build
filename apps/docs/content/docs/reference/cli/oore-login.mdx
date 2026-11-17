@@ -5,7 +5,7 @@ description: 'Create a loopback Local Only session or import an existing Oore se
 ---
 
 ```text
-oore login [--url <URL>] [--token <TOKEN>] [--email <EMAIL>] [--json]
+oore login [--url <URL>] [--token <TOKEN> | --email <EMAIL> | --device] [--json]
 ```
 
 ## Local Only login
@@ -19,6 +19,36 @@ oore login --email owner@example.com
 
 `--email` is optional and defaults to `owner@local` server-side. A ready
 External Access instance rejects Local Only login.
+
+## Sign in from another device
+
+On a server, a container or any machine that is not the Oore host, use
+`--device`, or run `oore login` on an instance without Local Only access and it
+switches to this by itself:
+
+```bash
+oore login --url https://ci.example.com --device
+```
+
+It prints a short code and a link, and opens the browser when it can. A signed-in
+person opens the link, checks the code, and approves. The CLI then receives an
+API token named `oore CLI on <hostname>`, checks it, and saves it like
+`--token` does. The token shows in Settings > API tokens and can be revoked
+there.
+
+With `--json`, or without a terminal, the code and link are printed as one JSON
+line on standard output, and the result as another once someone approves:
+
+```json
+{
+  "status": "waiting_for_approval",
+  "user_code": "WDJB-MJHT",
+  "verification_url": "https://ci.example.com/device",
+  "expires_in": 600
+}
+```
+
+The command fails when the code expires or the sign-in is denied.
 
 ## Import a session or an API token
 

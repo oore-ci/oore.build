@@ -98,6 +98,7 @@ Create a Local Only session or import an existing session.
 | `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, then the saved login. Env `OORE_URL`. |
 | `--token <TOKEN>` | Import an existing API or session token and validate it against /v1/users/me. |
 | `--email <EMAIL>` | Optional local-login email (local mode). Defaults to owner@local server-side. |
+| `--device` | Sign in from another device: print a code, approve it in the web app, and save the API token it creates. Used by itself when local sign-in is not available. |
 | `--json` |  |
 
 ## `oore recovery`
@@ -193,6 +194,16 @@ Remove a runner setting, so the runner uses its default.
 | --- | --- |
 | `<KEY>` | Required. |
 
+## `oore runner list`
+
+List the runners registered with the daemon and their status.
+
+| Flag | What it does |
+| --- | --- |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
 ## `oore config set`
 
 
@@ -230,6 +241,7 @@ Write a starter .oore.yaml for the Flutter app in a folder.
 | `<DIR>` | The app's repository folder. Default `.`. |
 | `--force` | Replace an existing `.oore.yaml`. |
 | `--print` | Print the file instead of writing it. |
+| `--agents` | Write instructions for coding agents instead: a marked section in AGENTS.md and a Claude Code skill in .claude/skills/oore/SKILL.md. Running it again updates them in place. |
 | `--json` | Print the result as JSON on stdout; progress goes to stderr. |
 
 ## `oore pipeline validate`
@@ -450,6 +462,19 @@ Print a link to install the build on a phone.
 | `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
 | `--json` | Print the links as JSON. |
 
+## `oore build share`
+
+Send a build to a tester group by email.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | Build to send. Required. |
+| `--group <GROUP>` | Tester group to send it to, by name or ID. Required. |
+| `--message <MESSAGE>` | A note for the testers, added to the email. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the share as JSON. |
+
 ## `oore project list`
 
 List apps, with the ID first.
@@ -549,6 +574,374 @@ Print notes drafted from the commits since the last released version. Nothing is
 | `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
 | `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
 | `--json` | Print the daemon's response as JSON. |
+
+## `oore token create`
+
+Create an API token. It is printed once and never again.
+
+| Flag | What it does |
+| --- | --- |
+| `--name <NAME>` | A name that says who or what uses the token, such as "release agent". Required. |
+| `--role <ROLE>` | The token's role. It can never do more than you can. Default `developer`. One of `owner`, `admin`, `developer`, `qa-viewer`. |
+| `--expires <DURATION>` | How long the token lives, such as 30d or 12h, or `never`. Default `90d`. |
+| `--app <PROJECT_ID>` | Limit the token to this app. Repeat for several. Without it the token reaches every app you can. |
+| `--ability <ABILITY>` | What the token may do. Repeat for several. Without it the token may read and build. `read` is always included. One of `read`, `build`, `release-operate`, `release-manage`, `manage`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the new token and its details as JSON. |
+
+## `oore token list`
+
+List the API tokens you can see.
+
+| Flag | What it does |
+| --- | --- |
+| `--search <SEARCH>` | Only tokens whose name contains this. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore token revoke`
+
+Revoke an API token. Anything using it stops working at once.
+
+| Flag | What it does |
+| --- | --- |
+| `<TOKEN_ID>` | ID of the token to revoke, from `oore token list`. Required. |
+| `-y, --yes` | Revoke without asking. Required when no terminal is attached. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore secret list`
+
+List secret names in a scope. Values are never shown.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT_ID>` | An app's secrets, shared by its pipelines. |
+| `--pipeline <PIPELINE_ID>` | One pipeline's secrets. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore secret set`
+
+Create a secret, or replace its value if it exists. The value comes from standard input unless --file or --from-env says otherwise.
+
+| Flag | What it does |
+| --- | --- |
+| `<NAME>` | Secret name, as `${{ secrets.NAME }}` reads it. Required. |
+| `--project <PROJECT_ID>` | An app's secrets, shared by its pipelines. |
+| `--pipeline <PIPELINE_ID>` | One pipeline's secrets. |
+| `--file <PATH>` | Read the value from a file. |
+| `--from-env <VAR>` | Read the value from this environment variable. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the saved secret (without its value) as JSON. |
+
+## `oore secret delete`
+
+Delete a secret. Builds that read it fail until it is set again.
+
+| Flag | What it does |
+| --- | --- |
+| `<NAME>` | Secret name. Required. |
+| `--project <PROJECT_ID>` | An app's secrets, shared by its pipelines. |
+| `--pipeline <PIPELINE_ID>` | One pipeline's secrets. |
+| `-y, --yes` | Delete without asking. Required when no terminal is attached. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore signing list`
+
+List an app's signing identities. Key material is never shown.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT_ID>` | App whose library to list. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore signing add`
+
+Add an Android keystore (--keystore) or an iOS distribution certificate with its profiles (--p12 and --profile). Passwords come from OORE_KEYSTORE_PASSWORD and OORE_KEY_PASSWORD, or OORE_P12_PASSWORD, else a prompt, else one per line on standard input.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT_ID>` | App to add the identity to. Required. |
+| `--name <NAME>` | Name in the app, as a v2 file's `signing` names it. Required. |
+| `--keystore <PATH>` | Android: the keystore file (.jks or .keystore). |
+| `--alias <ALIAS>` | Android: the key alias in the keystore. |
+| `--p12 <PATH>` | iOS: the distribution certificate (.p12). |
+| `--profile <PATH>` | iOS: a provisioning profile (.mobileprovision). Repeat for each bundle id. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the saved identity as JSON. |
+
+## `oore signing remove`
+
+Remove a signing identity from an app.
+
+| Flag | What it does |
+| --- | --- |
+| `<IDENTITY_ID>` | ID of the identity, from `oore signing list`. Required. |
+| `--project <PROJECT_ID>` | App the identity belongs to. Required. |
+| `-y, --yes` | Remove without asking. Required when no terminal is attached. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore tester group list`
+
+List tester groups and their members.
+
+| Flag | What it does |
+| --- | --- |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore tester group create`
+
+Create a tester group.
+
+| Flag | What it does |
+| --- | --- |
+| `--name <NAME>` | Group name, such as "QA" or "Leadership". Required. |
+| `--member <EMAIL>` | A member, by email or user ID. Repeat for several. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the saved group as JSON. |
+
+## `oore tester group update`
+
+Rename a group, or add and remove members.
+
+| Flag | What it does |
+| --- | --- |
+| `<GROUP>` | The group, by name or ID. Required. |
+| `--name <NAME>` | New name. |
+| `--add <EMAIL>` | Add a member, by email or user ID. Repeat for several. |
+| `--remove <EMAIL>` | Remove a member, by email or user ID. Repeat for several. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the saved group as JSON. |
+
+## `oore tester group delete`
+
+Delete a tester group. Builds already sent stay installable.
+
+| Flag | What it does |
+| --- | --- |
+| `<GROUP>` | The group, by name or ID. Required. |
+| `-y, --yes` | Delete without asking. Required when no terminal is attached. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print `{"deleted": true}` as JSON. |
+
+## `oore release list`
+
+List store releases, newest first.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT_ID>` | Only this app's releases. |
+| `--build <BUILD_ID>` | Only releases of this build. |
+| `--state <STATE>` | Only releases in this state. One of `uploading`, `processing`, `blocked`, `in-review`, `approved`, `rejected`, `rolling`, `paused`, `halted`, `complete`, `failed`. |
+| `--limit <LIMIT>` | How many to list. Default `20`. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore release show`
+
+Show a release, its history and the actions it allows now.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore release pause`
+
+Pause a staged rollout. Needs release_operate.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release halt`
+
+Halt a release at the store. Needs release_operate.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release resume`
+
+Resume a paused or halted rollout. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release complete`
+
+Roll out to everyone and finish the release. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release approve`
+
+Approve a release that waits for approval. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release release-now`
+
+Release an approved App Store version now. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release retry`
+
+Retry a release the store refused or that failed. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release raise`
+
+Raise a staged rollout to a percentage. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<RELEASE_ID>` | Release ID, from `oore release list`. Required. |
+| `--to <PERCENT>` | Rollout percentage to raise to, above 0 and up to 100. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release freeze list`
+
+List the freezes in force.
+
+| Flag | What it does |
+| --- | --- |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the daemon's response as JSON. |
+
+## `oore release freeze set`
+
+Freeze store releases for one app, or for every app without --project. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `--project <PROJECT_ID>` | Freeze only this app. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore release freeze clear`
+
+Lift a freeze. Needs release_manage.
+
+| Flag | What it does |
+| --- | --- |
+| `<FREEZE_ID>` | Freeze ID, from `oore release freeze list`. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore promote`
+
+Promote a build's release into another track.
+
+| Flag | What it does |
+| --- | --- |
+| `<BUILD_ID>` | Build whose release to promote. Required. |
+| `--to <TRACK>` | Track to promote into, by name, key or ID, such as production. Required. |
+| `--dry-run` | Print what would be sent and the actions the release allows now, and change nothing. |
+| `-y, --yes` | Go ahead without asking. Required when no terminal is attached. |
+| `--reason <REASON>` | Why, recorded in the release's history. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
+| `--json` | Print the result as JSON. |
+
+## `oore mcp`
+
+Bridge an agent's MCP client on standard input and output to the daemon's MCP endpoint.
+
+| Flag | What it does |
+| --- | --- |
+| `--read-only` | Offer only tools marked read-only, and refuse calls to any other. |
+| `--url <DAEMON_URL>, --daemon-url` | Daemon URL. Falls back to OORE_URL, OORE_DAEMON_URL, the URL saved by `oore login`, then http://127.0.0.1:8787. Env `OORE_URL`. |
+| `--token <TOKEN>` | API or session token. Falls back to OORE_TOKEN, OORE_SESSION_TOKEN, then the session saved by `oore login`. Env `OORE_TOKEN`. |
 
 ## `oore version`
 

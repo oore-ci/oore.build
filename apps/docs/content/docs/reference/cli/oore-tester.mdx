@@ -1,0 +1,23 @@
+---
+title: '`oore tester`'
+status: implemented
+description: 'List, create, change and delete tester groups from the terminal.'
+---
+
+```text
+oore tester group list   [--json]
+oore tester group create --name <NAME> [--member <EMAIL>]... [--json]
+oore tester group update <GROUP> [--name NAME] [--add EMAIL]... [--remove EMAIL]... [--json]
+oore tester group delete <GROUP> [--yes] [--json]
+```
+
+A tester group is a named list of people who get builds by email. `GROUP` is
+the group's name or ID. Members are Oore users, given by email or user ID.
+Invite people to Oore first.
+
+Send a build to a group with [`oore build share`](/reference/cli/oore-build-share).
+
+```bash
+oore tester group create --name QA --member asha@example.com --member ravi@example.com
+oore tester group update QA --add meera@example.com --remove ravi@example.com
+```

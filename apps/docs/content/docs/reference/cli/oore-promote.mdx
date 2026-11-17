@@ -1,0 +1,23 @@
+---
+title: '`oore promote`'
+status: implemented
+description: "Promote a build's release into another track, such as from internal to production."
+---
+
+```text
+oore promote <BUILD_ID> --to <TRACK> [--reason TEXT] [--dry-run] [--yes] [--json]
+```
+
+`TRACK` is the track's name, key or ID in the app, such as `production`. The
+build's app is read from the build. `--dry-run` prints what would be sent and
+whether the track needs an approval, and changes nothing. Without a terminal,
+`--yes` is required.
+
+When the track needs an approval, the promotion waits for a person and the
+command exits 2. Promoting needs the `release_manage` ability, see
+[`oore release`](/reference/cli/oore-release#what-a-token-needs).
+
+```text
+$ oore promote bld_123 --to production --reason "QA passed" --yes
+Promotion prm_789 to Production is waiting for approval.
+```
