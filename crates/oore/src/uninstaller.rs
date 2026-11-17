@@ -524,6 +524,16 @@ fn preflight_services(
 ) -> anyhow::Result<Vec<InstallService>> {
     let mut present = Vec::new();
 
+    // Oore registers launchd services on macOS only. A Linux install is the
+    // CLI alone, so it has no services to find or remove.
+    if !cfg!(target_os = "macos") {
+        anyhow::ensure!(
+            recorded.is_empty(),
+            "the installation manifest records services, which Oore runs on macOS only; no services or files were removed"
+        );
+        return Ok(present);
+    }
+
     for service in ALL_SERVICES {
         let owned = service_is_owned(root, service).with_context(|| {
             format!(
@@ -889,7 +899,12 @@ fn preflight_bootstrap_files(root: &Path) -> anyhow::Result<BootstrapInstall> {
         "x86_64" => "x86_64",
         other => anyhow::bail!("unsupported bootstrap architecture {other}"),
     };
-    let cli_archive = format!("oore-cli_{version}_darwin_{arch}.tar.gz");
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        "linux" => "linux",
+        other => anyhow::bail!("unsupported bootstrap operating system {other}"),
+    };
+    let cli_archive = format!("oore-cli_{version}_{os}_{arch}.tar.gz");
     let full_archive = format!("oore_{version}_darwin_{arch}.tar.gz");
     anyhow::ensure!(
         archive == cli_archive || archive == full_archive,

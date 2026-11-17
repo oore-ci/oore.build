@@ -12,7 +12,7 @@ use oore_cli_ui::Operation;
 
 use super::{
     InstallProfile, atomic_replace_directory, atomic_replace_file, copy_dir_recursive,
-    parse_checksum, release_arch, sha256_file,
+    parse_checksum, release_arch, release_os, sha256_file,
 };
 
 const MAX_ARCHIVE_BYTES: u64 = 512 * 1024 * 1024;
@@ -78,7 +78,10 @@ impl ArtifactKind {
         match self {
             Self::Full => format!("oore_{version}_darwin_{arch}.tar.gz"),
             Self::Web => format!("oore-web_{version}_darwin_{arch}.tar.gz"),
-            Self::Cli => format!("oore-cli_{version}_darwin_{arch}.tar.gz"),
+            Self::Cli => format!(
+                "oore-cli_{version}_{}_{arch}.tar.gz",
+                release_os().unwrap_or("darwin")
+            ),
         }
     }
 

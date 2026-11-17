@@ -57,6 +57,8 @@ RELEASE_WEB_DARWIN_ARM64_STAGE ?= dist/stage-web-darwin-arm64
 RELEASE_WEB_DARWIN_X86_64_STAGE ?= dist/stage-web-darwin-x86_64
 RELEASE_WEB_LINUX_ARM64_STAGE ?= dist/stage-web-linux-arm64
 RELEASE_WEB_LINUX_X86_64_STAGE ?= dist/stage-web-linux-x86_64
+RELEASE_CLI_LINUX_ARM64_STAGE ?= dist/stage-cli-linux-arm64
+RELEASE_CLI_LINUX_X86_64_STAGE ?= dist/stage-cli-linux-x86_64
 ACTIONLINT_VERSION ?= v1.7.12
 # If PAGES_BRANCH is set (e.g. alpha/beta), deploy to a Pages preview branch.
 # Important: avoid leaving behind extra whitespace in the shell command when unset.
@@ -149,7 +151,9 @@ package-release-assets:
 		"$(RELEASE_WEB_DARWIN_ARM64_STAGE)" \
 		"$(RELEASE_WEB_DARWIN_X86_64_STAGE)" \
 		"$(RELEASE_WEB_LINUX_ARM64_STAGE)" \
-		"$(RELEASE_WEB_LINUX_X86_64_STAGE)"
+		"$(RELEASE_WEB_LINUX_X86_64_STAGE)" \
+		"$(RELEASE_CLI_LINUX_ARM64_STAGE)" \
+		"$(RELEASE_CLI_LINUX_X86_64_STAGE)"
 
 deploy-release-index-dist:
 	$(WRANGLER) pages deploy $(RELEASE_INDEX_OUTPUT) --project-name=$(PAGES_PROJECT_RELEASES) --branch=$(PAGES_RELEASES_BRANCH)$(PAGES_COMMIT_HASH_FLAG)$(PAGES_COMMIT_MESSAGE_FLAG) --commit-dirty=true
@@ -280,7 +284,7 @@ test-tools:
 validate-ci: validate-workflows validate-shell test-tools
 
 # Bootstraps the CLI built from this checkout through scripts/install.sh and
-# scripts/uninstall.sh over the unsigned loopback path. macOS only.
+# scripts/uninstall.sh over the unsigned loopback path. macOS and Linux.
 smoke-install:
 	bash tools/install-smoke.sh
 

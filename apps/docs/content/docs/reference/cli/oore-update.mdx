@@ -55,12 +55,14 @@ A switch never downgrades. If the target channel's latest release is older than 
 
 ## Other device roles
 
-`oore update` updates only a Ready Complete or Control plane installation. For other roles it names the next step:
+`oore update` updates a Ready Complete or Control plane installation in place.
+
+For a CLI only or bootstrap only installation, which includes every Linux installation, `oore update` updates the CLI. It reads the signed channel index, then reruns the bootstrap installer from `https://oore.build/install` for that exact release, with the same install root and repository. The installer verifies the signed checksum manifest and the archive SHA-256, and keeps the previous CLI if anything fails. `--check`, `--force`, `--channel` and `--switch-channel` work as for a backend update. Set `OORE_INSTALLER_URL` to fetch the installer from a mirror.
+
+For other roles it names the next step:
 
 | Installation       | Next step                                                                                                       |
 | ------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Bootstrap only     | Rerun the CLI bootstrap to update the CLI, or run `oore install` to choose a role.                              |
-| CLI only           | Rerun the CLI bootstrap with the same channel and install root.                                                 |
 | Web node           | Run `oore-web update` on the Web node.                                                                          |
 | Runner             | Run `oore uninstall`, which keeps Oore data. Rerun the CLI bootstrap, then run `oore install --profile runner`. |
 | Setup not finished | Run `oore setup`, then update.                                                                                  |
