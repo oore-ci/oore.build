@@ -56,10 +56,13 @@ PRESERVED_PROFILE=""
 
 # macOS ships BSD stat, lockf and shasum. Homebrew coreutils can put GNU tools
 # with incompatible flags first in PATH, so call the system copies directly.
+# Linux uses GNU (or BusyBox) stat, flock and sha256sum; detect_platform
+# switches to them.
 BSD_STAT=/usr/bin/stat
 BSD_LOCKF=/usr/bin/lockf
 BSD_SHASUM=/usr/bin/shasum
 FILE_IDENTITY_FORMAT='%d:%i:%u:%Lp:%l:%z:%m:%c'
+LINUX_FILE_IDENTITY_FORMAT='%d:%i:%u:%a:%h:%s:%Y:%Z'
 
 PATH_BLOCK_START="# >>> oore PATH >>>"
 PATH_BLOCK_END="# <<< oore PATH <<<"
@@ -249,8 +252,20 @@ validate_config() {
 require_dependencies() {
   local dependency=""
   for dependency in curl tar awk sed grep head mktemp mkdir install mv rm rmdir tr dirname chmod cp sleep ssh-keygen; do
+    if [[ "$dependency" == ssh-keygen && "$RELEASE_OS" == linux ]]; then
+      have_command "$dependency" \
+        || die 'ssh-keygen is required to verify release signatures. Install it with your package manager (openssh-client on Debian and Ubuntu, openssh-keygen on Alpine).'
+      continue
+    fi
     have_command "$dependency" || die "$dependency is required."
   done
+
+  if [[ "$RELEASE_OS" == linux ]]; then
+    for dependency in stat flock sha256sum; do
+      have_command "$dependency" || die "$dependency is required."
+    done
+    return 0
+  fi
 
   for dependency in "$BSD_STAT" "$BSD_LOCKF"; do
     [[ -x "$dependency" ]] || die "$dependency is required."
@@ -258,6 +273,25 @@ require_dependencies() {
 
   if [[ ! -x "$BSD_SHASUM" ]] && ! have_command sha256sum; then
     die "$BSD_SHASUM or sha256sum is required."
+  fi
+}
+
+# Prints the permission bits of a path in octal, such as 755.
+file_mode() {
+  if [[ "$RELEASE_OS" == linux ]]; then
+    stat -c '%a' "$1"
+  else
+    "$BSD_STAT" -f '%Lp' "$1"
+  fi
+}
+
+# Prints device, inode, owner, mode, links, size, mtime and ctime, so a later
+# call can tell whether the file changed.
+file_identity() {
+  if [[ "$RELEASE_OS" == linux ]]; then
+    stat -c "$LINUX_FILE_IDENTITY_FORMAT" "$1"
+  else
+    "$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$1"
   fi
 }
 
@@ -345,9 +379,8 @@ download_and_verify_signature() {
 detect_platform() {
   case "$(uname -s)" in
     Darwin) RELEASE_OS=darwin ;;
-    Linux)
-      die 'Oore CLI release assets do not support Linux yet.'
-      ;;
+    # Linux releases carry the CLI only (the cli-only profile).
+    Linux) RELEASE_OS=linux ;;
     *)
       die "Unsupported operating system: $(uname -s)"
       ;;
@@ -487,7 +520,7 @@ download_release() {
 }
 
 compute_sha256() {
-  if [[ -x "$BSD_SHASUM" ]]; then
+  if [[ "$RELEASE_OS" != linux && -x "$BSD_SHASUM" ]]; then
     "$BSD_SHASUM" -a 256 "$1" | awk '{ print $1 }'
   else
     sha256sum "$1" | awk '{ print $1 }'
@@ -599,7 +632,7 @@ validate_file_target() {
 
 directory_permissions_are_safe() {
   local mode=""
-  mode="$("$BSD_STAT" -f '%Lp' "$1")" || return 1
+  mode="$(file_mode "$1")" || return 1
   [[ "$mode" =~ ^[0-7]+$ ]] || return 1
   (( (8#$mode & 0022) == 0 ))
 }
@@ -674,7 +707,7 @@ validate_guard_file() {
   [[ ! -L "$path" ]] || die "$description cannot be a symbolic link: $path"
   [[ -f "$path" ]] || die "$description is not a regular file: $path"
   [[ -O "$path" ]] || die "$description is not owned by the current user: $path"
-  metadata="$("$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$path")" \
+  metadata="$(file_identity "$path")" \
     || die "Could not inspect $description: $path"
   IFS=: read -r device inode owner mode links size modified changed <<< "$metadata"
   [[ "$device" =~ ^[0-9]+$ && "$inode" =~ ^[0-9]+$ && "$owner" =~ ^[0-9]+$ \
@@ -731,9 +764,9 @@ inspect_bootstrap_boundary() {
   esac
 
   if [[ -n "$manifest_identity" ]]; then
-    [[ "$("$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$manifest")" == "$manifest_identity" ]] \
+    [[ "$(file_identity "$manifest")" == "$manifest_identity" ]] \
       || die "The installation profile manifest changed while it was inspected: $manifest"
-    [[ "$("$BSD_STAT" -f "$FILE_IDENTITY_FORMAT" "$cli")" == "$cli_identity" ]] \
+    [[ "$(file_identity "$cli")" == "$cli_identity" ]] \
       || die "The installed Oore CLI changed while it was inspected: $cli"
   fi
   BOOTSTRAP_ACTION="$action"
@@ -773,6 +806,15 @@ acquire_lifecycle_lock() {
   chmod 0600 "$LIFECYCLE_LOCK_PATH"
   exec 9<> "$LIFECYCLE_LOCK_PATH"
   local status=0
+  if [[ "$RELEASE_OS" == linux ]]; then
+    # flock(2), the same lock the Oore CLI takes. It exits 1 when held.
+    flock -n 9 2>/dev/null || status=$?
+    case "$status" in
+      0) return 0 ;;
+      1) die 'Another Oore install, setup, update, or uninstall operation is active.' ;;
+      *) die "Could not lock the installation: $LIFECYCLE_LOCK_PATH" ;;
+    esac
+  fi
   "$BSD_LOCKF" -s -t 0 9 2>/dev/null || status=$?
   case "$status" in
     0) ;;
@@ -807,11 +849,11 @@ snapshot_directory_state() {
   local bin_dir="$OORE_INSTALL_ROOT/bin"
   if [[ -d "$OORE_INSTALL_ROOT" && ! -L "$OORE_INSTALL_ROOT" ]]; then
     INSTALL_ROOT_EXISTED=1
-    INSTALL_ROOT_ORIGINAL_MODE="$("$BSD_STAT" -f '%Lp' "$OORE_INSTALL_ROOT")"
+    INSTALL_ROOT_ORIGINAL_MODE="$(file_mode "$OORE_INSTALL_ROOT")"
   fi
   if [[ -d "$bin_dir" && ! -L "$bin_dir" ]]; then
     BIN_DIR_EXISTED=1
-    BIN_DIR_ORIGINAL_MODE="$("$BSD_STAT" -f '%Lp' "$bin_dir")"
+    BIN_DIR_ORIGINAL_MODE="$(file_mode "$bin_dir")"
   fi
 }
 
@@ -1147,6 +1189,20 @@ configure_path() {
 
 print_next_step() {
   printf '\nOore CLI %s is ready.\n' "$RELEASE_VERSION"
+  if [[ "$RELEASE_OS" == linux ]]; then
+    # Linux has no device roles to set up: this is the cli-only profile.
+    printf 'On Linux, Oore installs the CLI only. The control plane, runners and web node need macOS.\n'
+    if [[ ":$PATH:" != *":$OORE_INSTALL_ROOT/bin:"* ]]; then
+      if [[ "$PATH_UPDATED" -eq 1 && -n "$SHELL_RC" ]]; then
+        printf 'Next: source %s && oore login\n' "$(shell_quote "$SHELL_RC")"
+      else
+        printf 'Next: %s login\n' "$(shell_quote "$OORE_INSTALL_ROOT/bin/oore")"
+      fi
+    else
+      printf 'Next: oore login\n'
+    fi
+    return 0
+  fi
   if [[ "$GUIDED_INSTALL_SUPPORTED" -eq 0 ]]; then
     printf 'This release predates guided device setup.\n'
     printf 'Oore v0.1.42 or newer is required for that flow.\n'

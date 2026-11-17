@@ -47,17 +47,58 @@ regeneration.
 
 ## Authentication
 
-Protected operations use:
+Scripts, CI jobs and agents sign in with an [API token](/team/api-tokens).
+Send it as a bearer token:
 
 ```http
-Authorization: Bearer <session-token>
+Authorization: Bearer <api-token>
 ```
+
+The browser app uses a session token in the same header, and any protected
+operation accepts either. [Automate Oore](/build/automate) walks through the
+whole build loop with a token, and every operation page has a `curl` example
+that reads the instance from `$OORE_URL` and the token from `$OORE_TOKEN`.
 
 Authentication is operation-specific. Health and readiness, public setup
 status, provider callbacks, metrics, scoped artifact delivery, and runner
 signing routes use their documented public, cookie/state, path-token, or
 signing-token seams. Check the generated operation page instead of applying a
 global bearer rule.
+
+### Behind an access proxy
+
+When the instance sits behind an access proxy such as Cloudflare Access, send
+the proxy's own headers with every request as well, for example
+`CF-Access-Client-Id` and `CF-Access-Client-Secret` for a service token. The
+`oore` CLI reads them from `OORE_HTTP_HEADERS`, one `Name: value` per line, or
+from repeated `--header 'Name: value'` flags.
+
+## Live stream limits
+
+Live streams hold a connection open, so each kind has a limit. Newer daemons
+apply these:
+
+| Stream                                        | Per API token or sign-in | Per person | Per build | Per instance |
+| --------------------------------------------- | ------------------------ | ---------- | --------- | ------------ |
+| Events, `GET /v1/events`                      | 8                        | 24         |           | 256          |
+| Build logs, `GET /v1/builds/{id}/logs/stream` | 4                        | 12         | 16        | 128          |
+
+Browser and CLI sign-ins count together as one sign-in per person. The
+per-person limit counts every token the person owns.
+
+When a limit is full, the request answers `429` with `Retry-After: 5` and an
+error whose `code` is `stream_limit`. Its message names the limit that was hit.
+To recover, close a stream you no longer read, give each agent its own token,
+or read the logs so far with `GET /v1/builds/{id}/logs` instead of streaming
+them.
+
+## For agents
+
+Every page here is also Markdown at the same address plus `.md`, and
+[`llms.txt`](https://docs.oore.build/llms.txt) indexes them. An operation's
+Markdown page lists its parameters, body fields, a `curl` example and its
+responses in a few hundred words, which is cheaper to read than the full
+contract.
 
 API errors use the shared envelope described under
 [Error codes](/reference/errors).

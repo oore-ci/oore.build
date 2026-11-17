@@ -16,7 +16,11 @@ fail() {
   exit 1
 }
 
-[[ "$(uname -s)" == Darwin ]] || fail 'the installer supports macOS only.'
+case "$(uname -s)" in
+  Darwin) os=darwin ;;
+  Linux) os=linux ;;
+  *) fail "unsupported operating system $(uname -s)" ;;
+esac
 case "$(uname -m)" in
   arm64 | aarch64) arch=arm64 ;;
   x86_64 | amd64) arch=x86_64 ;;
@@ -53,13 +57,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-archive="oore-cli_${version}_darwin_${arch}.tar.gz"
+archive="oore-cli_${version}_${os}_${arch}.tar.gz"
 release_dir="$work/releases/v$version"
 mkdir -p "$work/stage/bin" "$release_dir"
 cp "$cli" "$work/stage/bin/oore"
 printf '%s\n' "$version" > "$work/stage/VERSION"
 tar -czf "$release_dir/$archive" -C "$work/stage" bin/oore VERSION
-(cd "$release_dir" && shasum -a 256 "$archive" > "oore_${version}_checksums.txt")
+if command -v shasum > /dev/null 2>&1; then
+  (cd "$release_dir" && shasum -a 256 "$archive" > "oore_${version}_checksums.txt")
+else
+  (cd "$release_dir" && sha256sum "$archive" > "oore_${version}_checksums.txt")
+fi
 
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 python3 -m http.server "$port" --bind 127.0.0.1 --directory "$work/releases" \
@@ -96,6 +104,15 @@ cmp -s "$cli" "$install_root/bin/oore" || fail 'the installed CLI differs from t
 [[ "$(< "$install_root/BOOTSTRAP_ARCHIVE")" == "$archive" ]] \
   || fail 'BOOTSTRAP_ARCHIVE metadata is wrong'
 "$install_root/bin/oore" --help > /dev/null || fail 'the installed CLI does not start'
+
+if [[ "$os" == linux ]]; then
+  log 'Checking that Linux refuses roles other than cli-only...'
+  if OORE_INSTALL_ROOT="$install_root" HOME="$home" "$install_root/bin/oore" install --profile runner \
+    < /dev/null > "$work/refusal.log" 2>&1; then
+    fail 'oore install --profile runner succeeded on Linux'
+  fi
+  grep -q 'needs macOS' "$work/refusal.log" || fail 'the Linux role refusal does not say why'
+fi
 
 log 'Reinstalling over the existing installation...'
 run_installer

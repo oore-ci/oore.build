@@ -93,7 +93,7 @@ jobs:
   acceptance:
     name: Hermetic release acceptance
     needs: source
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -120,13 +120,18 @@ jobs:
           fi
           echo "SKIP_RUST_ACCEPTANCE=$skip" >> "$GITHUB_ENV"
 
-      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
-      - name: Install pinned Rust toolchain
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
         if: env.SKIP_RUST_ACCEPTANCE != 'true'
-        run: |
-          if [[ -f rust-toolchain.toml ]]; then
-            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-          fi
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # Self-hosted Macs have no preinstalled rustup guarantee (jarvis has
+      # none on the runner PATH), so install it the way Validate does.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        if: env.SKIP_RUST_ACCEPTANCE != 'true'
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          components: rustfmt, clippy
 
       - name: Setup Bun
         if: env.SKIP_RUST_ACCEPTANCE != 'true'
@@ -134,8 +139,11 @@ jobs:
         with:
           bun-version: 1.4.4
 
+      # Self-hosted Macs share one user's ~/.cargo, and this cache's cleanup
+      # deletes registry sources another job is compiling from. Validate skips
+      # it on self-hosted runners for the same reason.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-        if: env.SKIP_RUST_ACCEPTANCE != 'true'
+        if: env.SKIP_RUST_ACCEPTANCE != 'true' && runner.environment == 'github-hosted'
         with:
           cache-bin: false
           cache-on-failure: true
@@ -149,7 +157,7 @@ jobs:
   deploy:
     name: Deploy Pages
     needs: [source, acceptance, release, publish-release]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -284,7 +292,7 @@ jobs:
   rust:
     name: Build Rust (${{ matrix.arch }})
     needs: source
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -299,17 +307,20 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.commit }}
 
-      # Tags cut before rust-toolchain.toml existed build with the image's rustc.
-      - name: Install pinned Rust toolchain
-        run: |
-          if [[ -f rust-toolchain.toml ]]; then
-            rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
-          fi
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Rust target
-        run: rustup target add "${{ matrix.target }}"
+      # Self-hosted Macs have no preinstalled rustup guarantee, so install the
+      # pinned toolchain and target the way Validate does.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
 
+      # See the acceptance job: never on self-hosted runners.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: runner.environment == 'github-hosted'
         with:
           cache-bin: false
           cache-on-failure: true
@@ -329,10 +340,92 @@ jobs:
           path: dist/rust
           if-no-files-found: error
 
+  # Linux gets the CLI only (the cli-only profile), linked statically against
+  # musl so it runs in any distribution or container. Both architectures are
+  # cross-built on the self-hosted Linux runner with Zig as the C compiler and
+  # linker, so the job needs no root access and no arm64 machine.
+  rust-linux:
+    name: Build Linux CLI
+    needs: source
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
+    timeout-minutes: 60
+    env:
+      ZIG_VERSION: 0.14.1
+      ZIG_SHA256: 24aeeec8af16c381934a6cd7d95c807a8cb2cf7df9fa40d359aa884195c4716c
+      CARGO_ZIGBUILD_VERSION: 0.24.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+
+      # Same as the macOS builds: the self-hosted runner has no preinstalled
+      # rustup guarantee.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+
+      - name: Install Zig and cargo-zigbuild
+        run: |
+          set -euo pipefail
+          tools="$RUNNER_TEMP/linux-cli-tools"
+          mkdir -p "$tools"
+          curl -fsSL -o "$tools/zig.tar.xz" \
+            "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          printf '%s  %s\n' "$ZIG_SHA256" "$tools/zig.tar.xz" | sha256sum --check --strict
+          tar -xJf "$tools/zig.tar.xz" -C "$tools"
+          echo "$tools/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+          cargo install --locked --root "$tools/cargo" "cargo-zigbuild@${CARGO_ZIGBUILD_VERSION}"
+          echo "$tools/cargo/bin" >> "$GITHUB_PATH"
+
+      # See the acceptance job: never on self-hosted runners.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        if: runner.environment == 'github-hosted'
+        with:
+          cache-bin: false
+          cache-on-failure: true
+          cache-workspace-crates: true
+          key: linux-musl
+
+      - name: Build Linux CLI
+        run: |
+          set -euo pipefail
+          for pair in arm64:aarch64-unknown-linux-musl x86_64:x86_64-unknown-linux-musl; do
+            arch="${pair%%:*}"
+            target="${pair#*:}"
+            cargo zigbuild --release -p oore --target "$target" --locked
+            binary="target/$target/release/oore"
+            file "$binary"
+            file "$binary" | grep -Eq 'static(ally|-pie) linked' || {
+              echo "The $arch Linux CLI is not statically linked." >&2
+              exit 1
+            }
+            mkdir -p "dist/rust-linux/$arch"
+            cp "$binary" "dist/rust-linux/$arch/oore"
+          done
+          # The runner is x86_64, so only that build can run here.
+          dist/rust-linux/x86_64/oore --help > /dev/null
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-linux-arm64-${{ needs.source.outputs.commit }}
+          path: dist/rust-linux/arm64
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-linux-x86_64-${{ needs.source.outputs.commit }}
+          path: dist/rust-linux/x86_64
+          if-no-files-found: error
+
   release:
     name: Build release assets
-    needs: [source, acceptance, rust]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    needs: [source, acceptance, rust, rust-linux]
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 45
     permissions:
       actions: read
@@ -357,6 +450,16 @@ jobs:
         with:
           name: rust-x86_64-${{ needs.source.outputs.commit }}
           path: dist/rust/x86_64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rust-linux-arm64-${{ needs.source.outputs.commit }}
+          path: dist/rust/linux-arm64
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rust-linux-x86_64-${{ needs.source.outputs.commit }}
+          path: dist/rust/linux-x86_64
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -422,11 +525,14 @@ jobs:
           stage_web_darwin_x64="dist/stage-web-darwin-x86_64"
           stage_web_linux_arm="dist/stage-web-linux-arm64"
           stage_web_linux_x64="dist/stage-web-linux-x86_64"
-          rm -rf "$stage_arm" "$stage_x64" "$stage_cli_arm" "$stage_cli_x64" "$stage_web_darwin_arm" "$stage_web_darwin_x64" "$stage_web_linux_arm" "$stage_web_linux_x64"
+          stage_cli_linux_arm="dist/stage-cli-linux-arm64"
+          stage_cli_linux_x64="dist/stage-cli-linux-x86_64"
+          rm -rf "$stage_arm" "$stage_x64" "$stage_cli_arm" "$stage_cli_x64" "$stage_web_darwin_arm" "$stage_web_darwin_x64" "$stage_web_linux_arm" "$stage_web_linux_x64" "$stage_cli_linux_arm" "$stage_cli_linux_x64"
           mkdir -p "$stage_arm/bin" "$stage_x64/bin"
           mkdir -p "$stage_cli_arm/bin" "$stage_cli_x64/bin"
           mkdir -p "$stage_web_darwin_arm/bin" "$stage_web_darwin_x64/bin"
           mkdir -p "$stage_web_linux_arm/bin" "$stage_web_linux_x64/bin"
+          mkdir -p "$stage_cli_linux_arm/bin" "$stage_cli_linux_x64/bin"
 
           install -m 0755 "dist/rust/arm64/oored" "$stage_arm/bin/oored"
           install -m 0755 "dist/rust/arm64/oore"  "$stage_arm/bin/oore"
@@ -470,6 +576,14 @@ jobs:
           cp "LICENSE" "$stage_web_linux_x64/LICENSE"
           printf '%s\n' "$ver" > "$stage_web_linux_x64/VERSION"
 
+          install -m 0755 "dist/rust/linux-arm64/oore" "$stage_cli_linux_arm/bin/oore"
+          cp "LICENSE" "$stage_cli_linux_arm/LICENSE"
+          printf '%s\n' "$ver" > "$stage_cli_linux_arm/VERSION"
+
+          install -m 0755 "dist/rust/linux-x86_64/oore" "$stage_cli_linux_x64/bin/oore"
+          cp "LICENSE" "$stage_cli_linux_x64/LICENSE"
+          printf '%s\n' "$ver" > "$stage_cli_linux_x64/VERSION"
+
           [[ -x "$stage_arm/bin/oore" && -x "$stage_arm/bin/oored" && -x "$stage_arm/bin/oore-web" ]]
           [[ -x "$stage_x64/bin/oore" && -x "$stage_x64/bin/oored" && -x "$stage_x64/bin/oore-web" ]]
 
@@ -483,7 +597,9 @@ jobs:
             RELEASE_WEB_DARWIN_ARM64_STAGE="$stage_web_darwin_arm" \
             RELEASE_WEB_DARWIN_X86_64_STAGE="$stage_web_darwin_x64" \
             RELEASE_WEB_LINUX_ARM64_STAGE="$stage_web_linux_arm" \
-            RELEASE_WEB_LINUX_X86_64_STAGE="$stage_web_linux_x64"
+            RELEASE_WEB_LINUX_X86_64_STAGE="$stage_web_linux_x64" \
+            RELEASE_CLI_LINUX_ARM64_STAGE="$stage_cli_linux_arm" \
+            RELEASE_CLI_LINUX_X86_64_STAGE="$stage_cli_linux_x64"
 
       - name: Generate release notes
         env:
@@ -777,7 +893,7 @@ jobs:
   release-index:
     name: Build release index
     needs: [source, publish-release]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 15
     permissions:
       actions: read
@@ -863,7 +979,7 @@ jobs:
   deploy-installer:
     name: Deploy signed installer
     needs: [source, sign-release-index]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 20
     permissions:
       actions: read
@@ -983,7 +1099,7 @@ jobs:
   deploy-release-index:
     name: Deploy release index
     needs: [source, sign-release-index, deploy-installer]
-    runs-on: ${{ vars.RUNNER_MACOS || 'macos-latest' }}
+    runs-on: ${{ vars.RUNNER_MACOS || 'oore-mac' }}
     timeout-minutes: 20
     permissions:
       actions: read

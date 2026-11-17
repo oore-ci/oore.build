@@ -1,0 +1,108 @@
+---
+title: 'API tokens'
+status: implemented
+description: 'Give a script, a CI job or an AI agent its own sign-in: create a token, choose what it may do and for how long, see what it did, and revoke it.'
+---
+
+An API token signs a script, a CI job or an AI agent in to Oore without a
+browser. It works wherever a session token does: as
+`Authorization: Bearer <token>` on the [HTTP API](/reference/api), in
+`OORE_TOKEN` for the `oore` CLI, and as the `token` of `@oore/client`.
+
+Give each tool its own token, so you can see what it did and revoke it on its
+own.
+
+## Create a token
+
+You need the Owner, Admin or Developer role. QA Viewers cannot create tokens.
+
+1. Open **Settings > API tokens** and select **Create token**.
+2. Enter a **Name** that says where the token runs, such as `release-bot` or
+   `claude-code on Dana's laptop`.
+3. Choose a **Role**. Pick the lowest role that can do the job. You cannot
+   give a token a higher role than your own.
+4. Choose an **Expiry**. 90 days is suggested. No expiry has to be chosen on
+   purpose, and a token that never expires is easy to forget.
+5. Select **Create token** and copy the token. Oore shows it once and keeps
+   only a hash, so a lost token cannot be shown again: create a new one.
+
+From a terminal, `oore token create --name release-bot --role developer`
+does the same and prints the token once.
+
+## What a token may do
+
+A token acts as the person who created it, limited by the role you chose.
+What it may do is the lower of the two: if your own role later drops, the
+token's drops with it, and a token never does more than you could.
+
+| Role      | Typical use                                                                                     |
+| --------- | ----------------------------------------------------------------------------------------------- |
+| QA Viewer | Read builds and fetch install links on the apps it can see, for a tester bot or a dashboard     |
+| Developer | Run, cancel and re-run builds, read logs and change pipelines on its apps. Right for most tools |
+| Admin     | Also manage users, settings, integrations and runners                                           |
+| Owner     | Everything. Rarely right for a tool                                                             |
+
+Role details, per app, are on [Roles and permissions](/reference/roles).
+
+Newer instances narrow a token further, with a list of apps and a set of
+abilities:
+
+| Ability           | Allows                                                                            |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `read`            | Reading anything the token can see. Always included                               |
+| `build`           | Start, cancel, re-run and retry builds, set release notes, send builds to testers |
+| `release_operate` | Pause and halt a store rollout                                                    |
+| `release_manage`  | Raise, resume, complete, approve and promote releases, and approve waiting builds |
+| `manage`          | Change pipelines, secrets, signing, members, settings and API tokens              |
+
+A token created without a choice gets `read` and `build`. Tick the release
+abilities only for a tool you trust to ship to users. With an app list, the
+token sees only those apps: others answer `404`, and it cannot read the
+instance audit log. An empty list means every app its creator can reach.
+
+What a token may do is the least of its creator's own rights, its role, its
+abilities and its app list. A token created with another token can only
+narrow it. Tokens made before abilities existed keep what their role implied:
+Owners and Admins all abilities, Developers `read`, `build`,
+`release_operate` and `manage`, QA Viewers `read`.
+
+## See what a token did
+
+**Settings > API tokens** lists every token with its prefix, role, creator,
+expiry and when it was last used. Owners and Admins see everyone's tokens;
+others see their own.
+
+**Settings > Audit log** records each action against the
+person who created the token, and newer instances add the token's name, so
+an entry reads "via token release-bot". Builds a token started show it the
+same way, and the API returns `token_id` and `token_name` on audit entries and
+`trigger_token_id` and `trigger_token_name` on builds. Filter the audit log by
+`token_id` to see everything one token did.
+
+## Revoke a token
+
+Open **Settings > API tokens**, open the token's actions and select
+**Revoke token**. The token stops working at once. Expired and revoked tokens
+stay in the list so the record of what they did keeps its name.
+
+Revoke a token as soon as you think it leaked, then create a new one.
+
+## Keep tokens out of repositories
+
+- Store the token in your CI system's secret store, a password manager or the
+  system keychain, and pass it to tools through `OORE_TOKEN`.
+- Do not write it into `.oore.yaml`, a script, a `.env` file you commit, or
+  an agent's instruction file. Pipeline credentials belong in
+  [secrets](/build/pipelines/secrets), not in tokens.
+- Avoid `--token` on a shared machine: shell history and the process list
+  can show it. `oore login --token` stores it in a protected file instead.
+- New tokens are `oore_` followed by 64 lowercase hex characters, so a secret
+  scanner can catch one that slipped into a commit with the pattern
+  `oore_[0-9a-f]{64}`. The token list shows the first 13 characters as the
+  prefix. Older tokens are 64 bare hex characters and keep working.
+- Build logs mask any `oore_` token a step prints.
+
+## Related
+
+- [Automate Oore](/build/automate) uses a token for the whole build loop.
+- [`oore login`](/reference/cli/oore-login) saves a token for the CLI.
