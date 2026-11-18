@@ -24,11 +24,24 @@ permissions:
 jobs:
   source:
     name: Resolve immutable release source
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
     timeout-minutes: 10
     outputs:
       commit: ${{ steps.source.outputs.commit }}
     steps:
+      # The Linux release jobs run on our own runners. Fail here, before any
+      # build starts, if one of them lacks a tool the later jobs call.
+      - name: Check the Linux release tools
+        run: |
+          missing=()
+          for tool in git gh jq ssh-keygen; do
+            command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+          done
+          if (( ${#missing[@]} > 0 )); then
+            echo "This runner is missing: ${missing[*]}" >&2
+            exit 1
+          fi
+
       - name: Check out the trusted release tools
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -178,6 +191,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
+
+      # Wrangler runs on Node, which the self-hosted Macs do not have.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -670,7 +689,7 @@ jobs:
   sign-release-assets:
     name: Sign release assets
     needs: [source, release]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
     timeout-minutes: 15
     environment: release-signing
     permissions:
@@ -694,7 +713,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     needs: [source, sign-release-assets]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
     timeout-minutes: 20
     environment: release-publication
     permissions:
@@ -955,7 +974,7 @@ jobs:
   sign-release-index:
     name: Sign release index
     needs: [source, release-index]
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER_LINUX || 'oore-linux' }}
     timeout-minutes: 15
     environment: release-signing
     permissions:
@@ -1025,6 +1044,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
+
+      # Wrangler runs on Node, which the self-hosted Macs do not have.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
 
       - name: Install dependencies
         working-directory: site-source
@@ -1123,6 +1148,12 @@ jobs:
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
+
+      # Wrangler runs on Node, which the self-hosted Macs do not have.
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
